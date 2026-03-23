@@ -1,16 +1,19 @@
 import json
 import os
 import re
-import anthropic
+from openai import OpenAI
 from dotenv import load_dotenv
 from evaluator import pre_analyse, evaluate, enforce_risk_floor
 
 load_dotenv()
 
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+client = OpenAI(
+    api_key=os.getenv("GROQ_API_KEY"),
+    base_url="https://api.groq.com/openai/v1",
+)
 
 # Model to use for all LLM calls
-MODEL = "claude-sonnet-4-5"
+MODEL = "llama-3.3-70b-versatile"
 
 # A PR is split into chunks if it exceeds this many files with actual diffs
 CHUNK_FILE_THRESHOLD = 15
@@ -122,32 +125,31 @@ debug_capture: list[dict] | None = None
 
 def _call_claude(user_prompt: str) -> dict:
     """
-    Single point of contact with the Anthropic API.
-    max_tokens=4096 — raised from 1024 after observing JSONDecodeError on
-    config PRs where long yaml paths and matrix strings push response past
-    1024 tokens. 4096 gives ample headroom; the schema rarely exceeds 600.
+    Single point of contact with the Groq API (OpenAI-compatible).
+    Model: llama-3.3-70b-versatile — free tier, 6000 req/day.
+    Groq uses finish_reason instead of stop_reason.
     """
-    message = client.messages.create(
+    response = client.chat.completions.create(
         model=MODEL,
         max_tokens=4096,
-        temperature=1,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_prompt}],
+        temperature=0.2,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user",   "content": user_prompt},
+        ],
     )
 
-    # Detect truncation before trying to parse.
-    # stop_reason == "max_tokens" means the response was cut off mid-stream.
-    # Raising here gives a clear error instead of a JSONDecodeError deep in
-    # _parse_and_validate that is hard to trace back to its cause.
-    if message.stop_reason == "max_tokens":
+    choice = response.choices[0]
+
+    # Detect truncation — Groq sets finish_reason="length" when cut off
+    if choice.finish_reason == "length":
         raise ValueError(
-            f"Claude response truncated (stop_reason=max_tokens). "
-            f"Response was {len(message.content[0].text)} chars. "
+            f"LLM response truncated (finish_reason=length). "
             f"Prompt was {len(user_prompt)} chars. "
             f"Consider reducing diff budget or splitting into smaller chunks."
         )
 
-    raw = message.content[0].text
+    raw    = choice.message.content
     parsed = _parse_and_validate(raw)
 
     if debug_capture is not None:
@@ -155,7 +157,7 @@ def _call_claude(user_prompt: str) -> dict:
             "prompt_chars":  len(user_prompt),
             "prompt_tail":   user_prompt[-600:],
             "raw":           raw,
-            "stop_reason":   message.stop_reason,
+            "finish_reason": choice.finish_reason,
             "parsed":        parsed,
         })
 
