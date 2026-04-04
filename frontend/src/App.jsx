@@ -291,7 +291,33 @@ export default function App() {
               </ul>
             </Card>
           )}
-
+{/* Evidence */}
+          {(summary.evidence || []).length > 0 && (
+            <Card>
+              <SectionLabel>Evidence</SectionLabel>
+              <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 10 }}>
+                {summary.evidence.map((ev, i) => (
+                  <li key={i} style={{ fontSize: 12, color: "#b0b0bc" }}>
+                    <span style={{ fontFamily: "var(--mono)", color: "var(--accent)", fontSize: 11 }}>
+                      {ev.location}
+                    </span>
+                    <span style={{ margin: "0 8px", color: "var(--muted)" }}>—</span>
+                    {ev.claim}
+                    {ev.snippet && (
+                      <div style={{
+                        fontFamily: "var(--mono)", fontSize: 11,
+                        background: "var(--surface2)", border: "1px solid var(--border)",
+                        borderRadius: 4, padding: "4px 8px", marginTop: 6,
+                        color: "#7dd3a8"
+                      }}>
+                        {ev.snippet}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
           {/* Footer: scores */}
           <div style={{ display: "flex", gap: 16, paddingTop: 4, paddingLeft: 2 }}>
             <span style={scoreStyle}>

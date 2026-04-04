@@ -37,7 +37,9 @@ do not invent.
 - Risk assessment must name the exact mechanism of failure, not just say \
 "may cause issues".
 - The pre-analysis block in the prompt is computed from file paths by a \
-deterministic system. It is authoritative — do not contradict it.\
+deterministic system. It is authoritative — do not contradict it.
+- For every risk claim and key change, include an evidence field with \
+the exact filename and line numbers from the diff. Format: filename:L12-18.\
 """
 
 
@@ -277,12 +279,16 @@ Return ONLY a JSON object with these exact keys — no markdown, no extra text:
     "reason": "Name the exact failure mechanism. E.g.: 'The new index on users.email runs synchronously — will lock the table on large datasets.'"
   },
   "key_changes": [
-    "Change 1 — filename or function + what changed",
-    "Change 2 — filename or function + what changed",
-    "Change 3 — filename or function + what changed"
+    "filename.py:L12-18 — what changed and why it matters",
+    "filename.py:L45 — what changed and why it matters"
   ],
-  "review_focus": "Single most important thing to verify. Name the exact code path, edge case, or assumption."
-}"""
+ "review_focus": "Single most important thing to verify. Name the exact code path, edge case, or assumption.",
+  "evidence": [
+    {"claim": "brief claim being supported", "location": "filename.py:L12-18", "snippet": "exact_code_here()"}
+  ]
+}
+
+CRITICAL: The evidence array is MANDATORY. Every entry in key_changes must have a corresponding evidence entry with exact filename and line numbers."""
 
 
 # ── Formatters ────────────────────────────────────────────────────────────────

@@ -97,7 +97,17 @@ TRIVIAL_CHURN_THRESHOLD = 8
 
 RISK_LEVELS = {"low": 0, "medium": 1, "high": 2}
 RISK_LABELS = {0: "low", 1: "medium", 2: "high"}
-
+# — Security pattern detector ————————————————————————————————————————
+SECURITY_PATTERNS: list[tuple[str, str]] = [
+    (r"password|passwd|pwd",           "sensitive_data"),
+    (r"token|api_key|secret|jwt",      "sensitive_data"),
+    (r"except\s+Exception",            "broad_exception"),
+    (r"verify\s*=\s*False",            "tls_disabled"),
+    (r"charge|payment|transfer",       "financial_logic"),
+    (r"eval\(|exec\(|__import__",      "code_injection"),
+    (r"request\.(get|post|data|form)",  "input_handling"),
+    (r"CVE-\d{4}-\d+",                 "known_cve"),
+]
 
 # ── Public interface ───────────────────────────────────────────────────────────
 
@@ -300,6 +310,18 @@ def pre_analyse(pr_data: dict) -> PreAnalysis:
                     flagged_files.append(f["filename"])
                 break  # one rule per file is enough
 
+    # — Security scan on diff content ————————————————
+    security_flags: list[str] = []
+    full_diff = " ".join(f.get("diff") or "" for f in files)
+    for pattern, flag in SECURITY_PATTERNS:
+        if re.search(pattern, full_diff, re.IGNORECASE):
+            if flag not in security_flags:
+                security_flags.append(flag)
+    if security_flags and "security" not in risk_tags:
+        risk_tags.append("security")
+    if "known_cve" in security_flags or "tls_disabled" in security_flags:
+        if risk_level < RISK_LEVELS["medium"]:
+            risk_level = RISK_LEVELS["medium"]
     total_diff_chars = sum(
         len(f.get("diff") or "") for f in files
     )

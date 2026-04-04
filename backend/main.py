@@ -194,6 +194,7 @@ def _build_response(repo, pr_number, pr_data, summary, pre, ev) -> dict:
             "review_focus":         summary.get("review_focus"),
             "analysed_in_chunks":   summary.get("analysed_in_chunks"),
             "hallucination_warning": summary.get("hallucination_warning"),
+            "evidence":              summary.get("evidence", []),
         },
         "evaluation": {
             "confidence":            ev.confidence,
