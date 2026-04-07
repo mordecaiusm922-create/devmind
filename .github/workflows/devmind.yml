@@ -34,7 +34,7 @@ jobs:
             ).join('\n');
 
             const body = [
-              `## 🤖 DevMind Analysis`,
+              `##  DevMind Analysis`,
               ``,
               `**${riskEmoji} Risk: ${(risk.level || 'unknown').toUpperCase()}** — ${risk.reason || ''}`,
               ``,
