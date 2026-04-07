@@ -1,4 +1,4 @@
-# DevMind — Automated PR Analysis
+# DevMind ï¿½ Automated PR Analysis
 
 A GitHub Action that uses LLM to analyze pull requests and post automatic comments with risk assessment, evidence mapping, and security pattern detection.
 
@@ -42,7 +42,7 @@ jobs:
             const s = data.summary;
             const risk = s.risk || {};
             const riskEmoji = { low: '??', medium: '??', high: '??' }[risk.level] || '?';
-            const body = `## ?? DevMind Analysis\n\n**${riskEmoji} Risk: ${(risk.level || 'unknown').toUpperCase()}** — ${risk.reason || ''}\n\n**What:** ${s.what || ''}\n**Why:** ${s.why || ''}\n\n**Review focus:** ${s.review_focus || ''}`;
+            const body = `## ?? DevMind Analysis\n\n**${riskEmoji} Risk: ${(risk.level || 'unknown').toUpperCase()}** ï¿½ ${risk.reason || ''}\n\n**What:** ${s.what || ''}\n**Why:** ${s.why || ''}\n\n**Review focus:** ${s.review_focus || ''}`;
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
@@ -56,8 +56,7 @@ jobs:
 | Secret | Value |
 |--------|-------|
 | `DEVMIND_API_URL` | `https://devmind-2cej.onrender.com` |
-| `DEVMIND_API_KEY` | `devmind-key-123` |
-
+| `DEVMIND_API_KEY` | `see issues tab for alpha access` |
 ## Stack
 
 - Backend: FastAPI + Groq (llama-3.3-70b)
@@ -66,4 +65,4 @@ jobs:
 
 ## Status
 
-Alpha. Feedback welcome — open an issue or PR.
+Alpha. Feedback welcome ï¿½ open an issue or PR.
