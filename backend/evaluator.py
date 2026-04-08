@@ -312,7 +312,12 @@ def pre_analyse(pr_data: dict) -> PreAnalysis:
 
     # — Security scan on diff content ————————————————
     security_flags: list[str] = []
-    full_diff = " ".join(f.get("diff") or "" for f in files)
+    full_diff = " ".join([
+        pr_data.get("title", ""),
+        pr_data.get("body", "") or "",
+        " ".join(pr_data.get("commit_messages", [])),
+        " ".join(f.get("diff") or "" for f in files),
+    ])
     for pattern, flag in SECURITY_PATTERNS:
         if re.search(pattern, full_diff, re.IGNORECASE):
             if flag not in security_flags:
