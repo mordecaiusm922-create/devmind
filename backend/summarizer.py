@@ -333,7 +333,7 @@ def _format_file_list(files: list) -> str:
     return "\n".join(lines)
 
 
-def _format_diffs(files: list) -> str:
+def _format_diffs(files: list) --> str:
     parts = []
     for f in files:
         diff = f.get("diff", "")
