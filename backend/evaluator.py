@@ -327,6 +327,10 @@ def pre_analyse(pr_data: dict) -> PreAnalysis:
     if "known_cve" in security_flags or "tls_disabled" in security_flags:
         if risk_level < RISK_LEVELS["medium"]:
             risk_level = RISK_LEVELS["medium"]
+    cve_count = len(re.findall(r'CVE-\d{4}-\d+', full_diff))
+    if cve_count >= 3:
+        if risk_level < RISK_LEVELS["high"]:
+            risk_level = RISK_LEVELS["high"]
     total_diff_chars = sum(
         len(f.get("diff") or "") for f in files
     )
