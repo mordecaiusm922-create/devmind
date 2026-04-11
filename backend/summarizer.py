@@ -39,12 +39,12 @@ STRICT RULES:
 - Think like an attacker. Ask: how would I exploit this?
 - Every risk claim must reference specific files, line numbers, or code patterns
 - If you find a critical vulnerability, name the exact attack vector
-- Never say "may cause issues" — say exactly what breaks and how
-- The pre-analysis block is authoritative — do not contradict it
+- Never say "may cause issues" -- say exactly what breaks and how
+- The pre-analysis block is authoritative -- do not contradict it
 - For every finding include: what it is, how it's exploited, what the fix is
 """
 Your job is to produce PR analysis that a developer can act on immediately. \
-You write like a principal engineer talking to a peer — specific, direct, \
+You write like a principal engineer talking to a peer -- specific, direct, \
 no filler.
 
 STRICT RULES:
@@ -52,12 +52,12 @@ STRICT RULES:
 "updates logic", "makes changes to", "this PR modifies", "adds functionality".
 - Every claim must be grounded in specific files, function names, class names, \
 config keys, or line changes visible in the diff.
-- If you cannot determine something from the diff, say "unclear from diff" — \
+- If you cannot determine something from the diff, say "unclear from diff" -- \
 do not invent.
 - Risk assessment must name the exact mechanism of failure, not just say \
 "may cause issues".
 - The pre-analysis block in the prompt is computed from file paths by a \
-deterministic system. It is authoritative — do not contradict it.
+deterministic system. It is authoritative -- do not contradict it.
 - For every risk claim and key change, include an evidence field with \
 the exact filename and line numbers from the diff. Format: filename:L12-18.\
 """
@@ -148,7 +148,7 @@ debug_capture: list[dict] | None = None
 def _call_claude(user_prompt: str) -> dict:
     """
     Single point of contact with the Groq API (OpenAI-compatible).
-    Model: llama-3.3-70b-versatile — free tier, 6000 req/day.
+    Model: llama-3.3-70b-versatile -- free tier, 6000 req/day.
     Groq uses finish_reason instead of stop_reason.
     """
     response = client.chat.completions.create(
@@ -163,7 +163,7 @@ def _call_claude(user_prompt: str) -> dict:
 
     choice = response.choices[0]
 
-    # Detect truncation — Groq sets finish_reason="length" when cut off
+    # Detect truncation -- Groq sets finish_reason="length" when cut off
     if choice.finish_reason == "length":
         raise ValueError(
             f"LLM response truncated (finish_reason=length). "
@@ -245,11 +245,11 @@ def _check_hallucinations(summary: dict, pr_data: dict) -> list[str]:
     Compares identifiers mentioned in the summary against the source material
     (diff text, PR title, body, commit messages).
     Returns a list of identifiers that appear in the summary but NOT in any
-    source — these are likely hallucinated by the model to satisfy the
+    source -- these are likely hallucinated by the model to satisfy the
     specificity rules.
 
     Only flags lowercase_with_underscores() style function calls (Python/JS
-    naming convention) — CamelCase class names are excluded because they're
+    naming convention) -- CamelCase class names are excluded because they're
     commonly inferred from import paths not shown in the diff.
     """
     # Build corpus of all known real text
@@ -288,7 +288,7 @@ def _check_hallucinations(summary: dict, pr_data: dict) -> list[str]:
 
 def _output_schema_instruction() -> str:
     return """\
-Return ONLY a JSON object with these exact keys — no markdown, no extra text:
+Return ONLY a JSON object with these exact keys -- no markdown, no extra text:
 
 {
   "what": "Precise 1-2 sentence description. Name specific functions, modules, or config keys.",
@@ -296,7 +296,7 @@ Return ONLY a JSON object with these exact keys — no markdown, no extra text:
   "impact": "Which subsystems, APIs, DB tables, or runtime behaviours are affected. Be concrete.",
   "risk": {
     "level": "low | medium | high | critical",
-    "reason": "Name the exact failure mechanism and attack vector. E.g.: 'SQL injection via unsanitized user input in search_users() — attacker can dump entire users table with UNION SELECT.'"
+    "reason": "Name the exact failure mechanism and attack vector. E.g.: 'SQL injection via unsanitized user input in search_users() -- attacker can dump entire users table with UNION SELECT.'"
   },
   "vulnerabilities": [
     {
@@ -308,7 +308,7 @@ Return ONLY a JSON object with these exact keys — no markdown, no extra text:
     }
   ],
   "key_changes": [
-    "filename.py:L12-18 — what changed and why it matters"
+    "filename.py:L12-18 -- what changed and why it matters"
   ],
   "review_focus": "Single most critical security concern. Name the exact code path and attack scenario.",
   "evidence": [
@@ -333,7 +333,7 @@ def _format_file_list(files: list) -> str:
     return "\n".join(lines)
 
 
-def _format_diffs(files: list) --> str:
+def _format_diffs(files: list) -> str:
     parts = []
     for f in files:
         diff = f.get("diff", "")
@@ -368,7 +368,7 @@ def _format_issue_comments(comments: list) -> str:
 def _parse_and_validate(raw: str) -> dict:
     """
     Extracts and validates the JSON object from Claude's response text.
-    Claude may wrap the JSON in prose or markdown fences — we strip those first.
+    Claude may wrap the JSON in prose or markdown fences -- we strip those first.
     Falls back to parsing the full string if no fence is found.
     """
     # Strip markdown code fences (```json ... ``` or ``` ... ```)
@@ -386,7 +386,7 @@ def _parse_and_validate(raw: str) -> dict:
 
     risk = data.get("risk", {})
     if isinstance(risk, str):
-        parts = risk.split("—", 1)
+        parts = risk.split("--", 1)
         level = parts[0].strip().lower()
         reason = parts[1].strip() if len(parts) > 1 else risk
         data["risk"] = {"level": level, "reason": reason}
