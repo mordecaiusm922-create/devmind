@@ -26,6 +26,7 @@ from pydantic import BaseModel, field_validator
 from github import get_pr_data
 from logger import log_analysis, read_recent_logs
 from summarizer import summarize_pr
+from evaluator import compute_risk_score
 
 load_dotenv()
 
@@ -149,8 +150,9 @@ async def _run_analysis(repo: str, pr_number: int) -> dict:
     def _pipeline():
         pr_data              = get_pr_data(repo, pr_number)
         summary, pre, ev     = summarize_pr(pr_data)
+        risk                 = compute_risk_score(pre, summary, ev, pr_data)
         log_analysis(repo, pr_number, pr_data, summary, pre, ev)
-        return _build_response(repo, pr_number, pr_data, summary, pre, ev)
+        return _build_response(repo, pr_number, pr_data, summary, pre, ev, risk)
 
     try:
         return await asyncio.wait_for(
@@ -175,8 +177,8 @@ async def _run_analysis(repo: str, pr_number: int) -> dict:
         raise HTTPException(status_code=400, detail=msg)
 
 
-def _build_response(repo, pr_number, pr_data, summary, pre, ev) -> dict:
-    return {
+def _build_response(repo, pr_number, pr_data, summary, pre, ev, risk=None) -> dict:
+    response = {
         "pr_number":     pr_number,
         "repo":          repo,
         "title":         pr_data["title"],
@@ -186,15 +188,15 @@ def _build_response(repo, pr_number, pr_data, summary, pre, ev) -> dict:
         "deletions":     pr_data["deletions"],
         "is_large_pr":   pr_data.get("is_large_pr", False),
         "summary": {
-            "what":                 summary.get("what"),
-            "why":                  summary.get("why"),
-            "impact":               summary.get("impact"),
-            "risk":                 summary.get("risk"),
-            "key_changes":          summary.get("key_changes", []),
-            "review_focus":         summary.get("review_focus"),
-            "analysed_in_chunks":   summary.get("analysed_in_chunks"),
+            "what":                  summary.get("what"),
+            "why":                   summary.get("why"),
+            "impact":                summary.get("impact"),
+            "risk":                  summary.get("risk"),
+            "key_changes":           summary.get("key_changes", []),
+            "review_focus":          summary.get("review_focus"),
+            "analysed_in_chunks":    summary.get("analysed_in_chunks"),
             "hallucination_warning": summary.get("hallucination_warning"),
-            "evidence":              summary.get("evidence", []),
+            "vulnerabilities":       summary.get("vulnerabilities", []),
         },
         "evaluation": {
             "confidence":            ev.confidence,
@@ -205,17 +207,30 @@ def _build_response(repo, pr_number, pr_data, summary, pre, ev) -> dict:
             "generic_phrases_found": ev.generic_phrases_found,
         },
         "pre_analysis": {
-            "risk_floor":            pre.risk_floor,
-            "risk_tags":             pre.risk_tags,
-            "flagged_files":         pre.flagged_files,
-            "trivially_touched":     pre.trivially_touched,
-            "files_with_diff":       pre.files_with_diff,
-            "files_skipped_budget":  pre.files_skipped_budget,
-            "files_skipped_noise":   pre.files_skipped_noise,
-            "total_diff_chars":      pre.total_diff_chars,
+            "risk_floor":           pre.risk_floor,
+            "risk_tags":            pre.risk_tags,
+            "flagged_files":        pre.flagged_files,
+            "trivially_touched":    pre.trivially_touched,
+            "files_with_diff":      pre.files_with_diff,
+            "files_skipped_budget": pre.files_skipped_budget,
+            "files_skipped_noise":  pre.files_skipped_noise,
+            "total_diff_chars":     pre.total_diff_chars,
         },
         "analysed_at": datetime.now(timezone.utc).isoformat(),
     }
+    if risk is not None:
+        response["risk_engine"] = {
+            "score":       risk.risk_score,
+            "band":        risk.risk_band,
+            "label":       risk.risk_label,
+            "top_factors": risk.top_factors,
+            "breakdown": {
+                "probability": round(risk.p_score, 3),
+                "impact":      round(risk.i_score, 3),
+                "confidence":  round(risk.c_score, 3),
+            },
+        }
+    return response
 
 
 # ══════════════════════════════════════════════════════════════════════════════
