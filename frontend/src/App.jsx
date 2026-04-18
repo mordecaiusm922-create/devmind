@@ -7,7 +7,8 @@ const API_KEY  = import.meta.env.VITE_API_KEY  || "dev-key-insecure";
 const RISK = {
   low:    { color: "#00c7a3", bg: "rgba(0,199,163,0.08)",  border: "rgba(0,199,163,0.2)",  label: "LOW"    },
   medium: { color: "#f59e0b", bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.2)", label: "MEDIUM" },
-  high:   { color: "#ef4444", bg: "rgba(239,68,68,0.08)",  border: "rgba(239,68,68,0.2)",  label: "HIGH"   },
+  high:     { color: "#ef4444", bg: "rgba(239,68,68,0.08)",  border: "rgba(239,68,68,0.2)",  label: "HIGH"     },
+  critical: { color: "#7c3aed", bg: "rgba(124,58,237,0.08)", border: "rgba(124,58,237,0.2)", label: "CRITICAL" },
 };
 
 const CONF = {
