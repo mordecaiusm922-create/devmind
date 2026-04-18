@@ -100,7 +100,11 @@ RISK_LABELS = {0: "low", 1: "medium", 2: "high", 3: "critical"}
 # — Security pattern detector ————————————————————————————————————————
 SECURITY_PATTERNS: list[tuple[str, str]] = [
     (r"password|passwd|pwd",           "sensitive_data"),
+    (r"SECRET_KEY|secret_key",              "hardcoded_secret"),
+    (r"django-insecure|INSECURE",           "hardcoded_secret"),
     (r"token|api_key|secret|jwt",      "sensitive_data"),
+    (r"SECRET_KEY|secret_key",              "hardcoded_secret"),
+    (r"django-insecure|INSECURE",           "hardcoded_secret"),
     (r"except\s+Exception",            "broad_exception"),
     (r"verify\s*=\s*False",            "tls_disabled"),
     (r"charge|payment|transfer",       "financial_logic"),
@@ -324,6 +328,9 @@ def pre_analyse(pr_data: dict) -> PreAnalysis:
                 security_flags.append(flag)
     if security_flags and "security" not in risk_tags:
         risk_tags.append("security")
+    if "hardcoded_secret" in security_flags:
+        if risk_level < RISK_LEVELS["high"]:
+            risk_level = RISK_LEVELS["high"]
     if "known_cve" in security_flags or "tls_disabled" in security_flags:
         if risk_level < RISK_LEVELS["medium"]:
             risk_level = RISK_LEVELS["medium"]
