@@ -457,8 +457,7 @@ def evaluate(summary: dict, pr_data: dict) -> Evaluation:
 def enforce_risk_floor(summary: dict, pre: PreAnalysis) -> dict:
     """
     Ensures the model's risk level is never BELOW the heuristic floor.
-    If the model said 'low' but we detected auth files, escalate to 'medium'/'high'.
-    Mutates summary in place and returns it.
+    Never lowers the risk — only raises it.
     """
     risk = summary.get("risk", {})
     if not isinstance(risk, dict):
@@ -471,14 +470,13 @@ def enforce_risk_floor(summary: dict, pre: PreAnalysis) -> dict:
         old_level = risk.get("level", "low")
         risk["level"] = pre.risk_floor
         risk["reason"] = (
-            f"[Risk escalated from {old_level} to {pre.risk_floor} — "
+            f"[Risk escalated from {old_level} to {pre.risk_floor} - "
             f"sensitive areas detected: {', '.join(pre.risk_tags)}] "
             + risk.get("reason", "")
         )
         summary["risk"] = risk
 
     return summary
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # RISK ENGINE v1 — Enfoque C (motor híbrido estructurado)
