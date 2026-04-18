@@ -95,8 +95,8 @@ RISK_FILE_RULES: list[tuple[str, str, str]] = [
 # Prevents a 1-line comment fix in auth.py from pinning the whole PR to high risk.
 TRIVIAL_CHURN_THRESHOLD = 8
 
-RISK_LEVELS = {"low": 0, "medium": 1, "high": 2}
-RISK_LABELS = {0: "low", 1: "medium", 2: "high"}
+RISK_LEVELS = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+RISK_LABELS = {0: "low", 1: "medium", 2: "high", 3: "critical"}
 # — Security pattern detector ————————————————————————————————————————
 SECURITY_PATTERNS: list[tuple[str, str]] = [
     (r"password|passwd|pwd",           "sensitive_data"),
