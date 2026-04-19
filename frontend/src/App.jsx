@@ -1,7 +1,7 @@
 import { useState } from "react";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
-const API_KEY  = import.meta.env.VITE_API_KEY  || "dev-key-insecure";
+const API_BASE = import.meta.env.VITE_API_URL || "https://devmind-2cej.onrender.com";
+const API_KEY  = import.meta.env.VITE_API_KEY  || "devmind-key-123";
 
 // ── Risk palette ──────────────────────────────────────────────────────────────
 const RISK = {
@@ -353,7 +353,7 @@ export default function App() {
                   <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e2e8" }}>{result.risk_engine.label}</div>
                   <ul style={{ listStyle: "none", margin: "6px 0 0", padding: 0, display: "flex", flexDirection: "column", gap: 3 }}>
                     {(result.risk_engine.top_factors || []).map((f, i) => (
-                      <li key={i} style={{ fontSize: 11, color: "#b0b0bc" }}>� {f}</li>
+                      <li key={i} style={{ fontSize: 11, color: "#b0b0bc" }}>� {f}</li>
                     ))}
                   </ul>
                 </div>
