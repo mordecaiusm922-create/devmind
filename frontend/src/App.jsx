@@ -341,6 +341,25 @@ export default function App() {
               </ul>
             </Card>
           )}
+          {/* Risk Engine Score */}
+          {result?.risk_engine && (
+            <Card>
+              <SectionLabel>Risk Score</SectionLabel>
+              <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                <span style={{ fontSize: 40, fontWeight: 700, fontFamily: "var(--mono)", color: result.risk_engine.band === "critical" ? "#7c3aed" : result.risk_engine.band === "high" ? "#ef4444" : result.risk_engine.band === "medium" ? "#f59e0b" : "#00c7a3" }}>
+                  {result.risk_engine.score}
+                </span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e2e8" }}>{result.risk_engine.label}</div>
+                  <ul style={{ listStyle: "none", margin: "6px 0 0", padding: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+                    {(result.risk_engine.top_factors || []).map((f, i) => (
+                      <li key={i} style={{ fontSize: 11, color: "#b0b0bc" }}>· {f}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </Card>
+          )}
           {/* Footer: scores */}
           <div style={{ display: "flex", gap: 16, paddingTop: 4, paddingLeft: 2 }}>
             <span style={scoreStyle}>
