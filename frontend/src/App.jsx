@@ -292,6 +292,28 @@ export default function App() {
               </ul>
             </Card>
           )}
+          {/* Vulnerabilities */}
+          {(result?.summary?.vulnerabilities || []).length > 0 && (
+            <Card>
+              <SectionLabel>Vulnerabilities</SectionLabel>
+              <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 12 }}>
+                {result.summary.vulnerabilities.map((v, i) => {
+                  const sevColor = { critical: "#7c3aed", high: "#ef4444", medium: "#f59e0b", low: "#00c7a3" }[v.severity] || "#b0b0bc";
+                  return (
+                    <li key={i} style={{ borderLeft: `3px solid ${sevColor}`, paddingLeft: 12 }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
+                        <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: sevColor, textTransform: "uppercase", fontWeight: 700 }}>{v.severity}</span>
+                        <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--accent)" }}>{v.location}</span>
+                        <span style={{ fontSize: 10, color: "var(--muted)", background: "var(--surface2)", padding: "1px 6px", borderRadius: 4 }}>{v.type}</span>
+                      </div>
+                      <p style={{ fontSize: 12, color: "#b0b0bc", margin: "0 0 4px" }}>{v.description}</p>
+                      <p style={{ fontSize: 11, color: "#00c7a3", margin: 0 }}>Fix: {v.fix}</p>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
+          )}
 {/* Evidence */}
           {(summary.evidence || []).length > 0 && (
             <Card>
