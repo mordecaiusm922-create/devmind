@@ -724,7 +724,7 @@ def _extract_c_signals(pre: "PreAnalysis", ev: "Evaluation", pr_data: dict) -> d
 def _score_to_band(score: int) -> tuple[str, str]:
     """Convierte score numérico a banda + label."""
     if score >= 80:
-        return "critical", "Crítico — requiere revisión inmediata"
+        return "critical", "Critical -- requires immediate review"
     elif score >= 60:
         return "high", "High -- review before merging"
     elif score >= 40:
@@ -746,17 +746,17 @@ def _build_top_factors(
         "tag_auth":           "Toca lógica de autenticación",
         "tag_payments":       "Involucra pagos o facturación",
         "tag_infra":          "Cambios en infraestructura/deploy",
-        "tag_security":       "Modifica configuración de seguridad",
+        "tag_security":       "Modifies security configuration",
         "tag_db_migration":   "Incluye migraciones de base de datos",
         "tag_concurrency":    "Afecta código concurrente/async",
         "tag_db_query":       "Modifica queries o modelos de datos",
         "tag_api":            "Cambia superficie de API expuesta",
-        "tag_config":         "Modifica configuración o variables de entorno",
-        "no_tests_touched":   "No hay archivos de tests en el PR",
+        "tag_config":         "Modifies config or environment variables",
+        "no_tests_touched":   "No test files in this PR",
         "large_diff":         "Diff de gran tamaño (alta superficie)",
         "many_files":         "Muchos archivos modificados",
         "has_cve_refs":       "Contiene referencias a CVEs",
-        "security_patterns":  "Patrones de seguridad detectados en el diff",
+        "security_patterns":  "Security patterns detected in diff",
         "floor_high":         "Pre-analysis flagged as high risk",
         "floor_medium":       "Pre-analysis flagged as medium risk",
         "vulnerabilities_found": "El LLM encontró vulnerabilidades concretas",
