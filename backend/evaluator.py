@@ -532,7 +532,7 @@ _I_WEIGHTS = {
     # Escala del cambio
     "additions_large": 0.30,   # >500 líneas añadidas
     "additions_medium":0.15,   # 100–500 líneas
-    "deletions_large": 0.20,   # eliminar código = riesgo silencioso
+    "deletions_large": 0.20,   # eliminar código = silent risk
     "many_changed_files": 0.25,# >10 archivos
     "vulnerabilities_found": 0.60,  # LLM encontró vulnerabilidades reales
 }
@@ -726,11 +726,11 @@ def _score_to_band(score: int) -> tuple[str, str]:
     if score >= 80:
         return "critical", "Crítico — requiere revisión inmediata"
     elif score >= 60:
-        return "high", "Alto — revisar antes de mergear"
+        return "high", "High -- review before merging"
     elif score >= 40:
         return "medium", "Medio — atención en áreas específicas"
     elif score >= 20:
-        return "low", "Bajo — cambios de bajo riesgo"
+        return "low", "Low -- low risk changes"
     else:
         return "minimal", "Mínimo — PR de bajo impacto"
 
@@ -757,8 +757,8 @@ def _build_top_factors(
         "many_files":         "Muchos archivos modificados",
         "has_cve_refs":       "Contiene referencias a CVEs",
         "security_patterns":  "Patrones de seguridad detectados en el diff",
-        "floor_high":         "Pre-análisis clasifica como riesgo alto",
-        "floor_medium":       "Pre-análisis clasifica como riesgo medio",
+        "floor_high":         "Pre-analysis flagged as high risk",
+        "floor_medium":       "Pre-analysis flagged as medium risk",
         "vulnerabilities_found": "El LLM encontró vulnerabilidades concretas",
         "additions_large":    "Más de 500 líneas añadidas",
         "many_changed_files": "Más de 10 archivos modificados",
