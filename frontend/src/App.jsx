@@ -378,8 +378,17 @@ useEffect(() => {
   supabase.auth.getSession().then(({ data: { session } }) => {
     setUser(session?.user ?? null);
   });
-  const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-    setUser(session?.user ?? null);
+  const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const u = session?.user ?? null;
+    setUser(u);
+    if (_event === "SIGNED_IN" && u) {
+      // Upsert user in Supabase; generate api_key only if not exists
+      const apiKey = `dm-${u.id.replace(/-/g, "").slice(0, 24)}`;
+      await supabase.from("users").upsert(
+        { id: u.id, github_login: u.user_metadata?.user_name, email: u.email, api_key: apiKey },
+        { onConflict: "id", ignoreDuplicates: true }
+      );
+    }
   });
   return () => subscription.unsubscribe();
 }, []);
