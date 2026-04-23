@@ -488,7 +488,7 @@ const signOut = async () => {
             fontSize: 12, color: "#c084fc", fontFamily: "'JetBrains Mono', monospace",
           }}>
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#a855f7", boxShadow: "0 0 8px #a855f7", animation: "pulse 2s infinite" }} />
-            100% accuracy on 10 real GitHub PRs
+            High precision on curated security benchmark
           </div>
 
           {/* Headline */}
