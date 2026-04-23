@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { supabase } from "./supabase";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const API_BASE = import.meta.env.VITE_API_URL || "https://devmind-2cej.onrender.com";
@@ -371,6 +372,28 @@ function BenchRow({ repo, pr, expected, got, label }) {
 // ── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [scrolled, setScrolled] = useState(false);
+const [user, setUser] = useState(null);
+
+useEffect(() => {
+  supabase.auth.getSession().then(({ data: { session } }) => {
+    setUser(session?.user ?? null);
+  });
+  const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    setUser(session?.user ?? null);
+  });
+  return () => subscription.unsubscribe();
+}, []);
+
+const signInWithGitHub = async () => {
+  await supabase.auth.signInWithOAuth({
+    provider: "github",
+    options: { redirectTo: "https://devmind-gamma.vercel.app" },
+  });
+};
+
+const signOut = async () => {
+  await supabase.auth.signOut();
+};
 
   useEffect(() => {
     const fn = () => setScrolled(window.scrollY > 20);
@@ -433,11 +456,16 @@ export default function App() {
               {href.slice(1).charAt(0).toUpperCase() + href.slice(2)}
             </a>
           ))}
-          <a href="#pricing" style={{
-            padding: "7px 18px", borderRadius: 8, fontSize: 13, fontWeight: 600,
-            background: "rgba(168,85,247,0.15)", border: "1px solid rgba(168,85,247,0.3)",
-            color: "#c084fc", textDecoration: "none", transition: "all 0.2s",
-          }}>Get started</a>
+          {user ? (
+  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+    <img src={user.user_metadata?.avatar_url} alt="avatar"
+      style={{ width: 28, height: 28, borderRadius: "50%", border: "1px solid rgba(168,85,247,0.4)" }} />
+    <span style={{ fontSize: 12, color: "#94a3b8" }}>{user.user_metadata?.user_name}</span>
+    <button onClick={signOut} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#64748b", cursor: "pointer" }}>Sign out</button>
+  </div>
+) : (
+  <button onClick={signInWithGitHub} style={{ padding: "7px 18px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: "rgba(168,85,247,0.15)", border: "1px solid rgba(168,85,247,0.3)", color: "#c084fc", cursor: "pointer" }}>Sign in with GitHub</button>
+)}
         </div>
       </nav>
 
@@ -667,8 +695,8 @@ jobs:
         run: |
           curl -s -X POST "$DEVMIND_API_URL/analyze-pr" \\
             -H "X-Api-Key: $DEVMIND_API_KEY" \\
-            -d '{"repo":"${{ github.repository }}",
-                 "pr_number":${{ github.event.pull_request.number }}}'`}</pre>
+            -d '{"repo":"${"${{ github.repository }}"}",
+                 "pr_number":${"${{ github.event.pull_request.number }}"}}'`}</pre>
         </div>
         <p style={{ textAlign: "center", marginTop: 20, fontSize: 13, color: "#475569" }}>
           Add <code style={{ color: "#a855f7", background: "rgba(168,85,247,0.1)", padding: "1px 6px", borderRadius: 4 }}>DEVMIND_API_KEY</code> to your repo secrets and you're done.
@@ -697,3 +725,4 @@ jobs:
     </>
   );
 }
+
