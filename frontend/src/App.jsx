@@ -385,7 +385,7 @@ useEffect(() => {
       // Upsert user in Supabase; generate api_key only if not exists
       const apiKey = `dm-${u.id.replace(/-/g, "").slice(0, 24)}`;
       await supabase.from("users").upsert(
-        { id: u.id, github_login: u.user_metadata?.user_name, email: u.email, api_key: apiKey },
+        { id: u.id, username: u.user_metadata?.user_name, email: u.email, api_key: apiKey },
         { onConflict: "id", ignoreDuplicates: true }
       );
     }
