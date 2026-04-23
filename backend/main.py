@@ -24,6 +24,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
 from github import get_pr_data
+from parser import parse_pr_file
+from feature_extractor import extract_features
 from logger import log_analysis, read_recent_logs
 from summarizer import summarize_pr
 from evaluator import compute_risk_score
@@ -176,6 +178,21 @@ async def _run_analysis(repo: str, pr_number: int) -> dict:
         risk                 = compute_risk_score(pre, summary, ev, pr_data)
         log_analysis(repo, pr_number, pr_data, summary, pre, ev)
         return _build_response(repo, pr_number, pr_data, summary, pre, ev, risk)
+        # Tree-sitter
+        all_parsed = []
+        for f in pr_data.get("files", []):
+            fname = f.get("filename", "")
+            patch = f.get("raw_patch", "")
+            if not patch or f.get("is_noise"):
+                continue
+            parsed = parse_pr_file(fname, patch, [])
+            all_parsed.append(parsed)
+        combined = {"functions_changed": [], "calls": []}
+        for p in all_parsed:
+            combined["functions_changed"].extend(p.get("functions_changed", []))
+            combined["calls"].extend(p.get("calls", []))
+        diff_stats = {"additions": pr_data.get("additions", 0), "deletions": pr_data.get("deletions", 0), "changed_files": pr_data.get("changed_files", 0)}
+        features = extract_features(combined, diff_stats)
 
     try:
         return await asyncio.wait_for(
