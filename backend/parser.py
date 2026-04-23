@@ -1,9 +1,10 @@
 ﻿# -*- coding: utf-8 -*-
-from tree_sitter_languages import get_language, get_parser as _get_parser
+# lazy import to avoid slow startup
 
 SUPPORTED = ["python", "javascript", "typescript"]
 
 def get_ts_parser(lang: str):
+    from tree_sitter_languages import get_parser as _get_parser
     lang = lang.lower()
     if lang not in SUPPORTED:
         lang = "python"
