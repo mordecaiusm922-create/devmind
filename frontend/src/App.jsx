@@ -373,10 +373,16 @@ function BenchRow({ repo, pr, expected, got, label }) {
 export default function App() {
   const [scrolled, setScrolled] = useState(false);
 const [user, setUser] = useState(null);
+const [apiKey, setApiKey] = useState(null);
 
 useEffect(() => {
-  supabase.auth.getSession().then(({ data: { session } }) => {
-    setUser(session?.user ?? null);
+  supabase.auth.getSession().then(async ({ data: { session } }) => {
+    const u = session?.user ?? null;
+    setUser(u);
+    if (u) {
+      const { data } = await supabase.from("users").select("api_key").eq("id", u.id).single();
+      if (data) setApiKey(data.api_key);
+    }
   });
   const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
     const u = session?.user ?? null;
@@ -470,6 +476,13 @@ const signOut = async () => {
     <img src={user.user_metadata?.avatar_url} alt="avatar"
       style={{ width: 28, height: 28, borderRadius: "50%", border: "1px solid rgba(168,85,247,0.4)" }} />
     <span style={{ fontSize: 12, color: "#94a3b8" }}>{user.user_metadata?.user_name}</span>
+    {apiKey && (
+      <button onClick={() => navigator.clipboard.writeText(apiKey)}
+        title="Click to copy your API key"
+        style={{ padding: "5px 12px", borderRadius: 7, fontSize: 11, fontWeight: 600, background: "rgba(168,85,247,0.1)", border: "1px solid rgba(168,85,247,0.25)", color: "#c084fc", cursor: "pointer", fontFamily: "JetBrains Mono, monospace", letterSpacing: "0.03em" }}>
+        {apiKey.slice(0, 16)}... Copy
+      </button>
+    )}
     <button onClick={signOut} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#64748b", cursor: "pointer" }}>Sign out</button>
   </div>
 ) : (
