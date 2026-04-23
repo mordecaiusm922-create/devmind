@@ -41,9 +41,26 @@ log = logging.getLogger("devmind")
 # ── Config ────────────────────────────────────────────────────────────────────
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 WEBHOOK_SECRET  = os.getenv("GITHUB_WEBHOOK_SECRET", "")
-# API keys: comma-separated list in env. In production, replace with DB lookup.
+# API keys: static fallback + Supabase lookup
 _RAW_KEYS       = os.getenv("API_KEYS", "dev-key-insecure")
 VALID_API_KEYS  = set(k.strip() for k in _RAW_KEYS.split(",") if k.strip())
+SUPABASE_URL    = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY    = os.getenv("SUPABASE_SERVICE_KEY", "")
+
+def _lookup_api_key_in_supabase(api_key: str) -> bool:
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return False
+    try:
+        import httpx
+        resp = httpx.get(
+            f"{SUPABASE_URL}/rest/v1/users",
+            params={"api_key": f"eq.{api_key}", "select": "api_key", "limit": "1"},
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
+            timeout=3.0,
+        )
+        return resp.status_code == 200 and len(resp.json()) > 0
+    except Exception:
+        return False
 
 # Rate limit: requests per window per API key
 RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "20"))
@@ -71,7 +88,13 @@ def _check_rate_limit(api_key: str) -> None:
 
 # ── API key dependency ─────────────────────────────────────────────────────────
 def _require_api_key(x_api_key: Annotated[str | None, Header()] = None) -> str:
-    if not x_api_key or x_api_key not in VALID_API_KEYS:
+    if not x_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid API key. Pass X-Api-Key header.",
+        )
+    # Accept static keys OR keys registered in Supabase
+    if x_api_key not in VALID_API_KEYS and not _lookup_api_key_in_supabase(x_api_key):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid API key. Pass X-Api-Key header.",
