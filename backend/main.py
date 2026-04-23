@@ -177,7 +177,6 @@ async def _run_analysis(repo: str, pr_number: int) -> dict:
         summary, pre, ev     = summarize_pr(pr_data)
         risk                 = compute_risk_score(pre, summary, ev, pr_data)
         log_analysis(repo, pr_number, pr_data, summary, pre, ev)
-        return _build_response(repo, pr_number, pr_data, summary, pre, ev, risk)
         # Tree-sitter
         all_parsed = []
         for f in pr_data.get("files", []):
@@ -193,6 +192,10 @@ async def _run_analysis(repo: str, pr_number: int) -> dict:
             combined["calls"].extend(p.get("calls", []))
         diff_stats = {"additions": pr_data.get("additions", 0), "deletions": pr_data.get("deletions", 0), "changed_files": pr_data.get("changed_files", 0)}
         features = extract_features(combined, diff_stats)
+        response = _build_response(repo, pr_number, pr_data, summary, pre, ev, risk)
+        response['code_features'] = features
+        response['parsed_functions'] = combined['functions_changed'][:10]
+        return response
 
     try:
         return await asyncio.wait_for(
