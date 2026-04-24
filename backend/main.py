@@ -180,11 +180,10 @@ async def _run_analysis(repo: str, pr_number: int) -> dict:
         # Tree-sitter
         all_parsed = []
         import logging
-        logging.warning(f"PIPELINE: total_files={len(pr_data.get(chr(39)files chr(39), []))}")
         for f in pr_data.get("files", []):
             fname = f.get("filename", "")
             patch = f.get("raw_patch", "")
-            logging.warning(f"FILE: {fname} patch_len={len(patch)} is_noise={f.get(chr(39)is_noise chr(39))}")
+            logging.warning("FILE " + fname + " patch=" + str(len(patch)))
             if not patch or f.get("is_noise"):
                 continue
             parsed = parse_pr_file(fname, patch, None)
