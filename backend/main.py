@@ -179,11 +179,9 @@ async def _run_analysis(repo: str, pr_number: int) -> dict:
         log_analysis(repo, pr_number, pr_data, summary, pre, ev)
         # Tree-sitter
         all_parsed = []
-        import logging
         for f in pr_data.get("files", []):
             fname = f.get("filename", "")
             patch = f.get("raw_patch", "") or f.get("diff", "")
-            logging.warning("FILE " + fname + " patch=" + str(len(patch)))
             if not patch or f.get("is_noise"):
                 continue
             parsed = parse_pr_file(fname, patch, None)
