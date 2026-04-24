@@ -50,7 +50,29 @@ def extract_calls(node):
     traverse(node)
     return list(set(calls))
 
+def _clean_diff(patch: str) -> tuple:
+    clean_lines = []
+    changed = []
+    line_num = 0
+    import re
+    for line in patch.split(chr(10)):
+        if line.startswith('@@'):
+            m = re.search(r'\+(\d+)', line)
+            if m:
+                line_num = int(m.group(1))
+        elif line.startswith('+') and not line.startswith('+++'):
+            clean_lines.append(line[1:])
+            changed.append(line_num)
+            line_num += 1
+        elif line.startswith('-') or line.startswith('---'):
+            pass
+        else:
+            clean_lines.append(line)
+            line_num += 1
+    return chr(10).join(clean_lines), changed
+
 def parse_pr_file(filename: str, code: str, changed_lines: list) -> dict:
+    code, changed_lines = _clean_diff(code)
     lang = detect_language(filename)
     parser = get_ts_parser(lang)
     code_bytes = bytes(code, "utf-8")
