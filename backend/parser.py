@@ -73,6 +73,8 @@ def parse_pr_file(filename: str, code: str, changed_lines) -> dict:
         code = "class _Dummy:" + chr(10) + code
         offset = changed_lines[0] - 1 if changed_lines else 0
     adjusted = [l - offset for l in changed_lines]
+    import logging
+    logging.warning(f"PARSER: offset={offset} changed={changed_lines} adjusted={adjusted} code_start={repr(code[:50])}")
     lang = detect_language(filename)
     parser = get_ts_parser(lang)
     code_bytes = bytes(code, "utf-8")
