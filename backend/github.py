@@ -177,6 +177,7 @@ def _process_files(raw_files: list) -> list:
             "status": f["status"],
             "additions": f["additions"],
             "deletions": f["deletions"],
+            "raw_patch": f["raw_patch"],
             "diff": truncated,
             "truncated": was_truncated,
             "skipped_reason": None,

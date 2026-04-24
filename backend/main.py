@@ -182,7 +182,7 @@ async def _run_analysis(repo: str, pr_number: int) -> dict:
         import logging
         for f in pr_data.get("files", []):
             fname = f.get("filename", "")
-            patch = f.get("diff", "") or f.get("raw_patch", "")
+            patch = f.get("raw_patch", "") or f.get("diff", "")
             logging.warning("FILE " + fname + " patch=" + str(len(patch)))
             if not patch or f.get("is_noise"):
                 continue
