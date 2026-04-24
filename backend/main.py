@@ -184,7 +184,7 @@ async def _run_analysis(repo: str, pr_number: int) -> dict:
             patch = f.get("raw_patch", "")
             if not patch or f.get("is_noise"):
                 continue
-            parsed = parse_pr_file(fname, patch, [])
+            parsed = parse_pr_file(fname, patch, None)
             all_parsed.append(parsed)
         combined = {"functions_changed": [], "calls": []}
         for p in all_parsed:

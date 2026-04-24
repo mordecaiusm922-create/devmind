@@ -72,7 +72,9 @@ def _clean_diff(patch: str) -> tuple:
     return chr(10).join(clean_lines), changed
 
 def parse_pr_file(filename: str, code: str, changed_lines: list) -> dict:
-    code, changed_lines = _clean_diff(code)
+    code, auto_lines = _clean_diff(code)
+    if changed_lines is None or len(changed_lines) == 0:
+        changed_lines = auto_lines
     lang = detect_language(filename)
     parser = get_ts_parser(lang)
     code_bytes = bytes(code, "utf-8")
