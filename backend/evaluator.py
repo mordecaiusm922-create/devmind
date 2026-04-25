@@ -717,15 +717,15 @@ def _extract_c_signals(pre: "PreAnalysis", ev: "Evaluation", pr_data: dict) -> d
 def _score_to_band(score: int) -> tuple[str, str]:
     """Convierte score numérico a banda + label."""
     if score >= 80:
-        return "critical", "Crítico — requiere revisión inmediata"
+        return "critical", "Critical -- requires immediate review"
     elif score >= 60:
-        return "high", "Alto — revisar antes de mergear"
+        return "high", "High -- review before merging"
     elif score >= 40:
-        return "medium", "Medio — atención en áreas específicas"
+        return "medium", "Medium -- review specific areas"
     elif score >= 20:
-        return "low", "Bajo — cambios de bajo riesgo"
+        return "low", "Low -- low risk changes"
     else:
-        return "minimal", "Mínimo — PR de bajo impacto"
+        return "minimal", "Minimal -- low impact PR"
 
 
 def _build_top_factors(
@@ -819,5 +819,3 @@ def compute_risk_score(
         risk_label=label,
         top_factors=top_factors,
     )
-
-# v2
