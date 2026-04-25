@@ -672,7 +672,7 @@ def _extract_i_signals(pre: "PreAnalysis", summary: dict, pr_data: dict) -> dict
 
     if changed_files > 10: signals["many_changed_files"] = 1.0
 
-    # ¿El LLM encontró vulnerabilidades concretas?
+    # ¿LLM found concrete vulnerabilities?
     vulns = summary.get("vulnerabilities", [])
     if vulns and len(vulns) > 0:
         signals["vulnerabilities_found"] = min(1.0, len(vulns) / 3)
@@ -736,23 +736,23 @@ def _build_top_factors(
 ) -> list[str]:
     """Retorna los 5 factores más influyentes para mostrar al usuario."""
     _FACTOR_LABELS = {
-        "tag_auth":           "Toca lógica de autenticación",
-        "tag_payments":       "Involucra pagos o facturación",
-        "tag_infra":          "Cambios en infraestructura/deploy",
-        "tag_security":       "Modifica configuración de seguridad",
-        "tag_db_migration":   "Incluye migraciones de base de datos",
-        "tag_concurrency":    "Afecta código concurrente/async",
-        "tag_db_query":       "Modifica queries o modelos de datos",
-        "tag_api":            "Cambia superficie de API expuesta",
-        "tag_config":         "Modifica configuración o variables de entorno",
-        "no_tests_touched":   "No hay archivos de tests en el PR",
-        "large_diff":         "Diff de gran tamaño (alta superficie)",
-        "many_files":         "Muchos archivos modificados",
-        "has_cve_refs":       "Contiene referencias a CVEs",
-        "security_patterns":  "Patrones de seguridad detectados en el diff",
-        "floor_high":         "Pre-análisis clasifica como riesgo alto",
-        "floor_medium":       "Pre-análisis clasifica como riesgo medio",
-        "vulnerabilities_found": "El LLM encontró vulnerabilidades concretas",
+        "tag_auth":           "Touches authentication logic",
+        "tag_payments":       "Involves payments or billing",
+        "tag_infra":          "Infrastructure or deploy changes",
+        "tag_security":       "Modifies security configuration",
+        "tag_db_migration":   "Includes database migrations",
+        "tag_concurrency":    "Affects concurrent or async code",
+        "tag_db_query":       "Modifies queries or data models",
+        "tag_api":            "Changes exposed API surface",
+        "tag_config":         "Modifies config or environment variables",
+        "no_tests_touched":   "No test files in this PR",
+        "large_diff":         "Large diff (high surface area)",
+        "many_files":         "Many files modified",
+        "has_cve_refs":       "Contains CVE references",
+        "security_patterns":  "Security patterns detected in diff",
+        "floor_high":         "Pre-analysis flagged as high risk",
+        "floor_medium":       "Pre-analysis flagged as medium risk",
+        "vulnerabilities_found": "LLM found concrete vulnerabilities",
         "additions_large":    "More than 500 lines added",
         "many_changed_files": "More than 10 files modified",
     }
