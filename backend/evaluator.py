@@ -95,16 +95,12 @@ RISK_FILE_RULES: list[tuple[str, str, str]] = [
 # Prevents a 1-line comment fix in auth.py from pinning the whole PR to high risk.
 TRIVIAL_CHURN_THRESHOLD = 8
 
-RISK_LEVELS = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-RISK_LABELS = {0: "low", 1: "medium", 2: "high", 3: "critical"}
+RISK_LEVELS = {"low": 0, "medium": 1, "high": 2}
+RISK_LABELS = {0: "low", 1: "medium", 2: "high"}
 # — Security pattern detector ————————————————————————————————————————
 SECURITY_PATTERNS: list[tuple[str, str]] = [
     (r"password|passwd|pwd",           "sensitive_data"),
-    (r"SECRET_KEY|secret_key",              "hardcoded_secret"),
-    (r"django-insecure|INSECURE",           "hardcoded_secret"),
     (r"token|api_key|secret|jwt",      "sensitive_data"),
-    (r"SECRET_KEY|secret_key",              "hardcoded_secret"),
-    (r"django-insecure|INSECURE",           "hardcoded_secret"),
     (r"except\s+Exception",            "broad_exception"),
     (r"verify\s*=\s*False",            "tls_disabled"),
     (r"charge|payment|transfer",       "financial_logic"),
@@ -328,9 +324,6 @@ def pre_analyse(pr_data: dict) -> PreAnalysis:
                 security_flags.append(flag)
     if security_flags and "security" not in risk_tags:
         risk_tags.append("security")
-    if "hardcoded_secret" in security_flags:
-        if risk_level < RISK_LEVELS["high"]:
-            risk_level = RISK_LEVELS["high"]
     if "known_cve" in security_flags or "tls_disabled" in security_flags:
         if risk_level < RISK_LEVELS["medium"]:
             risk_level = RISK_LEVELS["medium"]
@@ -532,7 +525,7 @@ _I_WEIGHTS = {
     # Escala del cambio
     "additions_large": 0.30,   # >500 líneas añadidas
     "additions_medium":0.15,   # 100–500 líneas
-    "deletions_large": 0.20,   # eliminar código = silent risk
+    "deletions_large": 0.20,   # eliminar código = riesgo silencioso
     "many_changed_files": 0.25,# >10 archivos
     "vulnerabilities_found": 0.60,  # LLM encontró vulnerabilidades reales
 }
@@ -724,13 +717,13 @@ def _extract_c_signals(pre: "PreAnalysis", ev: "Evaluation", pr_data: dict) -> d
 def _score_to_band(score: int) -> tuple[str, str]:
     """Convierte score numérico a banda + label."""
     if score >= 80:
-        return "critical", "Critical -- requires immediate review"
+        return "critical", "Crítico — requiere revisión inmediata"
     elif score >= 60:
-        return "high", "High -- review before merging"
+        return "high", "Alto — revisar antes de mergear"
     elif score >= 40:
         return "medium", "Medio — atención en áreas específicas"
     elif score >= 20:
-        return "low", "Low -- low risk changes"
+        return "low", "Bajo — cambios de bajo riesgo"
     else:
         return "minimal", "Mínimo — PR de bajo impacto"
 
@@ -741,27 +734,27 @@ def _build_top_factors(
     p_weights: dict[str, float],
     i_weights: dict[str, float],
 ) -> list[str]:
-    """Returns the 5 most influential factors to show the user."""
+    """Retorna los 5 factores más influyentes para mostrar al usuario."""
     _FACTOR_LABELS = {
-        "tag_auth":           "Touches authentication logic",
-        "tag_payments":       "Involves payments or billing",
-        "tag_infra":          "Infrastructure or deploy changes",
-        "tag_security":       "Modifies security configuration",
-        "tag_db_migration":   "Includes database migrations",
-        "tag_concurrency":    "Affects concurrent or async code",
-        "tag_db_query":       "Modifies queries or data models",
-        "tag_api":            "Changes exposed API surface",
-        "tag_config":         "Modifies config or environment variables",
-        "no_tests_touched":   "No test files in this PR",
-        "large_diff":         "Large diff (high surface area)",
-        "many_files":         "Many files modified",
-        "has_cve_refs":       "Contains CVE references",
-        "security_patterns":  "Security patterns detected in diff",
-        "floor_high":         "Pre-analysis flagged as high risk",
-        "floor_medium":       "Pre-analysis flagged as medium risk",
+        "tag_auth":           "Toca lógica de autenticación",
+        "tag_payments":       "Involucra pagos o facturación",
+        "tag_infra":          "Cambios en infraestructura/deploy",
+        "tag_security":       "Modifica configuración de seguridad",
+        "tag_db_migration":   "Incluye migraciones de base de datos",
+        "tag_concurrency":    "Afecta código concurrente/async",
+        "tag_db_query":       "Modifica queries o modelos de datos",
+        "tag_api":            "Cambia superficie de API expuesta",
+        "tag_config":         "Modifica configuración o variables de entorno",
+        "no_tests_touched":   "No hay archivos de tests en el PR",
+        "large_diff":         "Diff de gran tamaño (alta superficie)",
+        "many_files":         "Muchos archivos modificados",
+        "has_cve_refs":       "Contiene referencias a CVEs",
+        "security_patterns":  "Patrones de seguridad detectados en el diff",
+        "floor_high":         "Pre-análisis clasifica como riesgo alto",
+        "floor_medium":       "Pre-análisis clasifica como riesgo medio",
         "vulnerabilities_found": "El LLM encontró vulnerabilidades concretas",
-        "additions_large":    "Más de 500 líneas añadidas",
-        "many_changed_files": "Más de 10 archivos modificados",
+        "additions_large":    "More than 500 lines added",
+        "many_changed_files": "More than 10 files modified",
     }
 
     # Combinar todas las señales con su impacto real (valor × peso)
