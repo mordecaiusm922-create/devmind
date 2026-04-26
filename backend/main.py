@@ -336,7 +336,7 @@ async def github_webhook(
     x_github_event: Annotated[str | None, Header()] = None,
     x_hub_signature_256: Annotated[str | None, Header()] = None,
 ):
-    from github_app import verify_webhook_signature, get_installation_token, post_pr_comment
+    from github_app import verify_webhook_signature, get_installation_token, post_pr_comment, post_commit_status
     body = await request.body()
     if not verify_webhook_signature(body, x_hub_signature_256 or ""):
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
@@ -408,13 +408,20 @@ async def github_webhook(
 _Analyzed by [DevMind](https://devmind-gamma.vercel.app)_"""
 
             post_pr_comment(repo, pr_number, comment, token)
-            create_check_run(repo, commit_sha, token, score, level, top_factors, s)
+            state = "failure" if level in ("critical", "high") else "success"
+            desc = f"Risk {score}/100 — {level.upper()}"
+            post_commit_status(repo, commit_sha, token, state, desc)
             log.info(f"webhook comment posted repo={repo} pr={pr_number}")
         except Exception as e:
             import traceback
             print(f"[TASK ERROR] {traceback.format_exc()}")
             log.error(f"webhook analysis failed repo={repo} pr={pr_number} error={e}")
 
+    try:
+        token_pending = get_installation_token(installation_id)
+        post_commit_status(repo, commit_sha, token_pending, "pending", "DevMind is analyzing this PR...")
+    except Exception as e:
+        log.warning(f"Could not post pending status: {e}")
     import threading
     threading.Thread(target=lambda: asyncio.run(analyze_and_comment()), daemon=False).start()
     return {"accepted": True, "repo": repo, "pr": pr_number, "action": action}

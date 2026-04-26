@@ -56,6 +56,23 @@ def post_pr_comment(repo: str, pr_number: int, body: str, token: str) -> None:
         timeout=10,
     )
 
+def post_commit_status(repo: str, commit_sha: str, token: str, state: str, description: str) -> None:
+    """state: pending | success | failure | error"""
+    httpx.post(
+        f"https://api.github.com/repos/{repo}/statuses/{commit_sha}",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        },
+        json={
+            "state": state,
+            "description": description[:140],
+            "context": "DevMind Risk Engine",
+        },
+        timeout=10,
+    )
+
+
 def create_check_run(repo: str, commit_sha: str, token: str, risk_score: int, risk_band: str, top_factors: list, summary: dict) -> dict:
     if risk_band == "critical":
         conclusion = "failure"
