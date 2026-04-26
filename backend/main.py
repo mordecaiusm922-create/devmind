@@ -1,5 +1,5 @@
-"""
-main.py — DevMind SaaS API
+﻿"""
+main.py â€” DevMind SaaS API
 FastAPI application. Wraps the core pipeline (github.py, summarizer.py,
 evaluator.py) with auth, rate limiting, structured logging, and a GitHub
 webhook handler.
@@ -32,7 +32,7 @@ from evaluator import compute_risk_score
 
 load_dotenv()
 
-# ── Structured logger ──────────────────────────────────────────────────────────
+# â”€â”€ Structured logger â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 logging.basicConfig(
     level=logging.INFO,
     format='{"time":"%(asctime)s","level":"%(levelname)s","msg":"%(message)s"}',
@@ -40,7 +40,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("devmind")
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# â”€â”€ Config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 WEBHOOK_SECRET  = os.getenv("GITHUB_WEBHOOK_SECRET", "")
 # API keys: static fallback + Supabase lookup
@@ -70,7 +70,7 @@ RATE_LIMIT_WINDOW_S = int(os.getenv("RATE_LIMIT_WINDOW_S", "60"))
 
 ANALYSIS_TIMEOUT_S  = int(os.getenv("ANALYSIS_TIMEOUT_S", "120"))
 
-# ── In-memory sliding-window rate limiter ─────────────────────────────────────
+# â”€â”€ In-memory sliding-window rate limiter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Good enough for MVP; swap for Redis when you have multiple workers.
 _rate_store: dict[str, list[float]] = defaultdict(list)
 
@@ -88,7 +88,7 @@ def _check_rate_limit(api_key: str) -> None:
     _rate_store[api_key].append(now)
 
 
-# ── API key dependency ─────────────────────────────────────────────────────────
+# â”€â”€ API key dependency â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def _require_api_key(x_api_key: Annotated[str | None, Header()] = None) -> str:
     if not x_api_key:
         raise HTTPException(
@@ -105,7 +105,7 @@ def _require_api_key(x_api_key: Annotated[str | None, Header()] = None) -> str:
     return x_api_key
 
 
-# ── App ───────────────────────────────────────────────────────────────────────
+# â”€â”€ App â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app = FastAPI(
     title="DevMind API",
     version="1.0.0",
@@ -121,7 +121,7 @@ app.add_middleware(
 )
 
 
-# ── Request logging middleware ─────────────────────────────────────────────────
+# â”€â”€ Request logging middleware â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @app.middleware("http")
 async def _log_requests(request: Request, call_next):
     req_id = str(uuid.uuid4())[:8]
@@ -136,7 +136,7 @@ async def _log_requests(request: Request, call_next):
     return response
 
 
-# ── Global exception handler ───────────────────────────────────────────────────
+# â”€â”€ Global exception handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @app.exception_handler(Exception)
 async def _unhandled(request: Request, exc: Exception):
     log.error(f"Unhandled exception on {request.url.path}: {exc}", exc_info=True)
@@ -146,7 +146,7 @@ async def _unhandled(request: Request, exc: Exception):
     )
 
 
-# ── Models ────────────────────────────────────────────────────────────────────
+# â”€â”€ Models â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class AnalysePRRequest(BaseModel):
     repo:      str
     pr_number: int
@@ -166,7 +166,7 @@ class AnalysePRRequest(BaseModel):
         return v
 
 
-# ── Core pipeline runner ───────────────────────────────────────────────────────
+# â”€â”€ Core pipeline runner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async def _run_analysis(repo: str, pr_number: int) -> dict:
     """
     Runs the full pipeline in a thread (summarize_pr is synchronous/blocking).
@@ -276,9 +276,9 @@ def _build_response(repo, pr_number, pr_data, summary, pre, ev, risk=None) -> di
     return response
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Endpoints
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 @app.get("/")
 async def health():
@@ -301,7 +301,7 @@ async def analyze_pr(req: AnalysePRRequest):
     return await _run_analysis(req.repo, req.pr_number)
 
 
-# ── GitHub Webhook ─────────────────────────────────────────────────────────────
+# â”€â”€ GitHub Webhook â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _verify_github_signature(body: bytes, sig_header: str | None) -> None:
     """
@@ -309,7 +309,7 @@ def _verify_github_signature(body: bytes, sig_header: str | None) -> None:
     Skips validation if GITHUB_WEBHOOK_SECRET is not configured (dev mode).
     """
     if not WEBHOOK_SECRET:
-        return  # dev mode — no secret configured
+        return  # dev mode â€” no secret configured
     if not sig_header or not sig_header.startswith("sha256="):
         raise HTTPException(status_code=401, detail="Missing webhook signature")
     expected = "sha256=" + hmac.new(
@@ -331,28 +331,17 @@ async def _process_webhook_pr(repo: str, pr_number: int) -> None:
 
 @app.post("/webhook/github", status_code=202)
 async def github_webhook(
-    request:         Request,
+    request: Request,
     background_tasks: BackgroundTasks,
-    x_github_event:  Annotated[str | None, Header()] = None,
+    x_github_event: Annotated[str | None, Header()] = None,
     x_hub_signature_256: Annotated[str | None, Header()] = None,
 ):
-    """
-    GitHub webhook endpoint.
-    Listens for pull_request events and triggers analysis in the background.
-    Returns 202 immediately — GitHub expects a fast response.
-
-    Setup:
-      1. GitHub repo → Settings → Webhooks → Add webhook
-      2. Payload URL: https://your-domain.com/webhook/github
-      3. Content type: application/json
-      4. Secret: your GITHUB_WEBHOOK_SECRET value
-      5. Events: Pull requests
-    """
+    from github_app import verify_webhook_signature, get_installation_token, post_pr_comment
     body = await request.body()
-    _verify_github_signature(body, x_hub_signature_256)
+    if not verify_webhook_signature(body, x_hub_signature_256 or ""):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     if x_github_event != "pull_request":
-        # Acknowledge non-PR events without processing
         return {"accepted": False, "reason": f"event '{x_github_event}' not handled"}
 
     try:
@@ -361,86 +350,72 @@ async def github_webhook(
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
     action = payload.get("action", "")
-    # Only trigger on open or sync (new commits pushed)
     if action not in ("opened", "synchronize", "reopened"):
         return {"accepted": False, "reason": f"action '{action}' not handled"}
 
-    pr    = payload.get("pull_request", {})
-    repo  = payload.get("repository", {}).get("full_name", "")
-    pr_number = pr.get("number")
+    pr            = payload.get("pull_request", {})
+    repo          = payload.get("repository", {}).get("full_name", "")
+    pr_number     = pr.get("number")
+    installation_id = payload.get("installation", {}).get("id")
 
-    if not repo or not pr_number:
-        raise HTTPException(status_code=400, detail="Missing repository or PR number in payload")
+    if not repo or not pr_number or not installation_id:
+        raise HTTPException(status_code=400, detail="Missing repo, PR number, or installation_id")
 
     log.info(f"webhook received action={action} repo={repo} pr={pr_number}")
-    background_tasks.add_task(_process_webhook_pr, repo, pr_number)
 
-    return {
-        "accepted": True,
-        "repo":     repo,
-        "pr":       pr_number,
-        "action":   action,
-        "message":  "Analysis queued",
-    }
+    async def analyze_and_comment():
+        try:
+            token  = get_installation_token(installation_id)
+            result = await _run_analysis(repo, pr_number)
+            s      = result.get("summary", {})
+            re_obj = result.get("risk_engine", {})
+            level  = re_obj.get("band", "low")
+            score  = re_obj.get("score", 0)
+            top_factors = re_obj.get("top_factors", [])
+            vulns  = s.get("vulnerabilities") or []
 
+            EMOJI = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢", "minimal": "⚪"}
+            emoji = EMOJI.get(level, "⚪")
 
-# ── Internal endpoints (no auth for simplicity — add auth before going public) ─
+            vuln_lines = []
+            for v in vulns:
+                sev  = v.get("severity", "").upper()
+                loc  = v.get("location", "")
+                desc = v.get("description", "")
+                fix  = v.get("fix", "")
+                vuln_lines.append(f"> **{sev}** `{loc}`\n> {desc}\n> **Fix:** {fix}")
+
+            factors_md = "\n".join(f"- {f}" for f in top_factors) if top_factors else "- None detected"
+            vulns_md   = "\n\n".join(vuln_lines) if vuln_lines else "_No vulnerabilities detected_"
+
+            comment = f"""## {emoji} DevMind Risk Analysis
+
+**Risk score:** `{score}/100` — **{level.upper()}**
+
+### Top risk factors
+{factors_md}
+
+### Vulnerabilities
+{vulns_md}
+
+### Summary
+**What:** {s.get("what", "N/A")}
+**Impact:** {s.get("impact", "N/A")}
+
+---
+_Analyzed by [DevMind](https://devmind-gamma.vercel.app)_"""
+
+            post_pr_comment(repo, pr_number, comment, token)
+            log.info(f"webhook comment posted repo={repo} pr={pr_number}")
+        except Exception as e:
+            log.error(f"webhook analysis failed repo={repo} pr={pr_number} error={e}")
+
+    background_tasks.add_task(analyze_and_comment)
+    return {"accepted": True, "repo": repo, "pr": pr_number, "action": action}
+# â”€â”€ Internal endpoints (no auth for simplicity â€” add auth before going public) â”€
 
 @app.get("/logs")
 async def get_logs(n: int = 50):
     """Last n analysis log entries."""
     return {"logs": read_recent_logs(n)}
 
-
-@app.post("/webhook/github")
-async def github_webhook(request: Request):
-    payload_bytes = await request.body()
-    signature = request.headers.get("X-Hub-Signature-256", "")
-    from github_app import verify_webhook_signature, get_installation_token, post_pr_comment
-    if not verify_webhook_signature(payload_bytes, signature):
-        raise HTTPException(status_code=401, detail="Invalid signature")
-    data = await request.json()
-    event = request.headers.get("X-GitHub-Event", "")
-    if event == "pull_request" and data.get("action") in ["opened", "synchronize"]:
-        repo = data["repository"]["full_name"]
-        pr_number = data["pull_request"]["number"]
-        installation_id = data["installation"]["id"]
-        import asyncio
-        async def analyze_and_comment():
-            try:
-                token = get_installation_token(installation_id)
-                pr_data = get_pr_data(repo, pr_number)
-                summary, pre, ev = summarize_pr(pr_data)
-                risk = compute_risk_score(pre, summary, ev, pr_data)
-                log_analysis(repo, pr_number, pr_data, summary, pre, ev)
-                s = summary
-                risk_obj = s.get("risk") or {}
-                re = risk
-                level = risk_obj.get("level", "low")
-                vulns = s.get("vulnerabilities") or []
-                vuln_lines = []
-                for v in vulns:
-                    vuln_lines.append("> **" + v.get("severity","").upper() + "** " + v.get("location",""))
-                    vuln_lines.append("> " + v.get("description",""))
-                    vuln_lines.append("> **Fix:** " + v.get("fix",""))
-                    vuln_lines.append("")
-                vuln_text = "### Vulnerabilities\n\n" + "\n".join(vuln_lines) if vuln_lines else ""
-                factors = "\n".join("- " + f for f in (re.top_factors or []))
-                parts = [
-                    "## DevMind Analysis", "",
-                    "### Risk: " + level.upper(),
-                    risk_obj.get("reason", ""), "",
-                    "**What:** " + s.get("what", ""),
-                    "**Why:** " + s.get("why", ""),
-                    "**Review focus:** " + s.get("review_focus", ""), "",
-                    vuln_text, "",
-                    "### Risk Score: " + str(re.risk_score) + "/100 - " + re.risk_label,
-                    factors, "", "---",
-                    "*Generated by DevMind - AI-powered PR risk engine*"
-                ]
-                body = "\n".join(parts)
-                post_pr_comment(repo, pr_number, body, token)
-            except Exception as e:
-                print("[WEBHOOK ERROR] " + str(e))
-        asyncio.create_task(analyze_and_comment())
-    return {"ok": True}
