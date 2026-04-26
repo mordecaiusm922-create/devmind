@@ -356,6 +356,7 @@ async def github_webhook(
     pr            = payload.get("pull_request", {})
     repo          = payload.get("repository", {}).get("full_name", "")
     pr_number     = pr.get("number")
+    commit_sha    = pr.get("head", {}).get("sha", "")
     installation_id = payload.get("installation", {}).get("id")
 
     if not repo or not pr_number or not installation_id:
@@ -406,6 +407,7 @@ async def github_webhook(
 _Analyzed by [DevMind](https://devmind-gamma.vercel.app)_"""
 
             post_pr_comment(repo, pr_number, comment, token)
+            create_check_run(repo, commit_sha, token, score, level, top_factors, s)
             log.info(f"webhook comment posted repo={repo} pr={pr_number}")
         except Exception as e:
             log.error(f"webhook analysis failed repo={repo} pr={pr_number} error={e}")
@@ -418,4 +420,6 @@ _Analyzed by [DevMind](https://devmind-gamma.vercel.app)_"""
 async def get_logs(n: int = 50):
     """Last n analysis log entries."""
     return {"logs": read_recent_logs(n)}
+
+
 

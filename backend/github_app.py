@@ -55,3 +55,45 @@ def post_pr_comment(repo: str, pr_number: int, body: str, token: str) -> None:
         json={"body": body},
         timeout=10,
     )
+
+def create_check_run(repo: str, commit_sha: str, token: str, risk_score: int, risk_band: str, top_factors: list, summary: dict) -> dict:
+    if risk_band == "critical":
+        conclusion = "failure"
+        title = f"🔴 Critical risk — {risk_score}/100"
+    elif risk_band == "high":
+        conclusion = "failure"
+        title = f"🟠 High risk — {risk_score}/100"
+    elif risk_band == "medium":
+        conclusion = "neutral"
+        title = f"🟡 Medium risk — {risk_score}/100"
+    else:
+        conclusion = "success"
+        title = f"🟢 Low risk — {risk_score}/100"
+
+    factors_md = "\n".join(f"- {f}" for f in top_factors) if top_factors else "- None detected"
+    summary_md = f"""**What:** {summary.get("what", "N/A")}
+**Impact:** {summary.get("impact", "N/A")}
+
+### Top risk factors
+{factors_md}
+"""
+
+    response = httpx.post(
+        f"https://api.github.com/repos/{repo}/check-runs",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        },
+        json={
+            "name": "DevMind Risk Engine",
+            "head_sha": commit_sha,
+            "status": "completed",
+            "conclusion": conclusion,
+            "output": {
+                "title": title,
+                "summary": summary_md,
+            },
+        },
+        timeout=10,
+    )
+    return response.json()
