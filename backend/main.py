@@ -365,6 +365,7 @@ async def github_webhook(
     log.info(f"webhook received action={action} repo={repo} pr={pr_number}")
 
     async def analyze_and_comment():
+        print("[TASK] started")
         try:
             token  = get_installation_token(installation_id)
             result = await _run_analysis(repo, pr_number)
@@ -410,6 +411,8 @@ _Analyzed by [DevMind](https://devmind-gamma.vercel.app)_"""
             create_check_run(repo, commit_sha, token, score, level, top_factors, s)
             log.info(f"webhook comment posted repo={repo} pr={pr_number}")
         except Exception as e:
+            import traceback
+            print(f"[TASK ERROR] {traceback.format_exc()}")
             log.error(f"webhook analysis failed repo={repo} pr={pr_number} error={e}")
 
     background_tasks.add_task(analyze_and_comment)
