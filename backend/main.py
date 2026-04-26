@@ -412,7 +412,8 @@ _Analyzed by [DevMind](https://devmind-gamma.vercel.app)_"""
         except Exception as e:
             log.error(f"webhook analysis failed repo={repo} pr={pr_number} error={e}")
 
-    background_tasks.add_task(analyze_and_comment)
+    import threading
+    threading.Thread(target=lambda: asyncio.run(analyze_and_comment()), daemon=False).start()
     return {"accepted": True, "repo": repo, "pr": pr_number, "action": action}
 # â”€â”€ Internal endpoints (no auth for simplicity â€” add auth before going public) â”€
 
