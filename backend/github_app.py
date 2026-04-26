@@ -34,7 +34,6 @@ def generate_jwt() -> str:
 
 def get_installation_token(installation_id: int) -> str:
     token = generate_jwt()
-    print(f"[CHECK RUN] repo={repo} sha={commit_sha[:7]} band={risk_band}")
     response = httpx.post(
         f"https://api.github.com/app/installations/{installation_id}/access_tokens",
         headers={
@@ -43,7 +42,6 @@ def get_installation_token(installation_id: int) -> str:
         },
         timeout=10,
     )
-    print(f"[CHECK RUN] status={response.status_code} body={response.text[:200]}")
     return response.json()["token"]
 
 
