@@ -691,8 +691,8 @@ const signOut = async () => {
       {/* ── Install ── */}
       <section style={{ padding: "80px 32px", maxWidth: 720, margin: "0 auto" }}>
         <div style={{ textAlign: "center", marginBottom: 40 }}>
-          <h2 style={{ fontSize: 32, fontWeight: 700, letterSpacing: "-0.03em", marginBottom: 12 }}>Install in 2 minutes</h2>
-          <p style={{ fontSize: 15, color: "#64748b" }}>Add to any GitHub repo with a single workflow file</p>
+          <h2 style={{ fontSize: 32, fontWeight: 700, letterSpacing: "-0.03em", marginBottom: 12 }}>Install in 1 click</h2>
+          <p style={{ fontSize: 15, color: "#64748b" }}>Install the GitHub App on any repo. No config needed.</p>
         </div>
         <div style={{
           borderRadius: 14, overflow: "hidden",
@@ -721,7 +721,7 @@ jobs:
                  "pr_number":${"${{ github.event.pull_request.number }}"}}'`}</pre>
         </div>
         <p style={{ textAlign: "center", marginTop: 20, fontSize: 13, color: "#475569" }}>
-          Add <code style={{ color: "#a855f7", background: "rgba(168,85,247,0.1)", padding: "1px 6px", borderRadius: 4 }}>DEVMIND_API_KEY</code> to your repo secrets and you're done.
+          That's it. DevMind will automatically analyze every PR and block high-risk merges.
         </p>
       </section>
 
