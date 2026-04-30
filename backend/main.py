@@ -90,6 +90,7 @@ def _check_rate_limit(api_key: str) -> None:
 
 # â”€â”€ API key dependency â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def _require_api_key(x_api_key: Annotated[str | None, Header(alias="x-api-key")] = None) -> str:
+    print(f"[AUTH] received key: '{x_api_key}' | valid: {VALID_API_KEYS}", flush=True)
     if not x_api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
