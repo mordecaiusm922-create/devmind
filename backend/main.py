@@ -287,6 +287,9 @@ async def health():
 def debug_keys():
     return {"raw": _RAW_KEYS, "valid": list(VALID_API_KEYS)}
 
+@app.post("/debug-auth")
+def debug_auth(request: Request):
+    return {"headers": dict(request.headers)}
 
 @app.api_route("/health", methods=["GET", "HEAD"])
 async def healthcheck():
