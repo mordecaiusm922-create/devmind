@@ -283,6 +283,9 @@ def _build_response(repo, pr_number, pr_data, summary, pre, ev, risk=None) -> di
 @app.get("/")
 async def health():
     return {"status": "ok", "version": "1.0.0"}
+@app.get("/debug-keys")
+def debug_keys():
+    return {"raw": _RAW_KEYS, "valid": list(VALID_API_KEYS)}
 
 
 @app.api_route("/health", methods=["GET", "HEAD"])
