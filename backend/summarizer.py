@@ -201,7 +201,15 @@ def _output_schema_instruction() -> str:
         '      "severity": "low | medium | high | critical",\n'
         '      "location": "filename:L12-18",\n'
         '      "description": "Exact vulnerability description with attack vector",\n'
-        '      "fix": "Concrete fix recommendation"\n'
+        '      "fix": "Concrete fix recommendation",\n'
+        '      "exploit_path": "Step by step: how an attacker exploits this RIGHT NOW. Be specific."\n'
+        '    }\n'
+        '  ],\n'
+        '  "ci_cd_risks": [\n'
+        '    {\n'
+        '      "trigger": "pull_request_target | workflow_run | push",\n'
+        '      "risk": "exact risk description",\n'
+        '      "line": "filename:LN"\n'
         '    }\n'
         '  ],\n'
         '  "key_changes": ["filename.py:L12-18 -- what changed and why it matters"],\n'
@@ -209,7 +217,8 @@ def _output_schema_instruction() -> str:
         '  "evidence": [{"claim": "brief claim", "location": "filename.py:L12-18", "snippet": "code"}]\n'
         '}\n\n'
         'CRITICAL: vulnerabilities array is MANDATORY. If no vulnerabilities found, return empty array.\n'
-        'If risk level is high or critical, populate vulnerabilities with at least one entry.'
+        'If risk level is high or critical, populate vulnerabilities with at least one entry.\n'
+        'ci_cd_risks is MANDATORY for any PR touching .github/workflows. If no CI/CD risks, return empty array.'
     )
 
 
