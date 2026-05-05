@@ -339,7 +339,7 @@ def _build_response(
             "what": summary.get("what"),
             "why": summary.get("why"),
             "impact": summary.get("impact"),
-            "risk": summary.get("risk"),
+            "risk_note": summary.get("risk"),
             "permissions_analysis": summary.get("permissions_analysis"),
             "attack_path": summary.get("attack_path"),
             "vulnerabilities": summary.get("vulnerabilities", []),
@@ -347,7 +347,7 @@ def _build_response(
             "key_changes": summary.get("key_changes", []),
             "review_focus": summary.get("review_focus"),
             "evidence": summary.get("evidence", []),
-            "scores": summary.get("scores", {}),
+            
             "triage": summary.get("triage"),
             "merge_blocker": summary.get("merge_blocker", False),
             "analysed_in_chunks": summary.get("analysed_in_chunks"),
@@ -409,7 +409,8 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
 
     pr_data = _timed("fetch_pr", get_pr_data, repo, pr_number)
     summary, pre, ev = _timed("summarize", summarize_pr, pr_data)
-    risk: dict[str, Any] = ev.get("risk_signals", {})
+    risk = compute_risk_score(ev)
+   risk: dict[str, Any] | None = None
 
     _timed("log_analysis", log_analysis, repo, pr_number, pr_data, summary, pre, ev)
 

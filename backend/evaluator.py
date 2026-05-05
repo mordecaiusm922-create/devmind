@@ -455,7 +455,7 @@ def evaluate(summary: dict, pr_data: dict) -> dict:
         },
         "triage": signals.triage,
         "merge_blocker": signals.merge_blocker,
-        "risk_signals": signals.to_dict(),
+       
         "evaluation": ev.to_dict(),
         "usefulness": usefulness.to_dict(),
     }
