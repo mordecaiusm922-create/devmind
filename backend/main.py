@@ -1,4 +1,4 @@
-﻿"""
+"""
 main.py -- DevMind SaaS API
 
 Production-grade FastAPI application with:
@@ -417,13 +417,13 @@ class AnalysePRRequest(BaseModel):
 
 
 class RiskNote(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     level: str
     reason: str = ""
 
 
 class PermissionAnalysis(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     permissions_block_present: bool = False
     scopes_granted: list[str] = Field(default_factory=list)
     secrets_accessed_before_validation: bool = False
@@ -432,7 +432,7 @@ class PermissionAnalysis(BaseModel):
 
 
 class Vulnerability(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     type: str
     severity: str
     location: str
@@ -443,7 +443,7 @@ class Vulnerability(BaseModel):
 
 
 class CiCdRisk(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     trigger: str
     risk: str
     severity: str
@@ -454,7 +454,7 @@ class CiCdRisk(BaseModel):
 
 
 class AttackPath(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     entry_point: str
     attacker_control_verified: bool = False
     exploit_steps: list[str] = Field(default_factory=list)
@@ -464,7 +464,7 @@ class AttackPath(BaseModel):
 
 
 class SummarySchema(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     what: str = ""
     why: str = ""
     impact: str = ""
@@ -552,7 +552,7 @@ def _build_pr_comment(result: dict[str, Any]) -> str:
     triage = s.get("triage", "P3")
     merge_block = s.get("merge_blocker", False)
     merge_reason = s.get("merge_block_reason")
-    emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢", "minimal": "⚪"}.get(level, "⚪")
+    emoji = {"critical": "??", "high": "??", "medium": "??", "low": "??", "minimal": "?"}.get(level, "?")
 
     vuln_lines = []
     for v in vulns:
@@ -570,7 +570,7 @@ def _build_pr_comment(result: dict[str, Any]) -> str:
 
     factors_md = "\n".join(f"- {f}" for f in top_factors) if top_factors else "- None detected"
     vulns_md = "\n\n".join(vuln_lines) if vuln_lines else "_No vulnerabilities detected_"
-    blocker_md = f"🚫 **Merge blocked** — {merge_reason}" if merge_block else ""
+    blocker_md = f"?? **Merge blocked** � {merge_reason}" if merge_block else ""
 
     breakdown = re_obj.get("breakdown", {})
     scores_md = (
@@ -583,7 +583,7 @@ def _build_pr_comment(result: dict[str, Any]) -> str:
 
     return f"""## {emoji} DevMind Risk Analysis
 
-**{triage}** — Risk Score `{score}/100` — **{level.upper()}**
+**{triage}** � Risk Score `{score}/100` � **{level.upper()}**
 {blocker_md}
 
 ### Risk Breakdown
@@ -601,7 +601,7 @@ def _build_pr_comment(result: dict[str, Any]) -> str:
 **Review focus:** {s.get("review_focus", "N/A")}
 
 ---
-_Analyzed by DevMind · trace `{result.get("trace_id", "")}`_"""
+_Analyzed by DevMind � trace `{result.get("trace_id", "")}`_"""
 
 
 async def _run_pipeline(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
