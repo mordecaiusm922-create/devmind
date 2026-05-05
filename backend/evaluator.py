@@ -1,30 +1,8 @@
-"""
-evaluator.py -- DevMind deterministic risk engine
-
-Three-phase pipeline:
-  1. pre_analyse(pr_data)       -> PreAnalysis   (before LLM, structural signals)
-  2. evaluate(summary, pr_data) -> dict          (after LLM, quality + risk scoring)
-  3. enforce_risk_floor(summary, pre)            (never let LLM undercut structural floor)
-
-Design principles:
-  - Zero LLM calls -- every score is explainable from the PR data alone.
-  - Immutable dataclasses. No mutation after construction.
-  - Single definition per type -- no duplicate dataclasses.
-  - All magic numbers are named constants.
-  - Pure functions throughout; side effects only at the module boundary.
-  - All string literals are ASCII-safe (no Unicode em-dashes or special chars).
-"""
-
 from __future__ import annotations
-import json
 
 import re
 from dataclasses import asdict, dataclass
 from typing import Final
-
-# =============================================================================
-# 1. CONSTANTS
-# =============================================================================
 
 TRIVIAL_CHURN_THRESHOLD: Final[int] = 8
 
@@ -35,14 +13,10 @@ FILES_MANY: Final[int] = 15
 FILES_SEVERAL: Final[int] = 7
 FILES_CRITICAL: Final[int] = 10
 
-# Confidence score thresholds
-# Lowered from 0.55/0.30 - YAML/infra PRs score lower on code-specific patterns.
 CONFIDENCE_HIGH: Final[float] = 0.45
 CONFIDENCE_MED: Final[float] = 0.20
 SPECIFICITY_NONE: Final[float] = 0.08
 
-# Confidence bonus when LLM produced structured findings.
-# Each bonus is capped independently so they cannot trivially reach 1.0.
 CONFIDENCE_VULN_BONUS: Final[float] = 0.12
 CONFIDENCE_CICD_BONUS: Final[float] = 0.08
 CONFIDENCE_EVIDENCE_BONUS: Final[float] = 0.05
@@ -67,10 +41,6 @@ COVERAGE_PARTIAL: Final[float] = 0.70
 CVE_HIGH_COUNT: Final[int] = 3
 CVE_HIGH_IN_DIFF: Final[int] = 2
 
-# =============================================================================
-# 2. PATTERN TABLES  (compiled once at import time)
-# =============================================================================
-
 _GENERIC_PHRASES: Final[tuple[tuple[str, int], ...]] = (
     (r"\bimproves code quality\b", 2),
     (r"\brefactors? (?:the )?code\b", 2),
@@ -92,7 +62,6 @@ _GENERIC_PHRASES: Final[tuple[tuple[str, int], ...]] = (
 )
 
 _SPECIFICITY_PATTERNS: Final[tuple[tuple[str, int], ...]] = (
-    # Code identifiers
     (r"\b\w+\.(?:py|js|ts|tsx|jsx|go|rb|java|rs|sql|yaml|yml|json|toml|sh|env)\b", 3),
     (r"\b\w+\((?:\w+)?\)", 2),
     (r"\b[A-Z][a-z]+[A-Z][a-zA-Z]+\b", 2),
@@ -102,7 +71,6 @@ _SPECIFICITY_PATTERNS: Final[tuple[tuple[str, int], ...]] = (
     (r"\b(?:GET|POST|PUT|PATCH|DELETE)\s+/\w+", 2),
     (r"\bv?\d+\.\d+(?:\.\d+)?\b", 1),
     (r"\b\d{2,} (?:lines?|files?|tests?|cases?)\b", 1),
-    # CI/CD and infra identifiers
     (r"\b[\w-]+/[\w.-]+@(?:v\d+|\w{40})\b", 3),
     (r"\b(?:pull_request_target|workflow_run|workflow_dispatch|schedule)\b", 3),
     (r"\.github/workflows/[\w.-]+", 3),
@@ -138,12 +106,8 @@ _SECURITY_PATTERNS: Final[tuple[tuple[str, str], ...]] = (
 _RISK_ORD: Final[dict[str, int]] = {"low": 0, "medium": 1, "high": 2}
 _ORD_RISK: Final[dict[int, str]] = {v: k for k, v in _RISK_ORD.items()}
 
-_RE_FILENAME = re.compile(
-    r"\b[\w/-]+\.(?:py|js|ts|tsx|jsx|go|rb|java|rs|sql|yaml|yml|json|toml|sh|cfg|ini|env|md)\b"
-)
-_RE_FUNCTION = re.compile(
-    r"\b(\w+)\((?:[\w,\s*]*)\)|`(\w+)`|\b(?:def|function|func|fn)\s+(\w+)"
-)
+_RE_FILENAME = re.compile(r"\b[\w/-]+\.(?:py|js|ts|tsx|jsx|go|rb|java|rs|sql|yaml|yml|json|toml|sh|cfg|ini|env|md)\b")
+_RE_FUNCTION = re.compile(r"\b(\w+)\((?:[\w,\s*]*)\)|`(\w+)`|\b(?:def|function|func|fn)\s+(\w+)")
 _RE_CHANGE_VERB = re.compile(
     r"\b(?:add(?:s|ed)?|remov(?:e[sd]?)|replac(?:e[sd]?)|renam(?:e[sd]?)|"
     r"mov(?:e[sd]?)|fix(?:es|ed)?|introduc(?:e[sd]?)|deprecat(?:e[sd]?)|"
@@ -156,10 +120,6 @@ _COMPILED_GENERIC = [(re.compile(p, re.IGNORECASE), s) for p, s in _GENERIC_PHRA
 _COMPILED_SPECIFICITY = [(re.compile(p), w) for p, w in _SPECIFICITY_PATTERNS]
 _COMPILED_SECURITY = [(re.compile(p, re.IGNORECASE), f) for p, f in _SECURITY_PATTERNS]
 _COMPILED_RISK_RULES = [(re.compile(p, re.IGNORECASE), floor, tag) for p, floor, tag in _RISK_FILE_RULES]
-
-# =============================================================================
-# 3. RISK ENGINE WEIGHT TABLES
-# =============================================================================
 
 _P_WEIGHTS: Final[dict[str, float]] = {
     "tag_auth": 0.90,
@@ -176,7 +136,6 @@ _P_WEIGHTS: Final[dict[str, float]] = {
     "many_files": 0.25,
     "has_cve_refs": 0.70,
     "security_patterns": 0.55,
-    "security_improvement": -0.80,
 }
 
 _I_WEIGHTS: Final[dict[str, float]] = {
@@ -193,7 +152,6 @@ _I_WEIGHTS: Final[dict[str, float]] = {
     "vulnerabilities_found": 0.60,
     "attack_path_present": 0.25,
     "ci_cd_risk_present": 0.20,
-    "security_improvement": -0.60,
 }
 
 _C_WEIGHTS: Final[dict[str, float]] = {
@@ -218,11 +176,10 @@ _TOP_FACTOR_LABELS: Final[dict[str, str]] = {
     "tag_api": "Changes exposed API surface",
     "tag_config": "Modifies config or environment variables",
     "no_tests_touched": "No test files in this PR",
-    "large_diff": "Large diff -- high surface area",
+    "large_diff": "Large diff - high surface area",
     "many_files": "Many files modified",
     "has_cve_refs": "Contains CVE references",
     "security_patterns": "Security patterns detected in diff",
-    "security_improvement": "Looks like a security improvement, not a vuln",
     "floor_high": "Pre-analysis flagged high risk",
     "floor_medium": "Pre-analysis flagged medium risk",
     "vulnerabilities_found": "LLM found concrete vulnerabilities",
@@ -246,12 +203,8 @@ _FACTOR_PRIORITY: Final[dict[str, int]] = {
     "large_diff": 40,
     "many_files": 35,
     "no_tests_touched": 30,
-    "security_improvement": 110,
 }
 
-# =============================================================================
-# 4. DATACLASSES
-# =============================================================================
 
 @dataclass(frozen=True)
 class PreAnalysis:
@@ -343,15 +296,7 @@ class RiskSignals:
         return d
 
 
-# =============================================================================
-# 5. PUBLIC API
-# =============================================================================
-
 def pre_analyse(pr_data: dict) -> PreAnalysis:
-    """
-    Deterministic structural analysis -- runs before the LLM call.
-    Establishes risk floor, tags, and flagged files from file paths alone.
-    """
     files = pr_data.get("files", [])
 
     risk_level = 0
@@ -396,11 +341,7 @@ def pre_analyse(pr_data: dict) -> PreAnalysis:
     full_diff = _build_full_diff_text(pr_data)
     diff_only = " ".join(f.get("diff") or "" for f in files)
 
-    security_flags = {
-        flag
-        for sec_re, flag in _COMPILED_SECURITY
-        if sec_re.search(full_diff)
-    }
+    security_flags = {flag for sec_re, flag in _COMPILED_SECURITY if sec_re.search(full_diff)}
     if security_flags and "security" not in risk_tags:
         risk_tags.append("security")
 
@@ -427,17 +368,6 @@ def pre_analyse(pr_data: dict) -> PreAnalysis:
 
 
 def evaluate(summary: dict, pr_data: dict) -> dict:
-    """
-    Deterministic post-LLM evaluation.
-
-    Returns a flat dict with:
-      scores        -- numeric breakdown
-      triage        -- P0 / P1 / P2 / P3
-      merge_blocker -- bool
-      risk_signals  -- full RiskSignals serialized
-      evaluation    -- Evaluation quality scores
-      usefulness    -- UsefulnessCheck
-    """
     pre = pre_analyse(pr_data)
     ev = _evaluate_summary_quality(summary, pr_data)
     signals = compute_risk_score(pre, summary, ev, pr_data)
@@ -455,18 +385,14 @@ def evaluate(summary: dict, pr_data: dict) -> dict:
         },
         "triage": signals.triage,
         "merge_blocker": signals.merge_blocker,
-       
+        "risk_signals": signals.to_dict(),
         "evaluation": ev.to_dict(),
         "usefulness": usefulness.to_dict(),
     }
 
 
 def enforce_risk_floor(summary: dict, pre: PreAnalysis) -> dict:
-    """
-    Never allow the LLM to report a risk level below the structural floor.
-    Returns the (possibly mutated) summary dict.
-    """
-    risk = summary.get("risk", {})
+    risk = summary.get("risk_note", summary.get("risk", {}))
     if not isinstance(risk, dict):
         return summary
 
@@ -477,10 +403,10 @@ def enforce_risk_floor(summary: dict, pre: PreAnalysis) -> dict:
         old_level = risk.get("level", "low")
         reason = str(risk.get("reason", "")).strip()
         prefix = (
-            f"[Escalated from {old_level} to {pre.risk_floor} -- "
+            f"[Escalated from {old_level} to {pre.risk_floor} - "
             f"sensitive areas: {', '.join(pre.risk_tags)}] "
         )
-        summary["risk"] = {
+        summary["risk_note"] = {
             "level": pre.risk_floor,
             "reason": (prefix + reason) if reason else prefix.rstrip(),
         }
@@ -489,13 +415,14 @@ def enforce_risk_floor(summary: dict, pre: PreAnalysis) -> dict:
 
 
 def infer_risk_floor(files: list[dict]) -> PreAnalysis:
-    """Compatibility helper: build PreAnalysis from a file list only."""
-    return pre_analyse({
-        "files": files,
-        "changed_files": len(files),
-        "additions": 0,
-        "deletions": 0,
-    })
+    return pre_analyse(
+        {
+            "files": files,
+            "changed_files": len(files),
+            "additions": 0,
+            "deletions": 0,
+        }
+    )
 
 
 def compute_risk_score(
@@ -504,10 +431,6 @@ def compute_risk_score(
     ev: Evaluation,
     pr_data: dict,
 ) -> RiskSignals:
-    """
-    Core risk engine.
-    Combines P=probability, I=impact, C=confidence into a deterministic 0-100 score.
-    """
     p_signals = _extract_p_signals(pre, pr_data)
     i_signals = _extract_i_signals(pre, summary, pr_data)
     c_signals = _extract_c_signals(pre, ev, pr_data)
@@ -537,44 +460,7 @@ def compute_risk_score(
     )
 
 
-# =============================================================================
-# 6. SIGNAL EXTRACTORS
-# =============================================================================
-
-def _is_security_improvement(summary: dict, pr_data: dict) -> bool:
-    text = " ".join([
-        pr_data.get("title", "") or "",
-        pr_data.get("body", "") or "",
-        " ".join(pr_data.get("commit_messages", [])),
-        summary.get("what", "") or "",
-        summary.get("why", "") or "",
-        summary.get("impact", "") or "",
-        summary.get("review_focus", "") or "",
-        json.dumps(summary.get("vulnerabilities", []), ensure_ascii=False),
-        json.dumps(summary.get("ci_cd_risks", []), ensure_ascii=False),
-    ]).lower()
-
-    has_marker = any(marker in text for marker in (
-        "trivy",
-        "snyk",
-        "grype",
-        "scanner",
-        "vulnerability scanner",
-        "latest version",
-        "pin",
-        "security improvement",
-        "reduce risk",
-        "security patch",
-        "dependency update",
-    ))
-    has_specific_cve = bool(re.search(r"CVE-\d{4}-\d+", text))
-    has_real_finding = bool(summary.get("attack_path")) or bool(summary.get("vulnerabilities")) or bool(summary.get("ci_cd_risks"))
-
-    return has_marker and not has_specific_cve and not has_real_finding
-
-
 def _extract_p_signals(pre: PreAnalysis, pr_data: dict) -> dict[str, float]:
-    """Probability axis -- how likely is this to be exploitable."""
     signals: dict[str, float] = {}
 
     tag_to_signal = {
@@ -619,20 +505,16 @@ def _extract_p_signals(pre: PreAnalysis, pr_data: dict) -> dict[str, float]:
     if sec_hits > 0:
         signals["security_patterns"] = min(1.0, sec_hits / 4)
 
-    if _is_security_improvement({}, pr_data):
-        signals["security_improvement"] = 1.0
-
     return signals
 
 
 def _extract_i_signals(pre: PreAnalysis, summary: dict, pr_data: dict) -> dict[str, float]:
-    """Impact axis -- how severe if exploited."""
     signals: dict[str, float] = {}
 
     floor_key = {"high": "floor_high", "medium": "floor_medium"}.get(pre.risk_floor, "floor_low")
     signals[floor_key] = 1.0
 
-    llm_level = str((summary.get("risk") or {}).get("level", "low")).lower()
+    llm_level = str((summary.get("risk_note") or {}).get("level", "low")).lower()
     llm_key = {"high": "llm_high", "medium": "llm_medium"}.get(llm_level, "llm_low")
     signals[llm_key] = 1.0
 
@@ -661,14 +543,10 @@ def _extract_i_signals(pre: PreAnalysis, summary: dict, pr_data: dict) -> dict[s
     if summary.get("ci_cd_risks"):
         signals["ci_cd_risk_present"] = 1.0
 
-    if _is_security_improvement(summary, pr_data):
-        signals["security_improvement"] = 1.0
-
     return signals
 
 
 def _extract_c_signals(pre: PreAnalysis, ev: Evaluation, pr_data: dict) -> dict[str, float]:
-    """Confidence axis -- how trustworthy is the analysis."""
     signals: dict[str, float] = {}
 
     cs = ev.confidence_score
@@ -699,12 +577,7 @@ def _extract_c_signals(pre: PreAnalysis, ev: Evaluation, pr_data: dict) -> dict[
     return signals
 
 
-# =============================================================================
-# 7. SCORING HELPERS
-# =============================================================================
-
 def _weighted_sum(signals: dict[str, float], weights: dict[str, float]) -> float:
-    """Normalized weighted sum -- always returns [0.0, 1.0]."""
     if not signals:
         return 0.0
     active = [(max(0.0, min(1.0, v)), weights.get(k, 0.0)) for k, v in signals.items()]
@@ -734,25 +607,17 @@ def _combine_scores(
     attack = summary.get("attack_path")
     ci_cd = summary.get("ci_cd_risks") or []
     evidence = summary.get("evidence") or []
-    llm_level = str((summary.get("risk") or {}).get("level", "low")).lower()
+    llm_level = str((summary.get("risk_note") or {}).get("level", "low")).lower()
 
-    # No evidence supplied for any finding -- penalize confidence in the score.
     if not evidence and (vulns or ci_cd):
         base -= 0.08
 
-    # No actionable findings at all -- hard cap at top of "high" band.
     if not vulns and not attack and not ci_cd:
         base = min(base, 0.69)
 
-    # Security improvement with no real finding should not inflate risk.
-    if _is_security_improvement(summary, {}) and not vulns and not attack and not ci_cd:
-        base = min(base, 0.19)
-
-    # LLM assessed low risk with zero vuln findings -- cap at "medium".
     if llm_level == "low" and not vulns:
         base = min(base, 0.49)
 
-    # Single ci_cd_risk with no evidence and no vulns -- cap at "high".
     if ci_cd and not vulns and not attack and not evidence:
         base = min(base, 0.74)
 
@@ -760,11 +625,6 @@ def _combine_scores(
 
 
 def _score_to_band(score: int) -> tuple[str, str]:
-    """
-    Map numeric score to (band, label).
-    All labels are ASCII-only -- no Unicode dashes that corrupt in Latin-1
-    environments or JSON serializers without ensure_ascii=False.
-    """
     if score >= BAND_CRITICAL:
         return "critical", "Critical -- immediate review required"
     if score >= BAND_HIGH:
@@ -778,13 +638,7 @@ def _score_to_band(score: int) -> tuple[str, str]:
 
 def _build_triage(summary: dict, risk_score: int, ev: Evaluation) -> tuple[str, bool]:
     vulns = summary.get("vulnerabilities", [])
-    ci_cd = summary.get("ci_cd_risks", [])
-    attack_path = summary.get("attack_path")
-
     severities = {str(v.get("severity", "low")).lower() for v in vulns}
-
-    if not attack_path and not vulns and not ci_cd:
-        return "P3", False
 
     if "critical" in severities or risk_score >= P0_THRESHOLD:
         return "P0", True
@@ -815,38 +669,25 @@ def _build_top_factors(
     return out
 
 
-# =============================================================================
-# 8. QUALITY EVALUATORS
-# =============================================================================
-
 def _evaluate_summary_quality(summary: dict, pr_data: dict) -> Evaluation:
-    """
-    Score the specificity and quality of an LLM-generated summary.
-
-    Scoring pipeline:
-      1. Raw specificity from regex pattern hits (code + CI/CD patterns).
-      2. Structural bonus: non-empty vulnerabilities / ci_cd_risks / evidence
-         prove the LLM cited real findings.
-      3. Generic-phrase deduction.
-      4. Length penalty.
-      5. Clamp to [0.0, 1.0].
-    """
-    full_text = " ".join([
-        summary.get("what", ""),
-        summary.get("why", ""),
-        summary.get("impact", ""),
-        summary.get("review_focus", ""),
-        (summary.get("risk") or {}).get("reason", ""),
-        " ".join(summary.get("key_changes") or []),
-        " ".join(
-            f"{v.get('location', '')} {v.get('description', '')} {v.get('exploit_path', '')}"
-            for v in (summary.get("vulnerabilities") or [])
-        ),
-        " ".join(
-            f"{r.get('trigger', '')} {r.get('risk', '')} {r.get('line', '')}"
-            for r in (summary.get("ci_cd_risks") or [])
-        ),
-    ])
+    full_text = " ".join(
+        [
+            summary.get("what", ""),
+            summary.get("why", ""),
+            summary.get("impact", ""),
+            summary.get("review_focus", ""),
+            (summary.get("risk_note") or {}).get("reason", ""),
+            " ".join(summary.get("key_changes") or []),
+            " ".join(
+                f"{v.get('location', '')} {v.get('description', '')} {v.get('exploit_path', '')}"
+                for v in (summary.get("vulnerabilities") or [])
+            ),
+            " ".join(
+                f"{r.get('trigger', '')} {r.get('risk', '')} {r.get('line', '')}"
+                for r in (summary.get("ci_cd_risks") or [])
+            ),
+        ]
+    )
     lower = full_text.lower()
 
     found_phrases: list[str] = []
@@ -858,10 +699,7 @@ def _evaluate_summary_quality(summary: dict, pr_data: dict) -> Evaluation:
             total_penalty += severity * len(matches)
 
     specificity_max = sum(w * 3 for _, w in _COMPILED_SPECIFICITY)
-    specificity_hits = sum(
-        min(len(r.findall(full_text)), 3) * w
-        for r, w in _COMPILED_SPECIFICITY
-    )
+    specificity_hits = sum(min(len(r.findall(full_text)), 3) * w for r, w in _COMPILED_SPECIFICITY)
     specificity_score = round(min(specificity_hits / specificity_max, 1.0), 3) if specificity_max else 0.0
 
     structural_bonus = 0.0
@@ -888,11 +726,7 @@ def _evaluate_summary_quality(summary: dict, pr_data: dict) -> Evaluation:
         max(0.0, min(specificity_ceiling, specificity_score + structural_bonus - generic_deduction - length_penalty)),
         3,
     )
-    confidence = (
-        "high" if confidence_score >= CONFIDENCE_HIGH else
-        "medium" if confidence_score >= CONFIDENCE_MED else
-        "low"
-    )
+    confidence = "high" if confidence_score >= CONFIDENCE_HIGH else "medium" if confidence_score >= CONFIDENCE_MED else "low"
 
     is_flagged = False
     flag_reason = None
@@ -905,10 +739,7 @@ def _evaluate_summary_quality(summary: dict, pr_data: dict) -> Evaluation:
         )
     elif specificity_score < SPECIFICITY_NONE and pr_data.get("changed_files", 0) > 2:
         is_flagged = True
-        flag_reason = (
-            f"No specific identifiers found despite "
-            f"{pr_data.get('changed_files', 0)} files changed."
-        )
+        flag_reason = f"No specific identifiers found despite {pr_data.get('changed_files', 0)} files changed."
     elif chars < SUMMARY_MIN_CHARS:
         is_flagged = True
         flag_reason = "Summary is unusually short and likely incomplete."
@@ -925,14 +756,16 @@ def _evaluate_summary_quality(summary: dict, pr_data: dict) -> Evaluation:
 
 
 def _usefulness_check(summary: dict) -> UsefulnessCheck:
-    full_text = " ".join([
-        summary.get("what", ""),
-        summary.get("why", ""),
-        summary.get("impact", ""),
-        summary.get("review_focus", ""),
-        (summary.get("risk") or {}).get("reason", ""),
-        " ".join(summary.get("key_changes") or []),
-    ])
+    full_text = " ".join(
+        [
+            summary.get("what", ""),
+            summary.get("why", ""),
+            summary.get("impact", ""),
+            summary.get("review_focus", ""),
+            (summary.get("risk_note") or {}).get("reason", ""),
+            " ".join(summary.get("key_changes") or []),
+        ]
+    )
 
     filenames_found = _RE_FILENAME.findall(full_text)
     func_matches = _RE_FUNCTION.findall(full_text)
@@ -974,17 +807,13 @@ def _usefulness_check(summary: dict) -> UsefulnessCheck:
     )
 
 
-# =============================================================================
-# 9. INTERNAL UTILITIES
-# =============================================================================
-
 def _build_full_diff_text(pr_data: dict) -> str:
     files = pr_data.get("files", [])
-    return " ".join([
-        pr_data.get("title", "") or "",
-        pr_data.get("body", "") or "",
-        " ".join(pr_data.get("commit_messages", [])),
-        " ".join(f.get("diff") or "" for f in files),
-    ])
-
-
+    return " ".join(
+        [
+            pr_data.get("title", "") or "",
+            pr_data.get("body", "") or "",
+            " ".join(pr_data.get("commit_messages", [])),
+            " ".join(f.get("diff") or "" for f in files),
+        ]
+    )

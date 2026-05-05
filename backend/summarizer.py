@@ -1,4 +1,6 @@
-﻿import json
+﻿from __future__ import annotations
+
+import json
 import os
 import re
 from typing import Any
@@ -6,7 +8,7 @@ from typing import Any
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from evaluator import pre_analyse, evaluate, enforce_risk_floor
+from evaluator import enforce_risk_floor, evaluate, pre_analyse
 
 load_dotenv()
 
@@ -23,73 +25,27 @@ CHUNK_FILE_THRESHOLD = 12
 SYSTEM_PROMPT = (
     "You are DevMind, a security analysis engine for pull requests. "
     "Your job is to identify real, exploitable security issues grounded only in the diff.\n\n"
-
-    "FALSIFIABILITY RULE:\n"
-    "Before claiming a vulnerability, verify all of the following:\n"
-    "1. The attacker can control the entry point.\n"
-    "2. There is a concrete path from entry point to sensitive resource.\n"
-    "3. The diff introduces the flaw, not a mitigation or detection.\n"
-    "If any answer is no, do not claim a vulnerability.\n\n"
-
-    "SECURITY IMPROVEMENT RULE:\n"
-    "Adding a scanner (Trivy, Snyk, Grype, etc.) reduces risk. "
-    "Pinning actions or updating to a safer version is usually a security improvement, not a vulnerability. "
-    "Do not classify security improvements as vulnerabilities unless the diff proves a specific exploitable flaw.\n\n"
-
-    "CI/CD THREAT MODEL:\n"
-    "Only flag a CI/CD issue if all of the following are true:\n"
-    "1. The trigger is pull_request_target, workflow_run, or another externally reachable trigger.\n"
-    "2. The workflow runs untrusted code or accesses secrets before validation.\n"
-    "3. The permissions block is missing or overly broad.\n"
-    "4. The attacker can reach the trigger without repo write access.\n\n"
-
-    "ATTACK PATH RULES:\n"
+    "Rules:\n"
+    "- Every claim must be grounded in the diff.\n"
+    "- Always cite a real file, line, and code snippet when possible.\n"
+    "- Do not invent vulnerabilities.\n"
+    "- If there is no realistic attack path, set attack_path to null.\n"
+    "- Be precise. Avoid vague wording.\n"
+    "- The pre-analysis block is authoritative.\n\n"
+    "Security improvements are not vulnerabilities.\n"
+    "Adding scanners, pinning safer versions, or reducing permissions should not be classified as vulnerabilities unless the diff proves a specific exploitable flaw.\n\n"
+    "CI/CD threat model:\n"
+    "- Only flag a CI/CD issue if the workflow exposes a real attack surface.\n"
+    "- Check for pull_request_target, workflow_run, secrets access, permissions blocks, and trust boundary violations.\n\n"
+    "Attack path rules:\n"
     "- entry_point must be a specific file:line from the diff.\n"
-    "- exploit_steps must contain at least 3 concrete steps.\n"
+    "- exploit_steps must contain concrete steps.\n"
     "- attacker_control_verified must be true, otherwise set attack_path to null.\n"
-    "- sink must be a real resource proven reachable in the diff.\n"
-    "- If risk is medium or higher but no realistic attack path exists, lower risk to low.\n\n"
-
-    "BLAST RADIUS:\n"
-    "For each vulnerability, estimate scope as one of: repo-only, org-wide, cross-account, public.\n"
-    "Also estimate data at risk as one of: secrets, artifacts, source, prod-infra, none.\n\n"
-
-    "Internal reasoning only, do not output:\n"
-    "1. What changed?\n"
-    "2. Is it a security improvement or a risk?\n"
-    "3. Can an external attacker control the entry point?\n"
-    "4. What are the exact exploit steps?\n"
-    "5. What is the blast radius?\n\n"
-
+    "- sink must be a real resource proven reachable in the diff.\n\n"
     "Output only valid JSON. No markdown. No code fences. No explanations."
 )
 
 debug_capture: list[dict] | None = None
-
-_SECURITY_IMPROVEMENT_MARKERS = (
-    "trivy",
-    "snyk",
-    "grype",
-    "scanner",
-    "vulnerability scanner",
-    "latest version",
-    "pin",
-    "security improvement",
-    "reduce risk",
-    "security patch",
-    "dependency update",
-)
-
-_CI_CD_MARKERS = (
-    "pull_request_target",
-    "workflow_run",
-    ".github/workflows/",
-    "permissions:",
-    "secrets.",
-    "${{ secrets.",
-    "configure-aws-credentials",
-    "github-token",
-)
 
 
 def summarize_pr(pr_data: dict) -> tuple[dict, object, object]:
@@ -102,15 +58,14 @@ def summarize_pr(pr_data: dict) -> tuple[dict, object, object]:
         summary = _summarize_single_pass(pr_data, files_with_diff, pre)
 
     summary = _normalize_summary(summary)
-    summary = _post_validate_summary(summary, pr_data)
     summary = enforce_risk_floor(summary, pre)
+    summary = _post_validate_summary(summary, pr_data)
 
     hallucinations = _check_hallucinations(summary, pr_data)
     if hallucinations:
         summary["hallucination_warning"] = hallucinations
 
     ev = evaluate(summary, pr_data)
-
     summary["scores"] = ev.get("scores", {})
     summary["triage"] = ev.get("triage")
     summary["merge_blocker"] = ev.get("merge_blocker", False)
@@ -149,7 +104,7 @@ def _synthesise(pr_data: dict, partials: list, pre) -> dict:
         f"{pre.to_prompt_context()}\n\n"
         f"Partial analyses:\n{json.dumps(partials, indent=2, ensure_ascii=False)}\n\n"
         f"Combine the partial analyses into one final security assessment.\n"
-        f"Keep only findings that are grounded in the PR data.\n\n"
+        f"Keep only findings grounded in the PR data.\n\n"
         f"{_output_schema_instruction()}"
     )
     result = _call_llm(prompt)
@@ -173,8 +128,7 @@ def _call_llm(user_prompt: str) -> dict:
 
     if choice.finish_reason == "length":
         raise ValueError(
-            f"LLM response truncated (finish_reason=length). "
-            f"Prompt length: {len(user_prompt)} chars."
+            f"LLM response truncated (finish_reason=length). Prompt length: {len(user_prompt)} chars."
         )
 
     parsed = _parse_and_validate(raw)
@@ -233,9 +187,9 @@ def _output_schema_instruction() -> str:
         '  "what": "Precise 1 to 2 sentence description of what changed.",\n'
         '  "why": "Technical reason for this change.",\n'
         '  "impact": "Which systems, workflows, or behaviors are affected.",\n'
-        '  "risk": {\n'
+        '  "risk_note": {\n'
         '    "level": "low | medium | high | critical",\n'
-        '    "reason": "Exact failure mechanism with file:line reference. If the change adds security tooling, level must be low."\n'
+        '    "reason": "Exact failure mechanism with file:line reference."\n'
         "  },\n"
         '  "permissions_analysis": {\n'
         '    "permissions_block_present": true,\n'
@@ -261,7 +215,7 @@ def _output_schema_instruction() -> str:
         '      "type": "credential_exposure | sql_injection | xss | auth_bypass | privilege_escalation | ci_cd_misconfig | supply_chain | other",\n'
         '      "severity": "low | medium | high | critical",\n'
         '      "location": "filename:L12-18",\n'
-        '      "description": "Exact flaw with file:line reference. Do NOT list security improvements as vulnerabilities.",\n'
+        '      "description": "Exact flaw with file:line reference.",\n'
         '      "fix": "Concrete, actionable fix.",\n'
         '      "exploit_path": "Minimum 3 reproducible steps referencing exact diff lines.",\n'
         '      "blast_radius": "repo-only | org-wide | cross-account | public"\n'
@@ -289,13 +243,10 @@ def _output_schema_instruction() -> str:
         "  ]\n"
         "}\n\n"
         "Hard rules:\n"
-        "- Adding Trivy, Snyk, or any scanner is a security improvement, not a vulnerability.\n"
-        "- Attack path requires attacker_control_verified to be true and at least 3 exploit_steps.\n"
-        "- If attacker_control_verified is false, attack_path must be null.\n"
-        "- Vulnerabilities must not include security improvements or version updates without a specific CVE.\n"
-        "- If workflow files are present, populate permissions_analysis.\n"
-        "- Evidence is mandatory for every vulnerability entry.\n"
-        "- All strings must use ASCII-safe characters only.\n"
+        "- Security improvements are not vulnerabilities.\n"
+        "- attack_path must be null if no attacker-controlled path exists.\n"
+        "- evidence is mandatory for every vulnerability entry.\n"
+        "- all strings must be ASCII-safe.\n"
     )
 
 
@@ -306,7 +257,7 @@ def _normalize_summary(data: dict) -> dict:
     data.setdefault("what", "")
     data.setdefault("why", "")
     data.setdefault("impact", "")
-    data.setdefault("risk", {})
+    data.setdefault("risk_note", {})
     data.setdefault("permissions_analysis", None)
     data.setdefault("attack_path", None)
     data.setdefault("vulnerabilities", [])
@@ -315,17 +266,17 @@ def _normalize_summary(data: dict) -> dict:
     data.setdefault("review_focus", "")
     data.setdefault("evidence", [])
 
-    risk = data.get("risk", {})
+    risk = data.get("risk_note", {})
     if isinstance(risk, str):
         parts = risk.split("--", 1)
         level = parts[0].strip().lower()
         reason = parts[1].strip() if len(parts) > 1 else risk.strip()
-        data["risk"] = {"level": level, "reason": reason}
+        data["risk_note"] = {"level": level, "reason": reason}
     elif isinstance(risk, dict):
-        data["risk"]["level"] = str(risk.get("level", "low")).lower()
-        data["risk"]["reason"] = str(risk.get("reason", "")).strip()
+        data["risk_note"]["level"] = str(risk.get("level", "low")).lower()
+        data["risk_note"]["reason"] = str(risk.get("reason", "")).strip()
     else:
-        data["risk"] = {"level": "low", "reason": ""}
+        data["risk_note"] = {"level": "low", "reason": ""}
 
     if not isinstance(data["vulnerabilities"], list):
         data["vulnerabilities"] = []
@@ -339,59 +290,62 @@ def _normalize_summary(data: dict) -> dict:
     if data["attack_path"] is not None and not isinstance(data["attack_path"], dict):
         data["attack_path"] = None
 
-    data["ci_cd_risks"] = [
-        r for r in data["ci_cd_risks"]
-        if isinstance(r, dict) and r.get("evidence_snippet", "").strip()
-    ]
-
     _sanitize_strings(data)
     return data
 
 
 def _post_validate_summary(summary: dict, pr_data: dict) -> dict:
-    """
-    Consistency gate:
-    - Security improvements cannot be vulnerabilities.
-    - Attack path must be supported by proof.
-    - Medium+ risk without proof is lowered.
-    """
-    risk_level = str((summary.get("risk") or {}).get("level", "low")).lower()
-    vulnerabilities = summary.get("vulnerabilities", [])
-    attack_path = summary.get("attack_path")
+    risk_level = str((summary.get("risk_note") or {}).get("level", "low")).lower()
+    title_body = " ".join(
+        [
+            pr_data.get("title", "") or "",
+            pr_data.get("body", "") or "",
+            " ".join(pr_data.get("commit_messages", [])),
+            json.dumps(summary.get("vulnerabilities", []), ensure_ascii=False),
+            json.dumps(summary.get("ci_cd_risks", []), ensure_ascii=False),
+        ]
+    ).lower()
 
-    title_body = " ".join([
-        pr_data.get("title", "") or "",
-        pr_data.get("body", "") or "",
-        " ".join(pr_data.get("commit_messages", [])),
-        json.dumps(vulnerabilities, ensure_ascii=False),
-        json.dumps(summary.get("ci_cd_risks", []), ensure_ascii=False),
-    ]).lower()
+    security_improvement_markers = [
+        "trivy",
+        "snyk",
+        "grype",
+        "scanner",
+        "vulnerability scanner",
+        "pin",
+        "latest version",
+        "security improvement",
+        "reduce risk",
+    ]
 
-    if any(marker in title_body for marker in _SECURITY_IMPROVEMENT_MARKERS):
+    if any(marker in title_body for marker in security_improvement_markers):
         specific_cve = bool(re.search(r"CVE-\d{4}-\d+", title_body))
         if not specific_cve:
-            summary["risk"] = {
+            summary["risk_note"] = {
                 "level": "low",
                 "reason": "Security improvement or dependency maintenance change without a proven exploit path.",
             }
             summary["attack_path"] = None
             summary["vulnerabilities"] = []
+            if not summary.get("ci_cd_risks"):
+                summary["ci_cd_risks"] = []
 
-    if summary.get("attack_path") and isinstance(summary["attack_path"], dict):
-        attacker_verified = bool(summary["attack_path"].get("attacker_control_verified", False))
-        exploit_steps = summary["attack_path"].get("exploit_steps", [])
+    attack_path = summary.get("attack_path")
+    if attack_path and isinstance(attack_path, dict):
+        attacker_verified = bool(attack_path.get("attacker_control_verified", False))
+        exploit_steps = attack_path.get("exploit_steps", [])
         if not attacker_verified or not isinstance(exploit_steps, list) or len(exploit_steps) < 3:
             summary["attack_path"] = None
 
     if risk_level in {"medium", "high", "critical"} and summary.get("attack_path") is None:
-        summary["risk"] = {
+        summary["risk_note"] = {
             "level": "low",
             "reason": "No confirmed attacker-controlled exploit path in the diff.",
         }
 
-    if summary.get("risk", {}).get("level") in {"high", "critical"}:
+    if summary.get("risk_note", {}).get("level") in {"high", "critical"}:
         if not summary.get("vulnerabilities") and not summary.get("ci_cd_risks"):
-            summary["risk"] = {
+            summary["risk_note"] = {
                 "level": "low",
                 "reason": "No concrete vulnerability or CI/CD risk was proven in the diff.",
             }
@@ -445,21 +399,42 @@ def _check_hallucinations(summary: dict, pr_data: dict) -> list:
 
     corpus = " ".join(corpus_parts)
 
-    summary_text = " ".join([
-        summary.get("what", ""),
-        summary.get("why", ""),
-        summary.get("impact", ""),
-        summary.get("review_focus", ""),
-        " ".join(summary.get("key_changes") or []),
-        json.dumps(summary.get("vulnerabilities", []), ensure_ascii=False),
-        json.dumps(summary.get("ci_cd_risks", []), ensure_ascii=False),
-    ])
+    summary_text = " ".join(
+        [
+            summary.get("what", ""),
+            summary.get("why", ""),
+            summary.get("impact", ""),
+            summary.get("review_focus", ""),
+            " ".join(summary.get("key_changes") or []),
+            json.dumps(summary.get("vulnerabilities", []), ensure_ascii=False),
+            json.dumps(summary.get("ci_cd_risks", []), ensure_ascii=False),
+        ]
+    )
 
-    common = frozenset({
-        "make", "take", "have", "give", "find", "call", "send",
-        "read", "load", "save", "open", "close", "init", "test",
-        "check", "raise", "catch", "throw", "wrap", "list",
-    })
+    common = frozenset(
+        {
+            "make",
+            "take",
+            "have",
+            "give",
+            "find",
+            "call",
+            "send",
+            "read",
+            "load",
+            "save",
+            "open",
+            "close",
+            "init",
+            "test",
+            "check",
+            "raise",
+            "catch",
+            "throw",
+            "wrap",
+            "list",
+        }
+    )
 
     hallucinated = []
     for m in re.finditer(r"\b([a-z][a-z0-9_]{3,})\(\)", summary_text):
