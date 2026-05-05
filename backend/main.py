@@ -1,4 +1,4 @@
-"""
+ï»¿"""
 main.py -- DevMind SaaS API
 
 Production-grade FastAPI application with:
@@ -582,7 +582,7 @@ def _build_pr_comment(result: dict[str, Any]) -> str:
 
     return f"""## {emoji} DevMind Risk Analysis
 
-**{triage}** — Risk Score `{score}/100` — **{level.upper()}**
+**{triage}** ï¿½ Risk Score `{score}/100` ï¿½ **{level.upper()}**
 {blocker_md}
 
 ### Risk Breakdown
@@ -600,7 +600,7 @@ def _build_pr_comment(result: dict[str, Any]) -> str:
 **Review focus:** {s.get("review_focus", "N/A")}
 
 ---
-_Analyzed by DevMind · trace `{result.get("trace_id", "")}`_"""
+_Analyzed by DevMind ï¿½ trace `{result.get("trace_id", "")}`_"""
 
 
 async def _run_pipeline(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
