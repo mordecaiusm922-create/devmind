@@ -815,8 +815,13 @@ def _evaluate_summary_quality(summary: dict, pr_data: dict) -> Evaluation:
         if r.search(lower)
     )
 
+   # Consistency cap: confidence cannot exceed specificity by more than 0.25.
+    # Prevents structural bonuses from inflating confidence when the text
+    # contains no specific identifiers (e.g. specificity=0.333, confidence=1.0).
+    specificity_ceiling = min(1.0, specificity_score + 0.25)
+
     confidence_score = round(
-        max(0.0, min(1.0, specificity_score + structural_bonus - generic_deduction - length_penalty)),
+        max(0.0, min(specificity_ceiling, specificity_score + structural_bonus - generic_deduction - length_penalty)),
         3,
     )
     confidence = (
@@ -824,7 +829,6 @@ def _evaluate_summary_quality(summary: dict, pr_data: dict) -> Evaluation:
         "medium" if confidence_score >= CONFIDENCE_MED  else
         "low"
     )
-
     is_flagged  = False
     flag_reason = None
 

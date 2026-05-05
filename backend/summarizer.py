@@ -49,30 +49,54 @@ client = OpenAI(
 # =============================================================================
 
 SYSTEM_PROMPT = (
-    "You are DevMind, an offensive security analysis engine for pull requests. "
-    "You think like an attacker, not a reviewer. "
-    "Your job is to identify real exploitable security issues before merge.\n\n"
-    "Focus on: credential exposure, auth flaws, privilege escalation, injection, "
-    "supply chain risk, unsafe CI/CD workflows, and risky dependency changes.\n\n"
-    "CI/CD threats have high priority. Pay special attention to: "
-    "pull_request_target with untrusted code, missing permissions blocks, "
-    "mutable action tags, secrets accessed before validation, workflow_run with "
-    "untrusted artifacts, and unsafe registry or image handling.\n\n"
-    "Rules:\n"
-    "- Every claim must be grounded in the diff.\n"
-    "- Always cite a real file, line, and code snippet.\n"
-    "- Do not invent vulnerabilities.\n"
-    "- attack_path is MANDATORY whenever risk.level is medium, high, or critical "
-    "AND at least one vulnerability is present. Only set attack_path to null when "
-    "risk.level is low and no realistic attacker-controlled path exists.\n"
-    "- Be precise. Avoid vague wording like may, could, might, probably.\n"
-    "- Prefer concrete exploit paths and concrete fixes.\n"
-    "- The pre-analysis block is authoritative.\n\n"
-    "Internal reasoning only:\n"
-    "1) What changed?\n"
-    "2) Can attacker control it?\n"
-    "3) What resource is at risk?\n"
-    "4) Is there a realistic attack path?\n\n"
+    "You are DevMind, a security analysis engine for pull requests. "
+    "Your job is to identify REAL, EXPLOITABLE security issues grounded "
+    "exclusively in the diff provided. You do not speculate.\n\n"
+
+    "FALSIFIABILITY RULE — before making any claim, ask:\n"
+    "  (a) Is attacker control of this input demonstrated in the diff?\n"
+    "  (b) Is there a concrete, reproducible path from input to sensitive resource?\n"
+    "  (c) Does the diff introduce the flaw, or does it fix/detect it?\n"
+    "If any answer is NO, do not claim a vulnerability. Set risk to low.\n\n"
+
+    "SECURITY IMPROVEMENT RULE:\n"
+    "  - Adding a vulnerability scanner (Trivy, Snyk, Grype, etc.) REDUCES risk.\n"
+    "  - Pinning action versions REDUCES supply chain risk.\n"
+    "  - Updating actions to latest stable versions is NOT a vulnerability unless "
+    "    a specific CVE or breaking change is present in the diff.\n"
+    "  - Never classify a security improvement as a vulnerability.\n\n"
+
+    "CI/CD THREAT MODEL — only flag if ALL conditions are true:\n"
+    "  1. The trigger is pull_request_target or workflow_run.\n"
+    "  2. The workflow explicitly accesses ${{ secrets.* }} or runs untrusted code.\n"
+    "  3. The permissions: block is absent or grants write scope unnecessarily.\n"
+    "  4. An external attacker can reach this trigger without repo write access.\n\n"
+
+    "PERMISSIONS ANALYSIS — always check the diff for:\n"
+    "  - permissions: blocks (presence/absence, scopes granted).\n"
+    "  - secrets accessed before input validation.\n"
+    "  - GITHUB_TOKEN scope relative to the trigger.\n\n"
+
+    "ATTACK PATH RULES:\n"
+    "  - entry_point must be a specific file:line in the diff.\n"
+    "  - exploit_steps must list >= 3 concrete, reproducible steps.\n"
+    "  - attacker_control_verified must be true — if you cannot confirm "
+    "    the attacker controls the entry point, set attack_path to null.\n"
+    "  - sink must be a real resource proven reachable in the diff.\n"
+    "  - If risk >= medium but no realistic attack path exists, "
+    "    lower risk to low rather than invent a path.\n\n"
+
+    "BLAST RADIUS — for every vulnerability estimate:\n"
+    "  - Scope: repo-only | org-wide | cross-account | public.\n"
+    "  - Data at risk: secrets | artifacts | source | prod-infra | none.\n\n"
+
+    "Internal reasoning (do not output):\n"
+    "  1. What changed in the diff?\n"
+    "  2. Does this add security (scanner, pin, permission scope reduction)?\n"
+    "  3. Can an external attacker control the entry point?\n"
+    "  4. What are the exact exploit steps? Are they reproducible?\n"
+    "  5. What is the blast radius if exploited?\n\n"
+
     "Output only valid JSON. No markdown. No code fences. No explanations."
 )
 
@@ -215,62 +239,82 @@ def _build_full_prompt(pr_data: dict, files_with_diff: list, pre) -> str:
 
 
 def _build_chunk_prompt(pr_data: dict, chunk: list, chunk_num: int, total: int, pre) -> str:
-    return (
-        f"CHUNK ANALYSIS {chunk_num}/{total}\n\n"
-        f"PR Title: {pr_data.get('title', '')}\n"
-        f"Author: @{pr_data.get('author', '')}\n"
-        f"Repository: {pr_data.get('repo', '')}\n\n"
-        f"{pre.to_prompt_context()}\n\n"
-        f"Files in this chunk:\n{_format_file_list(chunk)}\n\n"
-        f"Diffs:\n{_format_diffs(chunk)}\n\n"
-        f"Only report findings grounded in these diffs.\n\n"
-        f"{_output_schema_instruction()}"
-    )
-
-
-def _output_schema_instruction() -> str:
-    """
-    Explicit JSON schema instruction sent with every LLM call.
-
-    attack_path rules (enforced at prompt level):
-      - MUST be a populated object when risk.level is medium, high, or critical
-        AND at least one vulnerability is present.
-      - MAY be null ONLY when risk.level is low AND there is no realistic
-        attacker-controlled path into a sensitive resource.
-      - Vague entries ("an attacker could...") are not acceptable -- every
-        field must reference a specific file, line, or action in the diff.
-    """
-    return (
+  return (
         "Return ONLY a JSON object with these exact top-level keys:\n"
         "{\n"
-        '  "what": "Precise 1 to 2 sentence description of what changed.",\n'
-        '  "why": "Technical reason this change was necessary.",\n'
-        '  "impact": "Which systems, workflows, APIs, or runtime behaviors are affected.",\n'
+        '  "what": "Precise 1-2 sentence description of what changed.",\n'
+        '  "why": "Technical reason for this change.",\n'
+        '  "impact": "Which systems, workflows, or behaviors are affected.",\n'
         '  "risk": {\n'
         '    "level": "low | medium | high | critical",\n'
-        '    "reason": "Exact failure mechanism and attack vector."\n'
+        '    "reason": "Exact failure mechanism with file:line reference. '
+        'If the change adds security tooling, level must be low."\n'
+        "  },\n"
+        '  "permissions_analysis": {\n'
+        '    "permissions_block_present": true,\n'
+        '    "scopes_granted": ["contents: read"],\n'
+        '    "secrets_accessed_before_validation": false,\n'
+        '    "github_token_scope": "read | write | none | not_applicable",\n'
+        '    "trust_boundary_respected": true\n'
         "  },\n"
         '  "attack_path": {\n'
-        '    "entry_point": "The specific file:line or action in this diff that an attacker targets.",\n'
-        '    "vector": "Exact sequence of steps an attacker takes to exploit this change.",\n'
-        '    "sink": "The resource or system state compromised (e.g. AWS credentials, artifact store).",\n'
-        '    "impact": "account_takeover | data_exfiltration | privilege_escalation | rce | supply_chain | other"\n'
+        '    "entry_point": "Specific file:line in this diff the attacker targets.",\n'
+        '    "attacker_control_verified": true,\n'
+        '    "exploit_steps": [\n'
+        '      "Step 1: attacker forks the repo and opens a PR.",\n'
+        '      "Step 2: pull_request_target trigger fires with write permissions.",\n'
+        '      "Step 3: workflow accesses ${{ secrets.AWS_KEY }} at line 82."\n'
+        "    ],\n"
+        '    "sink": "The exact resource compromised (e.g. secrets.AWS_KEY at line 82).",\n'
+        '    "blast_radius": "repo-only | org-wide | cross-account | public",\n'
+        '    "impact": "account_takeover | data_exfiltration | privilege_escalation '
+        '| rce | supply_chain | other"\n'
         "  },\n"
-        "  // attack_path MUST be a populated object when risk.level is medium, high, or critical\n"
-        "  // and at least one vulnerability is present.\n"
-        "  // attack_path may be null ONLY when risk.level is low and no attacker-controlled path exists.\n"
+        "  // attack_path MUST be populated when risk >= medium AND attacker_control_verified is true.\n"
+        "  // attack_path MUST be null when attacker_control cannot be confirmed in the diff.\n"
         '  "vulnerabilities": [\n'
         "    {\n"
-        '      "type": "credential_exposure | sql_injection | xss | auth_bypass | privilege_escalation | insecure_ai_pattern | cve_dependency | path_traversal | ci_cd_misconfig | other",\n'
+        '      "type": "credential_exposure | sql_injection | xss | auth_bypass | '
+        'privilege_escalation | ci_cd_misconfig | supply_chain | other",\n'
         '      "severity": "low | medium | high | critical",\n'
         '      "location": "filename:L12-18",\n'
-        '      "description": "Exact vulnerability description with attack vector.",\n'
-        '      "fix": "Concrete fix recommendation.",\n'
-        '      "exploit_path": "Step by step attack path referencing exact lines from the diff."\n'
+        '      "description": "Exact flaw with file:line reference. '
+        'Do NOT list security improvements as vulnerabilities.",\n'
+        '      "fix": "Concrete, actionable fix.",\n'
+        '      "exploit_path": "Minimum 3 reproducible steps referencing exact diff lines.",\n'
+        '      "blast_radius": "repo-only | org-wide | cross-account | public"\n'
         "    }\n"
         "  ],\n"
         '  "ci_cd_risks": [\n'
         "    {\n"
+        '      "trigger": "pull_request_target | workflow_run | push | other",\n'
+        '      "risk": "Exact risk with workflow file:line reference.",\n'
+        '      "severity": "low | medium | high | critical",\n'
+        '      "permissions_block_missing": false,\n'
+        '      "secrets_exposed": false,\n'
+        '      "line": "filename:Lx"\n'
+        "    }\n"
+        "  ],\n"
+        '  "key_changes": ["filename:L12-18 -- what changed and security impact"],\n'
+        '  "review_focus": "Single most critical concern with exact file:line.",\n'
+        '  "evidence": [\n'
+        "    {\n"
+        '      "claim": "Short falsifiable claim.",\n'
+        '      "location": "filename:L12-18",\n'
+        '      "snippet": "exact code from diff"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        "Hard rules:\n"
+        "- Adding Trivy, Snyk, or any scanner = security improvement, NOT a vulnerability.\n"
+        "- attack_path requires attacker_control_verified: true and >= 3 exploit_steps.\n"
+        "- If attacker_control_verified is false, attack_path MUST be null.\n"
+        "- vulnerabilities must not include security improvements or version updates "
+        "without a specific CVE.\n"
+        "- if workflow files are present, populate permissions_analysis.\n"
+        "- evidence is mandatory for every vulnerability entry.\n"
+        "- all strings must use ASCII-safe characters only.\n"
+    )
         '      "trigger": "pull_request_target | workflow_run | push | other",\n'
         '      "risk": "Exact CI/CD risk description referencing the workflow file and trigger.",\n'
         '      "severity": "low | medium | high | critical",\n'
