@@ -40,7 +40,7 @@ SYSTEM_PROMPT = (
     "The pre-analysis block is authoritative -- do not contradict it. "
     "For every finding include: what it is, how it is exploited, what the fix is. "
     "EVIDENCE IS MANDATORY: every vulnerability must have a real code snippet from the diff. "
-    "If you cannot cite a specific line, do not report the vulnerability. "
+   "If the vulnerability is structural (e.g. workflow design), cite the most relevant line even if not exact. "
     "Before generating output, internally reason: 1) what changed, 2) can attacker control it, 3) what resource is at risk, 4) is there a realistic attack path. Then output ONLY the JSON. "
     "Output MUST be valid JSON. Do not include any text before or after the JSON. Do not include explanations."
 )
@@ -126,13 +126,7 @@ def _call_claude(user_prompt: str) -> dict:
 
 def _build_full_prompt(pr_data: dict, files_with_diff: list, pre) -> str:
     return (
-        f"First, reason step-by-step about the security implications of this PR:\n"
-f"1. Identify what changed that could introduce risk\n"
-f"2. Determine if an attacker could influence or control that change\n"
-f"3. Identify what sensitive resource could be affected\n"
-f"4. Map this into a realistic attack path\n"
-f"Only then output the final JSON analysis.\n\n"
-f"Analyse this Pull Request for security vulnerabilities. Every claim must reference specific files or code.\n\n"
+        
     )
 
 
