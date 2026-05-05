@@ -1,4 +1,4 @@
-﻿"""
+"""
 main.py — DevMind SaaS API
 Production-grade FastAPI application following Big Tech engineering standards:
   - Strict typing throughout (no implicit Any)
@@ -307,11 +307,12 @@ def _build_response(
         "deletions":     pr_data["deletions"],
         "is_large_pr":   pr_data.get("is_large_pr", False),
         "analysed_at":   datetime.now(timezone.utc).isoformat(),
-        "summary": {
+       "summary": {
             "what":                  summary.get("what"),
             "why":                   summary.get("why"),
             "impact":                summary.get("impact"),
             "risk":                  summary.get("risk"),
+            "permissions_analysis":  summary.get("permissions_analysis"),
             "attack_path":           summary.get("attack_path"),
             "vulnerabilities":       summary.get("vulnerabilities", []),
             "ci_cd_risks":           summary.get("ci_cd_risks", []),

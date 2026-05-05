@@ -360,7 +360,7 @@ def _normalize_summary(data: dict) -> dict:
     data.setdefault("ci_cd_risks", [])
     data.setdefault("key_changes", [])
     data.setdefault("review_focus", "")
-    data.setdefault("evidence", [])
+    data.setdefault("permissions_analysis", None)
 
     # Normalize risk field -- accept string "level -- reason" or dict
     risk = data.get("risk", {})

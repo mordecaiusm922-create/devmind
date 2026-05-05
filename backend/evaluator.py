@@ -692,8 +692,24 @@ def _combine_scores(
     if summary.get("vulnerabilities"): base += 0.05
     if ev.is_flagged:                  base -= 0.05
 
-    return int(round(max(0.0, min(1.0, base)) * 100))
+    # ── No-findings discount ─────────────────────────────────────────────────
+    # Static signals (tags, diff size) cannot drive a critical score when the
+    # LLM found zero exploitable vulnerabilities, no attack path, and no CI/CD
+    # risks. Cap the score to prevent false P0 triage on clean PRs.
+    vulns     = summary.get("vulnerabilities") or []
+    attack    = summary.get("attack_path")
+    ci_cd     = summary.get("ci_cd_risks") or []
+    llm_level = str((summary.get("risk") or {}).get("level", "low")).lower()
 
+    if not vulns and not attack and not ci_cd:
+        # No actionable findings at all -- hard cap at top of "high" band.
+        base = min(base, 0.69)
+
+    if llm_level == "low" and not vulns:
+        # LLM explicitly assessed low risk with zero findings -- cap at "medium".
+        base = min(base, 0.49)
+
+    return int(round(max(0.0, min(1.0, base)) * 100))
 
 def _score_to_band(score: int) -> tuple[str, str]:
     """
