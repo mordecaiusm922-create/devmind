@@ -348,10 +348,10 @@ def _build_response(
             "review_focus": summary.get("review_focus"),
             "evidence": summary.get("evidence", []),
             
-            "triage": summary.get("triage"),
-            "merge_blocker": summary.get("merge_blocker", False),
-            "analysed_in_chunks": summary.get("analysed_in_chunks"),
-            "hallucination_warning": summary.get("hallucination_warning"),
+           "triage": summary.get("triage"),
+"merge_blocker": summary.get("merge_blocker", False),
+"merge_block_reason": summary.get("merge_block_reason"),
+"analysed_in_chunks": summary.get("analysed_in_chunks"),
         },
         "evaluation": {
             "confidence": evaluation.get("confidence"),
@@ -442,6 +442,21 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     }
 
     features = _timed("extract_features", extract_features, combined, diff_stats)
+    permissions = summary.get("permissions_analysis", {})
+vulns = summary.get("vulnerabilities", [])
+
+risk_band = summary.get("risk_note", {}).get("level", "low")
+risk_floor = pre.risk_floor
+
+merge_blocker, reason = decide_merge_blocker(
+    risk_band=risk_band,
+    risk_floor=risk_floor,
+    vulnerabilities=vulns,
+    permissions=permissions,
+)
+
+summary["merge_blocker"] = merge_blocker
+summary["merge_block_reason"] = reason
 
     return _build_response(
         repo=repo,
@@ -454,8 +469,41 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         features=features,
         parsed_fns=combined["functions_changed"],
         trace_id=trace_id,
+      
     )
 
+def decide_merge_blocker(
+    *,
+    risk_band: str,
+    risk_floor: str,
+    vulnerabilities: list,
+    permissions: dict | None,
+) -> tuple[bool, str]:
+    """
+    Returns:
+        (merge_blocker, reason)
+    """
+
+    # 🔴 HARD BLOCK
+    if risk_band in ("critical", "high"):
+        return True, "High or critical risk detected"
+
+    # 🔴 Vulnerabilities explícitas
+    if vulnerabilities:
+        severe = [v for v in vulnerabilities if v.get("severity") in ("high", "critical")]
+        if severe:
+            return True, "High severity vulnerabilities detected"
+
+    # 🟠 Security-sensitive PR
+    if risk_floor == "medium":
+        if permissions and not permissions.get("trust_boundary_respected", True):
+            return True, "Permissions cross trust boundary"
+
+        if permissions and permissions.get("secrets_accessed_before_validation"):
+            return True, "Secrets used before validation"
+
+    # 🟡 Soft signals (NO bloquea, pero importante)
+    return False, "No blocking conditions met"
 
 async def _run_analysis(repo: str, pr_number: int, trace_id: str | None = None) -> dict[str, Any]:
     tid = trace_id or str(uuid.uuid4())
