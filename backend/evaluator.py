@@ -16,6 +16,7 @@ Design principles:
 """
 
 from __future__ import annotations
+import json
 
 import re
 from dataclasses import asdict, dataclass
@@ -985,3 +986,5 @@ def _build_full_diff_text(pr_data: dict) -> str:
         " ".join(pr_data.get("commit_messages", [])),
         " ".join(f.get("diff") or "" for f in files),
     ])
+
+
