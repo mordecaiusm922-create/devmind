@@ -15,49 +15,53 @@ client = OpenAI(
 MODEL = "llama-3.3-70b-versatile"
 CHUNK_FILE_THRESHOLD = 15
 
+
+# =========================
+# SYSTEM PROMPT (CLEAN)
+# =========================
 SYSTEM_PROMPT = (
     "You are DevMind, a security-focused code analysis engine. "
     "You think like an attacker, not a reviewer. "
-    "Your job is to find security vulnerabilities in pull requests before they reach production. "
-    "WHAT YOU HUNT: "
-    "Credential exposure: hardcoded API keys, passwords, tokens, secrets. "
-    "Injection vectors: SQL injection, XSS, command injection, path traversal. "
-    "Authentication flaws: missing auth checks, broken session management, JWT issues. "
-    "Privilege escalation: improper role checks, insecure direct object references. "
-    "Insecure AI-generated patterns: Math.random() for tokens, CORS wildcard, CSRF disabled. "
-    "Dependency vulnerabilities: outdated packages with known CVEs. "
-    "CI/CD SPECIFIC THREATS (highest priority): "
-    "pull_request_target with checkout of untrusted code — allows secret exfiltration. "
-    "GitHub Actions without explicit permissions block — inherits write permissions by default. "
-    "Actions pinned to mutable tags (v1, latest) instead of SHA — supply chain attack vector. "
-    "Secrets accessed before security scan step — scan runs after artifact is already pushed. "
-    "workflow_run trigger reading artifacts from untrusted forks — token theft vector. "
+
+    "Your job is to detect real exploitable vulnerabilities in pull requests. "
+
+    "FOCUS AREAS: "
+    "credential exposure, injection vectors, auth flaws, privilege escalation, "
+    "CI/CD misconfigurations, supply chain risks, insecure dependencies. "
+
+    "CI/CD PRIORITY: "
+    "pull_request_target risks, missing permissions block, mutable action versions, "
+    "unsafe artifact usage, secrets exposed before validation. "
+
     "STRICT RULES: "
-    "Think like an attacker. Ask: how would I exploit this RIGHT NOW? "
-    "Every risk claim MUST reference specific filename + line number + code snippet. "
-    "If you find a critical vulnerability, name the exact attack vector and exploit path. "
-    "Never say 'may cause issues' -- say exactly what breaks, how, and what the attacker gains. "
-    "The pre-analysis block is authoritative -- do not contradict it. "
-    "For every finding include: what it is, how it is exploited, what the fix is. "
-    "EVIDENCE IS MANDATORY: every vulnerability must have a real code snippet from the diff. "
-   "If the vulnerability is structural (e.g. workflow design), cite the most relevant line even if not exact. "
-    "Before generating output, internally reason: 1) what changed, 2) can attacker control it, 3) what resource is at risk, 4) is there a realistic attack path. Then output ONLY the JSON. "
-    "Output MUST be valid JSON. Do not include any text before or after the JSON. Do not include explanations."
+    "Every claim MUST include filename, line, and code snippet. "
+    "No vague language. Be deterministic. "
+    "If no real exploit path exists, do not invent one. "
+    "Think: can attacker control input -> reach sensitive resource -> impact. "
+
+    "Before answering, internally reason: "
+    "1) what changed "
+    "2) attacker control "
+    "3) sensitive resource "
+    "4) realistic exploit path "
+
+    "Output ONLY valid JSON. No explanations."
 )
 
 
-debug_capture = None
-
-
-def summarize_pr(pr_data: dict) -> tuple[dict, object, object]:
+# =========================
+# MAIN ENTRY
+# =========================
+def summarize_pr(pr_data: dict):
     pre = pre_analyse(pr_data)
     files_with_diff = [f for f in pr_data.get("files", []) if f.get("diff")]
 
     if pr_data.get("is_large_pr") or len(files_with_diff) > CHUNK_FILE_THRESHOLD:
-        summary = _summarize_large_pr(pr_data, files_with_diff, pre)
+        summary = _summarize_large(pr_data, files_with_diff, pre)
     else:
-        summary = _summarize_single_pass(pr_data, files_with_diff, pre)
+        summary = _summarize_single(pr_data, files_with_diff, pre)
 
+    summary = _normalize(summary)
     summary = enforce_risk_floor(summary, pre)
 
     hallucinations = _check_hallucinations(summary, pr_data)
@@ -65,227 +69,187 @@ def summarize_pr(pr_data: dict) -> tuple[dict, object, object]:
         summary["hallucination_warning"] = hallucinations
 
     ev = evaluate(summary, pr_data)
+
     return summary, pre, ev
 
 
-def _summarize_single_pass(pr_data: dict, files_with_diff: list, pre) -> dict:
-    prompt = _build_full_prompt(pr_data, files_with_diff, pre)
-    return _call_claude(prompt)
+# =========================
+# SINGLE PASS
+# =========================
+def _summarize_single(pr_data, files, pre):
+    prompt = _build_prompt(pr_data, files, pre)
+    return _call_llm(prompt)
 
 
-def _summarize_large_pr(pr_data: dict, files_with_diff: list, pre) -> dict:
+# =========================
+# CHUNKING
+# =========================
+def _summarize_large(pr_data, files, pre):
     chunk_size = 8
-    chunks = [files_with_diff[i:i + chunk_size] for i in range(0, len(files_with_diff), chunk_size)]
-    partial_summaries = []
+    chunks = [files[i:i + chunk_size] for i in range(0, len(files), chunk_size)]
+
+    partials = []
     for i, chunk in enumerate(chunks):
-        prompt = _build_chunk_prompt(pr_data, chunk, i + 1, len(chunks), pre)
-        partial_summaries.append(_call_claude(prompt))
-    return _synthesise(pr_data, partial_summaries, pre)
+        prompt = _build_prompt(pr_data, chunk, pre, chunk_info=(i+1, len(chunks)))
+        partials.append(_call_llm(prompt))
+
+    return _synthesise(pr_data, partials, pre)
 
 
-def _synthesise(pr_data: dict, partials: list, pre) -> dict:
-    synthesis_prompt = (
-        f"You have analysed a large PR in {len(partials)} chunks. "
-        f"PR: {pr_data['title']} Author: @{pr_data['author']} "
-        f"Total: {pr_data['changed_files']} files "
-        f"+{pr_data['additions']}/-{pr_data['deletions']} lines\n"
-        f"{pre.to_prompt_context()}\n"
-        f"Partial analyses:\n{json.dumps(partials, indent=2)}\n"
-        f"Synthesise into ONE final analysis. Same strict rules: specific, no filler.\n"
-        f"{_output_schema_instruction()}"
+def _synthesise(pr_data, partials, pre):
+    prompt = (
+        f"Combine multiple analyses into one final result.\n"
+        f"PR: {pr_data['title']}\n"
+        f"{json.dumps(partials)}\n"
+        f"{_schema()}"
     )
-    result = _call_claude(synthesis_prompt)
-    result["analysed_in_chunks"] = len(partials)
-    return result
+    return _call_llm(prompt)
 
 
-def _call_claude(user_prompt: str) -> dict:
+# =========================
+# PROMPT BUILDER
+# =========================
+def _build_prompt(pr_data, files, pre, chunk_info=None):
+    chunk_text = ""
+    if chunk_info:
+        chunk_text = f"Chunk {chunk_info[0]} of {chunk_info[1]}\n"
+
+    return (
+        f"{chunk_text}"
+        f"PR: {pr_data['title']}\n"
+        f"Author: @{pr_data['author']}\n"
+        f"Files changed: {pr_data['changed_files']}\n\n"
+        f"{pre.to_prompt_context()}\n\n"
+        f"{_format_diffs(files)}\n\n"
+        f"{_schema()}"
+    )
+
+
+# =========================
+# SCHEMA (CORE)
+# =========================
+def _schema():
+    return (
+        'Return ONLY JSON:\n'
+        '{\n'
+        '  "what": "precise change summary",\n'
+        '  "why": "technical reason",\n'
+        '  "impact": "affected systems",\n'
+
+        '  "risk": {\n'
+        '    "level": "low | medium | high | critical",\n'
+        '    "reason": "exact failure mechanism"\n'
+        '  },\n'
+
+        '  "scores": {\n'
+        '    "exploitability": 0-10,\n'
+        '    "impact": 0-10,\n'
+        '    "confidence": 0-10\n'
+        '  },\n'
+
+        '  "merge_blocker": true | false,\n'
+
+        '  "attack_path": {\n'
+        '    "entry_point": "exact change",\n'
+        '    "vector": "how exploited",\n'
+        '    "sink": "target resource",\n'
+        '    "impact": "data exfiltration | RCE | etc"\n'
+        '  } | null,\n'
+
+        '  "vulnerabilities": [\n'
+        '    {\n'
+        '      "type": "string",\n'
+        '      "severity": "low | medium | high | critical",\n'
+        '      "location": "file:Lx",\n'
+        '      "description": "exact issue",\n'
+        '      "fix": "specific fix",\n'
+        '      "exploit_path": "step-by-step exploit"\n'
+        '    }\n'
+        '  ],\n'
+
+        '  "key_changes": ["file:Lx what changed"],\n'
+        '  "review_focus": "most critical issue",\n'
+        '  "evidence": [\n'
+        '    {\n'
+        '      "claim": "finding",\n'
+        '      "location": "file:Lx",\n'
+        '      "snippet": "code"\n'
+        '    }\n'
+        '  ]\n'
+        '}'
+    )
+
+
+# =========================
+# LLM CALL
+# =========================
+def _call_llm(prompt):
     response = client.chat.completions.create(
         model=MODEL,
-        max_tokens=4096,
         temperature=0.2,
+        max_tokens=4096,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
+            {"role": "user", "content": prompt},
         ],
     )
-    choice = response.choices[0]
-    if choice.finish_reason == "length":
-        raise ValueError(f"LLM response truncated. Prompt was {len(user_prompt)} chars.")
-    raw = choice.message.content
-    parsed = _parse_and_validate(raw)
-    if debug_capture is not None:
-        debug_capture.append({
-            "prompt_chars": len(user_prompt),
-            "raw": raw,
-            "finish_reason": choice.finish_reason,
-            "parsed": parsed,
-        })
-    return parsed
+
+    raw = response.choices[0].message.content
+    return _parse(raw)
 
 
-def _build_full_prompt(pr_data: dict, files_with_diff: list, pre) -> str:
-    return (
-        
-    )
+# =========================
+# PARSER (ROBUST)
+# =========================
+def _parse(raw: str):
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if not match:
+        raise ValueError("No JSON found")
+
+    return json.loads(match.group(0))
 
 
-def _build_chunk_prompt(pr_data: dict, chunk: list, chunk_num: int, total: int, pre) -> str:
-    return (
-        f"Analysing chunk {chunk_num} of {total} of a large PR. Be specific.\n\n"
-        f"## PR Metadata\n"
-        f"Title: {pr_data['title']}\n"
-        f"Author: @{pr_data['author']}\n"
-        f"Total: {pr_data['changed_files']} files (+{pr_data['additions']} / -{pr_data['deletions']})\n\n"
-        f"{pre.to_prompt_context()}\n\n"
-        f"## Files in this chunk\n{_format_diffs(chunk)}\n\n"
-        f"{_output_schema_instruction()}"
-    )
+# =========================
+# NORMALIZER (CRUCIAL)
+# =========================
+def _normalize(data):
+    data.setdefault("vulnerabilities", [])
+    data.setdefault("evidence", [])
+    data.setdefault("attack_path", None)
+
+    if "scores" not in data:
+        data["scores"] = {"exploitability": 0, "impact": 0, "confidence": 0}
+
+    if "merge_blocker" not in data:
+        data["merge_blocker"] = data.get("risk", {}).get("level") in ["high", "critical"]
+
+    return data
 
 
-def _check_hallucinations(summary: dict, pr_data: dict) -> list:
-    corpus_parts = [
+# =========================
+# HALLUCINATION CHECK
+# =========================
+def _check_hallucinations(summary, pr_data):
+    corpus = " ".join([
         pr_data.get("title", ""),
         pr_data.get("body", ""),
-        " ".join(pr_data.get("commit_messages", [])),
-    ]
-    for f in pr_data.get("files", []):
-        corpus_parts.append(f.get("diff") or "")
-        corpus_parts.append(f.get("filename", ""))
-    corpus = " ".join(corpus_parts)
-
-    summary_text = " ".join([
-        summary.get("what", ""),
-        summary.get("why", ""),
-        summary.get("impact", ""),
-        summary.get("review_focus", ""),
-        " ".join(summary.get("key_changes") or []),
+        *[f.get("diff", "") for f in pr_data.get("files", [])]
     ])
 
     hallucinated = []
-    for m in re.finditer(r'\b([a-z][a-z0-9_]{3,})\(\)', summary_text):
-        fn = m.group(1)
-        if fn in {"make", "take", "have", "give", "find", "call", "send",
-                  "read", "load", "save", "open", "close", "init", "test",
-                  "check", "raise", "catch", "throw", "wrap", "list"}:
-            continue
-        if fn not in corpus:
-            hallucinated.append(fn + "()")
-    return list(dict.fromkeys(hallucinated))
+    for word in re.findall(r"\b[a-zA-Z_]{6,}\(\)", json.dumps(summary)):
+        if word not in corpus:
+            hallucinated.append(word)
+
+    return list(set(hallucinated))
 
 
-def _output_schema_instruction() -> str:
-    
-    return (
-        'Return ONLY a JSON object with these exact keys -- no markdown, no extra text:\n\n'
-        '{\n'
-        '  "what": "Precise 1-2 sentence description. Name specific functions, modules, or config keys.",\n'
-        '  "why": "Technical reason this change was necessary. Reference the actual problem.",\n'
-        '  "impact": "Which subsystems, APIs, DB tables, or runtime behaviours are affected. Be concrete.",\n'
-        '  "risk": {\n'
-        '    "level": "low | medium | high | critical",\n'
-        '    "reason": "Name the exact failure mechanism and attack vector."\n'
-        '  },\n'
-        '  "vulnerabilities": [\n'
-        '    {\n'
-        '      "type": "credential_exposure | sql_injection | xss | auth_bypass | privilege_escalation | insecure_ai_pattern | cve_dependency | path_traversal | other",\n'
-        '      "severity": "low | medium | high | critical",\n'
-        '      "location": "filename:L12-18",\n'
-        '      "description": "Exact vulnerability description with attack vector",\n'
-        '      "fix": "Concrete fix recommendation",\n'
-        '      "exploit_path": "Step by step: how an attacker exploits this RIGHT NOW. Be specific."\n'
-        '    }\n'
-        '  ],\n'
-        '  "ci_cd_risks": [\n'
-        '    {\n'
-        '      "trigger": "pull_request_target | workflow_run | push",\n'
-        '      "risk": "exact risk description",\n'
-        '      "line": "filename:LN"\n'
-        '    }\n'
-        '  ],\n'
-        '  "key_changes": ["filename.py:L12-18 -- what changed and why it matters"],\n'
-        '  "review_focus": "Single most critical security concern. Name the exact code path.",\n'
-        ' '  "attack_path"
-'    "entry_point": "specific change in the PR that introduces risk (e.g. new workflow step, dependency, or secret usage)",\n'
-'    "vector": "how an attacker would exploit this exact change",\n'
-'    "sink": "what resource is impacted (e.g. credentials, infrastructure, data)",\n'
-'    "impact": "account takeover | data exfiltration | privilege escalation | RCE | other"\n'
-'  },\n'
-'  "evidence": [{"claim": "brief claim", "location": "filename.py:L12-18", "snippet": "exact code from diff"}]\n'
-        'CRITICAL: vulnerabilities array is MANDATORY. If no vulnerabilities found, return empty array.\n'
-        'If risk level is high or critical, populate vulnerabilities with at least one entry.\n'
-        'ci_cd_risks is MANDATORY for any PR touching .github/workflows — populate it with specific triggers, risks and line numbers found in the diff.\n'
-        'evidence is MANDATORY — for every vulnerability, include the exact code snippet from the diff.\n'
-        'NEVER leave ci_cd_risks or evidence empty if the diff contains workflow files or security-sensitive code.'
-        'IMPORTANT: attack_path must reference real elements from the PR. If no clear attack path exists, return attack_path as null.\n'
-        'Only include attack_path if a realistic attacker-controlled path exists. Otherwise return null.\n'
-    )
-
-
-def _format_file_list(files: list) -> str:
-    if not files:
-        return "None"
-    icons = {"added": "+", "removed": "-", "renamed": "->", "modified": "~"}
-    lines = []
+# =========================
+# FORMAT DIFFS
+# =========================
+def _format_diffs(files):
+    out = []
     for f in files:
-        icon = icons.get(f["status"], "~")
-        skip = f" [skipped: {f['skipped_reason']}]" if f.get("skipped_reason") else ""
-        lines.append(f"  {icon} {f['filename']}  +{f['additions']}/-{f['deletions']}{skip}")
-    return "\n".join(lines)
-
-
-def _format_diffs(files: list) -> str:
-    parts = []
-    for f in files:
-        diff = f.get("diff", "")
-        if not diff:
-            continue
-        note = "  [truncated]" if f.get("truncated") else ""
-        parts.append(f"### {f['filename']}  (+{f['additions']}/-{f['deletions']}){note}\n```diff\n{diff}\n```")
-    return "\n\n".join(parts) if parts else "No diffs available."
-
-
-def _format_commits(messages: list) -> str:
-    return "\n".join(f"  - {m}" for m in messages) if messages else "No commits."
-
-
-def _format_review_comments(comments: list) -> str:
-    if not comments:
-        return "No inline review comments."
-    return "\n".join(f"  [{c['path']}] @{c['user']}: {c['body']}" for c in comments)
-
-
-def _format_issue_comments(comments: list) -> str:
-    if not comments:
-        return "No discussion."
-    return "\n".join(f"  @{c['user']}: {c['body']}" for c in comments)
-
-
-def _parse_and_validate(raw: str) -> dict:
-    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
-    if fence:
-        raw = fence.group(1)
-    else:
-        brace_start = raw.find("{")
-        brace_end = raw.rfind("}")
-        if brace_start != -1 and brace_end != -1 and brace_end > brace_start:
-            raw = raw[brace_start:brace_end + 1]
-
-    data = json.loads(raw)
-
-    risk = data.get("risk", {})
-    if isinstance(risk, str):
-        parts = risk.split("--", 1)
-        level = parts[0].strip().lower()
-        reason = parts[1].strip() if len(parts) > 1 else risk
-        data["risk"] = {"level": level, "reason": reason}
-    elif isinstance(risk, dict):
-        data["risk"]["level"] = risk.get("level", "low").lower()
-
-    if not isinstance(data.get("key_changes"), list):
-        data["key_changes"] = [str(data.get("key_changes", ""))]
-
-    if not isinstance(data.get("vulnerabilities"), list):
-        data["vulnerabilities"] = []
-
-    return data
+        if f.get("diff"):
+            out.append(f"### {f['filename']}\n{f['diff']}")
+    return "\n\n".join(out)
