@@ -409,8 +409,7 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
 
     pr_data = _timed("fetch_pr", get_pr_data, repo, pr_number)
     summary, pre, ev = _timed("summarize", summarize_pr, pr_data)
-    risk = compute_risk_score(ev)
-   risk: dict[str, Any] | None = None
+risk: dict[str, Any] | None = None
 
     _timed("log_analysis", log_analysis, repo, pr_number, pr_data, summary, pre, ev)
 
