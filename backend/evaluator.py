@@ -1,32 +1,31 @@
 """
-evaluator.py — DevMind deterministic risk engine
+evaluator.py -- DevMind deterministic risk engine
 
 Three-phase pipeline:
-  1. pre_analyse(pr_data)       → PreAnalysis   (before LLM, structural signals)
-  2. evaluate(summary, pr_data) → dict          (after LLM, quality + risk scoring)
+  1. pre_analyse(pr_data)       -> PreAnalysis   (before LLM, structural signals)
+  2. evaluate(summary, pr_data) -> dict          (after LLM, quality + risk scoring)
   3. enforce_risk_floor(summary, pre)            (never let LLM undercut structural floor)
 
 Design principles:
-  - Zero LLM calls — every score is explainable from the PR data alone.
+  - Zero LLM calls -- every score is explainable from the PR data alone.
   - Immutable dataclasses. No mutation after construction.
-  - Single definition per type — no duplicate dataclasses.
+  - Single definition per type -- no duplicate dataclasses.
   - All magic numbers are named constants.
   - Pure functions throughout; side effects only at the module boundary.
+  - All string literals are ASCII-safe (no Unicode em-dashes or special chars).
 """
-
 from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass
 from typing import Final
 
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 # 1. CONSTANTS
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
 TRIVIAL_CHURN_THRESHOLD: Final[int] = 8
 
-# Diff-size thresholds
 ADDITIONS_LARGE:   Final[int] = 500
 ADDITIONS_MEDIUM:  Final[int] = 100
 DELETIONS_LARGE:   Final[int] = 200
@@ -35,38 +34,40 @@ FILES_SEVERAL:     Final[int] = 7
 FILES_CRITICAL:    Final[int] = 10
 
 # Confidence score thresholds
-CONFIDENCE_HIGH:  Final[float] = 0.55
-CONFIDENCE_MED:   Final[float] = 0.30
-SPECIFICITY_NONE: Final[float] = 0.10
+# Lowered from 0.55/0.30 -- YAML/infra PRs score lower on code-specific patterns.
+CONFIDENCE_HIGH:  Final[float] = 0.45
+CONFIDENCE_MED:   Final[float] = 0.20
+SPECIFICITY_NONE: Final[float] = 0.08
 
-# Risk score band boundaries
+# Confidence bonus when LLM produced structured findings.
+# Each bonus is capped independently so they cannot trivially reach 1.0.
+CONFIDENCE_VULN_BONUS:     Final[float] = 0.12
+CONFIDENCE_CICD_BONUS:     Final[float] = 0.08
+CONFIDENCE_EVIDENCE_BONUS: Final[float] = 0.05
+
 BAND_CRITICAL: Final[int] = 80
 BAND_HIGH:     Final[int] = 60
 BAND_MEDIUM:   Final[int] = 40
 BAND_LOW:      Final[int] = 20
 
-# Triage thresholds
 P0_THRESHOLD: Final[int] = 85
 P1_THRESHOLD: Final[int] = 65
 P2_THRESHOLD: Final[int] = 40
 
-# Quality flags
 GENERIC_PENALTY_THRESHOLD: Final[int]   = 4
 SUMMARY_MIN_CHARS:         Final[int]   = 150
 SUMMARY_SHORT_CHARS:       Final[int]   = 200
 SUMMARY_MEDIUM_CHARS:      Final[int]   = 400
 
-# Coverage thresholds
 COVERAGE_FULL:    Final[float] = 0.95
 COVERAGE_PARTIAL: Final[float] = 0.70
 
-# CVE thresholds
 CVE_HIGH_COUNT:   Final[int] = 3
 CVE_HIGH_IN_DIFF: Final[int] = 2
 
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 # 2. PATTERN TABLES  (compiled once at import time)
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
 _GENERIC_PHRASES: Final[tuple[tuple[str, int], ...]] = (
     (r"\bimproves code quality\b",                     2),
@@ -89,6 +90,7 @@ _GENERIC_PHRASES: Final[tuple[tuple[str, int], ...]] = (
 )
 
 _SPECIFICITY_PATTERNS: Final[tuple[tuple[str, int], ...]] = (
+    # -- Code identifiers -----------------------------------------------------
     (r"\b\w+\.(?:py|js|ts|tsx|jsx|go|rb|java|rs|sql|yaml|yml|json|toml|sh|env)\b", 3),
     (r"\b\w+\((?:\w+)?\)",                                                           2),
     (r"\b[A-Z][a-z]+[A-Z][a-zA-Z]+\b",                                              2),
@@ -98,6 +100,19 @@ _SPECIFICITY_PATTERNS: Final[tuple[tuple[str, int], ...]] = (
     (r"\b(?:GET|POST|PUT|PATCH|DELETE)\s+/\w+",                                      2),
     (r"\bv?\d+\.\d+(?:\.\d+)?\b",                                                   1),
     (r"\b\d{2,} (?:lines?|files?|tests?|cases?)\b",                                 1),
+    # -- CI/CD and infra identifiers (new) ------------------------------------
+    # GitHub Actions: "owner/action-name@v3" or "actions/checkout@v4"
+    (r"\b[\w-]+/[\w.-]+@(?:v\d+|\w{40})\b",                                         3),
+    # Workflow triggers: pull_request_target, workflow_run, etc.
+    (r"\b(?:pull_request_target|workflow_run|workflow_dispatch|schedule)\b",         3),
+    # Workflow file paths: .github/workflows/foo.yml
+    (r"\.github/workflows/[\w.-]+",                                                  3),
+    # Terraform resource types: aws_s3_bucket, google_compute_instance, etc.
+    (r"\b(?:aws|google|azurerm|kubernetes|helm|random)_[a-z_]{4,}\b",               2),
+    # Docker/OCI image references: registry/image:tag
+    (r"\b[\w.-]+/[\w.-]+:[\w.-]{2,}\b",                                             2),
+    # GitHub Actions expression context: ${{ secrets.FOO }}, env.BAR, etc.
+    (r"\$\{\{\s*(?:secrets|env|github|inputs|needs)\.[A-Z_a-z]\w*\s*\}\}",         3),
 )
 
 _RISK_FILE_RULES: Final[tuple[tuple[str, str, str], ...]] = (
@@ -124,11 +139,9 @@ _SECURITY_PATTERNS: Final[tuple[tuple[str, str], ...]] = (
     (r"CVE-\d{4}-\d+",                 "known_cve"),
 )
 
-# Ordinal mapping for risk floor comparisons
 _RISK_ORD: Final[dict[str, int]] = {"low": 0, "medium": 1, "high": 2}
 _ORD_RISK: Final[dict[int, str]] = {v: k for k, v in _RISK_ORD.items()}
 
-# Compiled regexes — never recompile per call
 _RE_FILENAME = re.compile(
     r"\b[\w/-]+\.(?:py|js|ts|tsx|jsx|go|rb|java|rs|sql|yaml|yml|json|toml|sh|cfg|ini|env|md)\b"
 )
@@ -151,9 +164,9 @@ _COMPILED_RISK_RULES  = [
     for p, floor, tag in _RISK_FILE_RULES
 ]
 
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 # 3. RISK ENGINE WEIGHT TABLES
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
 _P_WEIGHTS: Final[dict[str, float]] = {
     "tag_auth":          0.90,
@@ -210,7 +223,7 @@ _TOP_FACTOR_LABELS: Final[dict[str, str]] = {
     "tag_api":               "Changes exposed API surface",
     "tag_config":            "Modifies config or environment variables",
     "no_tests_touched":      "No test files in this PR",
-    "large_diff":            "Large diff — high surface area",
+    "large_diff":            "Large diff -- high surface area",
     "many_files":            "Many files modified",
     "has_cve_refs":          "Contains CVE references",
     "security_patterns":     "Security patterns detected in diff",
@@ -239,9 +252,9 @@ _FACTOR_PRIORITY: Final[dict[str, int]] = {
     "no_tests_touched":       30,
 }
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 4. DATACLASSES  (each defined exactly once — frozen for safety)
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
+# 4. DATACLASSES  (each defined exactly once -- frozen for safety)
+# =============================================================================
 
 @dataclass(frozen=True)
 class PreAnalysis:
@@ -333,13 +346,13 @@ class RiskSignals:
         return d
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 # 5. PUBLIC API
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
 def pre_analyse(pr_data: dict) -> PreAnalysis:
     """
-    Deterministic structural analysis — runs before the LLM call.
+    Deterministic structural analysis -- runs before the LLM call.
     Establishes risk floor, tags, and flagged files from file paths alone.
     """
     files = pr_data.get("files", [])
@@ -381,7 +394,7 @@ def pre_analyse(pr_data: dict) -> PreAnalysis:
                 fname = f.get("filename", "")
                 if fname not in flagged_files:
                     flagged_files.append(fname)
-                break  # First matching rule wins per file
+                break
 
     full_diff = _build_full_diff_text(pr_data)
     diff_only = " ".join(f.get("diff") or "" for f in files)
@@ -421,12 +434,12 @@ def evaluate(summary: dict, pr_data: dict) -> dict:
     Deterministic post-LLM evaluation.
 
     Returns a flat dict with:
-      scores        — numeric breakdown
-      triage        — P0 / P1 / P2 / P3
-      merge_blocker — bool
-      risk_signals  — full RiskSignals serialized
-      evaluation    — Evaluation quality scores
-      usefulness    — UsefulnessCheck
+      scores        -- numeric breakdown
+      triage        -- P0 / P1 / P2 / P3
+      merge_blocker -- bool
+      risk_signals  -- full RiskSignals serialized
+      evaluation    -- Evaluation quality scores
+      usefulness    -- UsefulnessCheck
     """
     pre        = pre_analyse(pr_data)
     ev         = _evaluate_summary_quality(summary, pr_data)
@@ -467,7 +480,7 @@ def enforce_risk_floor(summary: dict, pre: PreAnalysis) -> dict:
         old_level = risk.get("level", "low")
         reason    = str(risk.get("reason", "")).strip()
         prefix    = (
-            f"[Escalated from {old_level} to {pre.risk_floor} — "
+            f"[Escalated from {old_level} to {pre.risk_floor} -- "
             f"sensitive areas: {', '.join(pre.risk_tags)}] "
         )
         summary["risk"] = {
@@ -491,13 +504,12 @@ def infer_risk_floor(files: list[dict]) -> PreAnalysis:
 def compute_risk_score(
     pre: PreAnalysis,
     summary: dict,
-    ev: Evaluation,
+    ev: "Evaluation",
     pr_data: dict,
 ) -> RiskSignals:
     """
     Core risk engine.
-    Combines three independent signal axes (P=probability, I=impact, C=confidence)
-    into a deterministic 0–100 risk score with triage priority.
+    Combines P=probability, I=impact, C=confidence into a deterministic 0-100 score.
     """
     p_signals = _extract_p_signals(pre, pr_data)
     i_signals = _extract_i_signals(pre, summary, pr_data)
@@ -513,27 +525,27 @@ def compute_risk_score(
     triage, merge_block   = _build_triage(summary, risk_score, ev)
 
     return RiskSignals(
-        p_signals    = p_signals,
-        p_score      = round(p_score, 3),
-        i_signals    = i_signals,
-        i_score      = round(i_score, 3),
-        c_signals    = c_signals,
-        c_score      = round(c_score, 3),
-        risk_score   = risk_score,
-        risk_band    = risk_band,
-        risk_label   = risk_label,
-        top_factors  = tuple(top_factors),
-        triage       = triage,
-        merge_blocker= merge_block,
+        p_signals     = p_signals,
+        p_score       = round(p_score, 3),
+        i_signals     = i_signals,
+        i_score       = round(i_score, 3),
+        c_signals     = c_signals,
+        c_score       = round(c_score, 3),
+        risk_score    = risk_score,
+        risk_band     = risk_band,
+        risk_label    = risk_label,
+        top_factors   = tuple(top_factors),
+        triage        = triage,
+        merge_blocker = merge_block,
     )
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 6. SIGNAL EXTRACTORS  (pure functions — no mutation, no I/O)
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
+# 6. SIGNAL EXTRACTORS  (pure functions -- no mutation, no I/O)
+# =============================================================================
 
 def _extract_p_signals(pre: PreAnalysis, pr_data: dict) -> dict[str, float]:
-    """Probability axis — how likely is this to be exploitable."""
+    """Probability axis -- how likely is this to be exploitable."""
     signals: dict[str, float] = {}
 
     tag_to_signal = {
@@ -582,7 +594,7 @@ def _extract_p_signals(pre: PreAnalysis, pr_data: dict) -> dict[str, float]:
 
 
 def _extract_i_signals(pre: PreAnalysis, summary: dict, pr_data: dict) -> dict[str, float]:
-    """Impact axis — how severe if exploited."""
+    """Impact axis -- how severe if exploited."""
     signals: dict[str, float] = {}
 
     floor_key = {"high": "floor_high", "medium": "floor_medium"}.get(pre.risk_floor, "floor_low")
@@ -620,8 +632,8 @@ def _extract_i_signals(pre: PreAnalysis, summary: dict, pr_data: dict) -> dict[s
     return signals
 
 
-def _extract_c_signals(pre: PreAnalysis, ev: Evaluation, pr_data: dict) -> dict[str, float]:
-    """Confidence axis — how trustworthy is the analysis."""
+def _extract_c_signals(pre: PreAnalysis, ev: "Evaluation", pr_data: dict) -> dict[str, float]:
+    """Confidence axis -- how trustworthy is the analysis."""
     signals: dict[str, float] = {}
 
     cs = ev.confidence_score
@@ -652,12 +664,12 @@ def _extract_c_signals(pre: PreAnalysis, ev: Evaluation, pr_data: dict) -> dict[
     return signals
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 # 7. SCORING HELPERS  (pure, stateless)
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
 def _weighted_sum(signals: dict[str, float], weights: dict[str, float]) -> float:
-    """Normalized weighted sum — always returns [0.0, 1.0]."""
+    """Normalized weighted sum -- always returns [0.0, 1.0]."""
     if not signals:
         return 0.0
     active = [(max(0.0, min(1.0, v)), weights.get(k, 0.0)) for k, v in signals.items()]
@@ -672,11 +684,11 @@ def _combine_scores(
     i_score: float,
     c_score: float,
     summary: dict,
-    ev: Evaluation,
+    ev: "Evaluation",
 ) -> int:
     base = 0.50 * p_score + 0.35 * i_score + 0.15 * c_score
 
-    if summary.get("attack_path"):    base += 0.05
+    if summary.get("attack_path"):     base += 0.05
     if summary.get("vulnerabilities"): base += 0.05
     if ev.is_flagged:                  base -= 0.05
 
@@ -684,14 +696,19 @@ def _combine_scores(
 
 
 def _score_to_band(score: int) -> tuple[str, str]:
-    if score >= BAND_CRITICAL: return "critical", "Critical — immediate review required"
-    if score >= BAND_HIGH:     return "high",     "High — review before merging"
-    if score >= BAND_MEDIUM:   return "medium",   "Medium — review specific areas"
-    if score >= BAND_LOW:      return "low",       "Low — low risk changes"
-    return                            "minimal",   "Minimal — low impact PR"
+    """
+    Map numeric score to (band, label).
+    All labels are ASCII-only -- no Unicode dashes that corrupt in Latin-1
+    environments or JSON serializers without ensure_ascii=False.
+    """
+    if score >= BAND_CRITICAL: return "critical", "Critical -- immediate review required"
+    if score >= BAND_HIGH:     return "high",     "High -- review before merging"
+    if score >= BAND_MEDIUM:   return "medium",   "Medium -- review specific areas"
+    if score >= BAND_LOW:      return "low",       "Low -- low risk changes"
+    return                            "minimal",   "Minimal -- low impact PR"
 
 
-def _build_triage(summary: dict, risk_score: int, ev: Evaluation) -> tuple[str, bool]:
+def _build_triage(summary: dict, risk_score: int, ev: "Evaluation") -> tuple[str, bool]:
     vulns      = summary.get("vulnerabilities", [])
     severities = {str(v.get("severity", "low")).lower() for v in vulns}
 
@@ -721,11 +738,26 @@ def _build_top_factors(
     return out
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 # 8. QUALITY EVALUATORS  (pure functions)
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
 def _evaluate_summary_quality(summary: dict, pr_data: dict) -> Evaluation:
+    """
+    Score the specificity and quality of an LLM-generated summary.
+
+    Scoring pipeline:
+      1. Raw specificity from regex pattern hits (code + CI/CD patterns).
+      2. Structural bonus: non-empty vulnerabilities / ci_cd_risks / evidence
+         prove the LLM cited real findings -- they are themselves specificity
+         signals that pattern matching on the prose alone would miss.
+      3. Generic-phrase deduction.
+      4. Length penalty.
+      5. Clamp to [0.0, 1.0].
+
+    The structural bonus prevents YAML/infra-only PRs from being penalized
+    simply because they lack Python identifiers or SQL keywords.
+    """
     full_text = " ".join([
         summary.get("what", ""),
         summary.get("why", ""),
@@ -733,6 +765,15 @@ def _evaluate_summary_quality(summary: dict, pr_data: dict) -> Evaluation:
         summary.get("review_focus", ""),
         (summary.get("risk") or {}).get("reason", ""),
         " ".join(summary.get("key_changes") or []),
+        # Include structured-finding text so CI/CD action refs are scored
+        " ".join(
+            f"{v.get('location', '')} {v.get('description', '')} {v.get('exploit_path', '')}"
+            for v in (summary.get("vulnerabilities") or [])
+        ),
+        " ".join(
+            f"{r.get('trigger', '')} {r.get('risk', '')} {r.get('line', '')}"
+            for r in (summary.get("ci_cd_risks") or [])
+        ),
     ])
     lower = full_text.lower()
 
@@ -745,13 +786,23 @@ def _evaluate_summary_quality(summary: dict, pr_data: dict) -> Evaluation:
             found_phrases.append(matches[0])
             total_penalty += severity * len(matches)
 
-    # Specificity scoring
+    # Specificity scoring from regex patterns
     specificity_max  = sum(w * 3 for _, w in _COMPILED_SPECIFICITY)
     specificity_hits = sum(
         min(len(r.findall(full_text)), 3) * w
         for r, w in _COMPILED_SPECIFICITY
     )
     specificity_score = round(min(specificity_hits / specificity_max, 1.0), 3) if specificity_max else 0.0
+
+    # Structural bonus
+    structural_bonus = 0.0
+    if summary.get("vulnerabilities"):
+        structural_bonus += CONFIDENCE_VULN_BONUS
+    if summary.get("ci_cd_risks"):
+        structural_bonus += CONFIDENCE_CICD_BONUS
+    if summary.get("evidence"):
+        structural_bonus += CONFIDENCE_EVIDENCE_BONUS
+    structural_bonus = min(structural_bonus, CONFIDENCE_HIGH - 0.01)
 
     # Length penalty
     chars          = len(full_text)
@@ -764,7 +815,10 @@ def _evaluate_summary_quality(summary: dict, pr_data: dict) -> Evaluation:
         if r.search(lower)
     )
 
-    confidence_score = round(max(0.0, min(1.0, specificity_score - generic_deduction - length_penalty)), 3)
+    confidence_score = round(
+        max(0.0, min(1.0, specificity_score + structural_bonus - generic_deduction - length_penalty)),
+        3,
+    )
     confidence = (
         "high"   if confidence_score >= CONFIDENCE_HIGH else
         "medium" if confidence_score >= CONFIDENCE_MED  else
@@ -848,9 +902,9 @@ def _usefulness_check(summary: dict) -> UsefulnessCheck:
     )
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 # 9. INTERNAL UTILITIES
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
 def _build_full_diff_text(pr_data: dict) -> str:
     files = pr_data.get("files", [])
