@@ -1,4 +1,4 @@
-﻿"""
+"""
 main.py -- DevMind SaaS API
 
 Production-grade FastAPI application with:
@@ -464,7 +464,7 @@ class AttackPath(BaseModel):
 
 
 class SummarySchema(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     what: str = ""
     why: str = ""
     impact: str = ""
@@ -552,7 +552,7 @@ def _build_pr_comment(result: dict[str, Any]) -> str:
     triage = s.get("triage", "P3")
     merge_block = s.get("merge_blocker", False)
     merge_reason = s.get("merge_block_reason")
-    emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢", "minimal": "⚪"}.get(level, "⚪")
+    emoji = {"critical": "??", "high": "??", "medium": "??", "low": "??", "minimal": "?"}.get(level, "?")
 
     vuln_lines = []
     for v in vulns:
@@ -582,7 +582,7 @@ def _build_pr_comment(result: dict[str, Any]) -> str:
 
     return f"""## {emoji} DevMind Risk Analysis
 
-**{triage}** — Risk Score `{score}/100` — **{level.upper()}**
+**{triage}** � Risk Score `{score}/100` � **{level.upper()}**
 {blocker_md}
 
 ### Risk Breakdown
@@ -600,7 +600,7 @@ def _build_pr_comment(result: dict[str, Any]) -> str:
 **Review focus:** {s.get("review_focus", "N/A")}
 
 ---
-_Analyzed by DevMind · trace `{result.get("trace_id", "")}`_"""
+_Analyzed by DevMind � trace `{result.get("trace_id", "")}`_"""
 
 
 async def _run_pipeline(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
