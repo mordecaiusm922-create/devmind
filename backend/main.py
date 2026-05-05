@@ -176,7 +176,7 @@ async def _run_analysis(repo: str, pr_number: int) -> dict:
     def _pipeline():
         pr_data              = get_pr_data(repo, pr_number)
         summary, pre, ev     = summarize_pr(pr_data)
-        risk                 = compute_risk_score(pre, summary, ev, pr_data)
+      risk = ev.get("risk_signals", {})
         log_analysis(repo, pr_number, pr_data, summary, pre, ev)
         # Tree-sitter
         all_parsed = []
@@ -242,13 +242,13 @@ def _build_response(repo, pr_number, pr_data, summary, pre, ev, risk=None) -> di
             "hallucination_warning": summary.get("hallucination_warning"),
             "vulnerabilities":       summary.get("vulnerabilities", []),
         },
-        "evaluation": {
-            "confidence":            ev.confidence,
-            "confidence_score":      round(ev.confidence_score, 3),
-            "specificity_score":     round(ev.specificity_score, 3),
-            "is_flagged":            ev.is_flagged,
-            "flag_reason":           ev.flag_reason,
-            "generic_phrases_found": ev.generic_phrases_found,
+       "evaluation": {
+            "confidence":            ev.get("evaluation", {}).get("confidence"),
+            "confidence_score":      ev.get("evaluation", {}).get("confidence_score", 0),
+            "specificity_score":     ev.get("evaluation", {}).get("specificity_score", 0),
+            "is_flagged":            ev.get("evaluation", {}).get("is_flagged", False),
+            "flag_reason":           ev.get("evaluation", {}).get("flag_reason"),
+            "generic_phrases_found": ev.get("evaluation", {}).get("generic_phrases_found", []),
         },
         "pre_analysis": {
             "risk_floor":           pre.risk_floor,
@@ -262,16 +262,16 @@ def _build_response(repo, pr_number, pr_data, summary, pre, ev, risk=None) -> di
         },
         "analysed_at": datetime.now(timezone.utc).isoformat(),
     }
-    if risk is not None:
+   if risk is not None:
         response["risk_engine"] = {
-            "score":       risk.risk_score,
-            "band":        risk.risk_band,
-            "label":       risk.risk_label,
-            "top_factors": risk.top_factors,
+            "score":       risk.get("risk_score", 0),
+            "band":        risk.get("risk_band", "low"),
+            "label":       risk.get("risk_label", ""),
+            "top_factors": risk.get("top_factors", []),
             "breakdown": {
-                "probability": round(risk.p_score, 3),
-                "impact":      round(risk.i_score, 3),
-                "confidence":  round(risk.c_score, 3),
+                "probability": round(risk.get("p_score", 0), 3),
+                "impact":      round(risk.get("i_score", 0), 3),
+                "confidence":  round(risk.get("c_score", 0), 3),
             },
         }
     return response
