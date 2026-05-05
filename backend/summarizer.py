@@ -185,6 +185,7 @@ def _check_hallucinations(summary: dict, pr_data: dict) -> list:
 
 
 def _output_schema_instruction() -> str:
+    
     return (
         'Return ONLY a JSON object with these exact keys -- no markdown, no extra text:\n\n'
         '{\n'
@@ -218,7 +219,9 @@ def _output_schema_instruction() -> str:
         '}\n\n'
         'CRITICAL: vulnerabilities array is MANDATORY. If no vulnerabilities found, return empty array.\n'
         'If risk level is high or critical, populate vulnerabilities with at least one entry.\n'
-        'ci_cd_risks is MANDATORY for any PR touching .github/workflows. If no CI/CD risks, return empty array.'
+        'ci_cd_risks is MANDATORY for any PR touching .github/workflows — populate it with specific triggers, risks and line numbers found in the diff.\n'
+        'evidence is MANDATORY — for every vulnerability, include the exact code snippet from the diff.\n'
+        'NEVER leave ci_cd_risks or evidence empty if the diff contains workflow files or security-sensitive code.'
     )
 
 
