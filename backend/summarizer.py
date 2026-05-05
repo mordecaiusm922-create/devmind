@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import re
 from typing import Any
@@ -19,7 +19,6 @@ MODEL = "llama-3.3-70b-versatile"
 MAX_TOKENS = 4096
 TEMPERATURE = 0.2
 CHUNK_FILE_THRESHOLD = 12
-
 
 SYSTEM_PROMPT = (
     "You are DevMind, a security analysis engine for pull requests. "
@@ -66,6 +65,31 @@ SYSTEM_PROMPT = (
 )
 
 debug_capture: list[dict] | None = None
+
+_SECURITY_IMPROVEMENT_MARKERS = (
+    "trivy",
+    "snyk",
+    "grype",
+    "scanner",
+    "vulnerability scanner",
+    "latest version",
+    "pin",
+    "security improvement",
+    "reduce risk",
+    "security patch",
+    "dependency update",
+)
+
+_CI_CD_MARKERS = (
+    "pull_request_target",
+    "workflow_run",
+    ".github/workflows/",
+    "permissions:",
+    "secrets.",
+    "${{ secrets.",
+    "configure-aws-credentials",
+    "github-token",
+)
 
 
 def summarize_pr(pr_data: dict) -> tuple[dict, object, object]:
@@ -315,7 +339,6 @@ def _normalize_summary(data: dict) -> dict:
     if data["attack_path"] is not None and not isinstance(data["attack_path"], dict):
         data["attack_path"] = None
 
-    # Drop ci_cd_risks without evidence_snippet -- ungrounded claims inflate score.
     data["ci_cd_risks"] = [
         r for r in data["ci_cd_risks"]
         if isinstance(r, dict) and r.get("evidence_snippet", "").strip()
@@ -327,16 +350,15 @@ def _normalize_summary(data: dict) -> dict:
 
 def _post_validate_summary(summary: dict, pr_data: dict) -> dict:
     """
-    Big-tech style consistency gate:
+    Consistency gate:
     - Security improvements cannot be vulnerabilities.
-    - If attack_path is weak or unsupported, remove it.
-    - High risk requires real evidence and a real exploit path.
+    - Attack path must be supported by proof.
+    - Medium+ risk without proof is lowered.
     """
     risk_level = str((summary.get("risk") or {}).get("level", "low")).lower()
     vulnerabilities = summary.get("vulnerabilities", [])
     attack_path = summary.get("attack_path")
 
-    # If the PR is clearly a security improvement, do not let the model invent a vuln.
     title_body = " ".join([
         pr_data.get("title", "") or "",
         pr_data.get("body", "") or "",
@@ -345,19 +367,7 @@ def _post_validate_summary(summary: dict, pr_data: dict) -> dict:
         json.dumps(summary.get("ci_cd_risks", []), ensure_ascii=False),
     ]).lower()
 
-    security_improvement_markers = [
-        "trivy",
-        "snyk",
-        "grype",
-        "scanner",
-        "vulnerability scanner",
-        "pin",
-        "latest version",
-        "security improvement",
-        "reduce risk",
-    ]
-
-    if any(marker in title_body for marker in security_improvement_markers):
+    if any(marker in title_body for marker in _SECURITY_IMPROVEMENT_MARKERS):
         specific_cve = bool(re.search(r"CVE-\d{4}-\d+", title_body))
         if not specific_cve:
             summary["risk"] = {
@@ -366,24 +376,19 @@ def _post_validate_summary(summary: dict, pr_data: dict) -> dict:
             }
             summary["attack_path"] = None
             summary["vulnerabilities"] = []
-            if not summary.get("ci_cd_risks"):
-                summary["ci_cd_risks"] = []
 
-    # Attack path must be real, not speculative.
-    if attack_path and isinstance(attack_path, dict):
-        attacker_verified = bool(attack_path.get("attacker_control_verified", False))
-        exploit_steps = attack_path.get("exploit_steps", [])
+    if summary.get("attack_path") and isinstance(summary["attack_path"], dict):
+        attacker_verified = bool(summary["attack_path"].get("attacker_control_verified", False))
+        exploit_steps = summary["attack_path"].get("exploit_steps", [])
         if not attacker_verified or not isinstance(exploit_steps, list) or len(exploit_steps) < 3:
             summary["attack_path"] = None
 
-    # If risk is medium/high/critical but no meaningful attack path, lower it.
     if risk_level in {"medium", "high", "critical"} and summary.get("attack_path") is None:
         summary["risk"] = {
             "level": "low",
             "reason": "No confirmed attacker-controlled exploit path in the diff.",
         }
 
-    # High risk should be backed by at least one concrete vulnerability or CI/CD risk.
     if summary.get("risk", {}).get("level") in {"high", "critical"}:
         if not summary.get("vulnerabilities") and not summary.get("ci_cd_risks"):
             summary["risk"] = {
