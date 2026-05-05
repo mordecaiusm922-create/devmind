@@ -123,20 +123,13 @@ def _call_claude(user_prompt: str) -> dict:
 
 def _build_full_prompt(pr_data: dict, files_with_diff: list, pre) -> str:
     return (
-        f"Analyse this Pull Request for security vulnerabilities. Every claim must reference specific files or code.\n\n"
-        f"## PR Metadata\n"
-        f"Title: {pr_data['title']}\n"
-        f"Author: @{pr_data['author']}\n"
-        f"Branch: {pr_data['head_branch']} -> {pr_data['base_branch']}\n"
-        f"Files changed: {pr_data['changed_files']} (+{pr_data['additions']} / -{pr_data['deletions']} lines)\n\n"
-        f"## PR Description\n{pr_data['body'][:1200] or 'No description provided.'}\n\n"
-        f"## Commit messages\n{_format_commits(pr_data.get('commit_messages', []))}\n\n"
-        f"## All changed files\n{_format_file_list(pr_data.get('files', []))}\n\n"
-        f"{pre.to_prompt_context()}\n\n"
-        f"## Diffs (cleaned, grouped by file)\n{_format_diffs(files_with_diff)}\n\n"
-        f"## Review comments (inline)\n{_format_review_comments(pr_data.get('review_comments', []))}\n\n"
-        f"## Discussion\n{_format_issue_comments(pr_data.get('issue_comments', []))}\n\n"
-        f"{_output_schema_instruction()}"
+        f"First, reason step-by-step about the security implications of this PR:\n"
+f"1. Identify what changed that could introduce risk\n"
+f"2. Determine if an attacker could influence or control that change\n"
+f"3. Identify what sensitive resource could be affected\n"
+f"4. Map this into a realistic attack path\n"
+f"Only then output the final JSON analysis.\n\n"
+f"Analyse this Pull Request for security vulnerabilities. Every claim must reference specific files or code.\n\n"
     )
 
 
@@ -215,13 +208,20 @@ def _output_schema_instruction() -> str:
         '  ],\n'
         '  "key_changes": ["filename.py:L12-18 -- what changed and why it matters"],\n'
         '  "review_focus": "Single most critical security concern. Name the exact code path.",\n'
-        '  "evidence": [{"claim": "brief claim", "location": "filename.py:L12-18", "snippet": "code"}]\n'
-        '}\n\n'
+        ' '  "attack_path"
+'    "entry_point": "specific change in the PR that introduces risk (e.g. new workflow step, dependency, or secret usage)",\n'
+'    "vector": "how an attacker would exploit this exact change",\n'
+'    "sink": "what resource is impacted (e.g. credentials, infrastructure, data)",\n'
+'    "impact": "account takeover | data exfiltration | privilege escalation | RCE | other"\n'
+'  },\n'
+'  "evidence": [{"claim": "brief claim", "location": "filename.py:L12-18", "snippet": "exact code from diff"}]\n'
         'CRITICAL: vulnerabilities array is MANDATORY. If no vulnerabilities found, return empty array.\n'
         'If risk level is high or critical, populate vulnerabilities with at least one entry.\n'
         'ci_cd_risks is MANDATORY for any PR touching .github/workflows — populate it with specific triggers, risks and line numbers found in the diff.\n'
         'evidence is MANDATORY — for every vulnerability, include the exact code snippet from the diff.\n'
         'NEVER leave ci_cd_risks or evidence empty if the diff contains workflow files or security-sensitive code.'
+        'IMPORTANT: attack_path must reference real elements from the PR. If no clear attack path exists, return attack_path as null.\n'
+        'Only include attack_path if a realistic attacker-controlled path exists. Otherwise return null.\n'
     )
 
 
