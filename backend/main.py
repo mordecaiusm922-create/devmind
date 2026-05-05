@@ -398,22 +398,24 @@ def _build_response(
 def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     _ctx.trace_id = trace_id
 
-    def _timed(label: str, fn, *args, **kwargs):  # noqa: ANN001
+    def _timed(label: str, fn, *args, **kwargs):
         t0 = time.monotonic()
         result = fn(*args, **kwargs)
         log.info(
-            f"pipeline_step step={label} duration_ms={round((time.monotonic() - t0) * 1000)}",
+            f"pipeline_step step={label} duration_ms={round((time.monotonic()-t0)*1000)}",
             extra={"trace_id": trace_id},
         )
         return result
 
     pr_data = _timed("fetch_pr", get_pr_data, repo, pr_number)
+
     summary, pre, ev = _timed("summarize", summarize_pr, pr_data)
-risk: dict[str, Any] | None = None
+
+    risk = None
 
     _timed("log_analysis", log_analysis, repo, pr_number, pr_data, summary, pre, ev)
 
-    all_parsed: list[dict[str, Any]] = []
+    all_parsed = []
     for f in pr_data.get("files", []):
         fname = f.get("filename", "")
         patch = f.get("raw_patch", "") or f.get("diff", "")
@@ -428,7 +430,7 @@ risk: dict[str, Any] | None = None
                 extra={"file": fname, "exc": str(exc), "trace_id": trace_id},
             )
 
-    combined: dict[str, list] = {"functions_changed": [], "calls": []}
+    combined = {"functions_changed": [], "calls": []}
     for p in all_parsed:
         combined["functions_changed"].extend(p.get("functions_changed", []))
         combined["calls"].extend(p.get("calls", []))
@@ -438,6 +440,7 @@ risk: dict[str, Any] | None = None
         "deletions": pr_data.get("deletions", 0),
         "changed_files": pr_data.get("changed_files", 0),
     }
+
     features = _timed("extract_features", extract_features, combined, diff_stats)
 
     return _build_response(
@@ -447,7 +450,7 @@ risk: dict[str, Any] | None = None
         summary=summary,
         pre=pre,
         ev=ev,
-        risk=risk or None,
+        risk=risk,
         features=features,
         parsed_fns=combined["functions_changed"],
         trace_id=trace_id,
