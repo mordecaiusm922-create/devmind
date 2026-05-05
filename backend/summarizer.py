@@ -40,8 +40,11 @@ SYSTEM_PROMPT = (
     "The pre-analysis block is authoritative -- do not contradict it. "
     "For every finding include: what it is, how it is exploited, what the fix is. "
     "EVIDENCE IS MANDATORY: every vulnerability must have a real code snippet from the diff. "
-    "If you cannot cite a specific line, do not report the vulnerability."
+    "If you cannot cite a specific line, do not report the vulnerability. "
+    "Before generating output, internally reason: 1) what changed, 2) can attacker control it, 3) what resource is at risk, 4) is there a realistic attack path. Then output ONLY the JSON. "
+    "Output MUST be valid JSON. Do not include any text before or after the JSON. Do not include explanations."
 )
+
 
 debug_capture = None
 
