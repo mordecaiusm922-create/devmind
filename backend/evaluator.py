@@ -1,6 +1,4 @@
-Here is the version I would keep. It is opinionated, deterministic, and designed to make DevMind feel like an engine instead of a score wrapper.
 
-```python
 from __future__ import annotations
 
 import re
