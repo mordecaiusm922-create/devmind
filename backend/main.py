@@ -441,8 +441,9 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         "changed_files": pr_data.get("changed_files", 0),
     }
 
-    features = _timed("extract_features", extract_features, combined, diff_stats)
-    permissions = summary.get("permissions_analysis", {})
+  features = _timed("extract_features", extract_features, combined, diff_stats)
+
+permissions = summary.get("permissions_analysis", {})
 vulns = summary.get("vulnerabilities", [])
 
 risk_band = summary.get("risk_note", {}).get("level", "low")
@@ -458,19 +459,18 @@ merge_blocker, reason = decide_merge_blocker(
 summary["merge_blocker"] = merge_blocker
 summary["merge_block_reason"] = reason
 
-    return _build_response(
-        repo=repo,
-        pr_number=pr_number,
-        pr_data=pr_data,
-        summary=summary,
-        pre=pre,
-        ev=ev,
-        risk=risk,
-        features=features,
-        parsed_fns=combined["functions_changed"],
-        trace_id=trace_id,
-      
-    )
+return _build_response(
+    repo=repo,
+    pr_number=pr_number,
+    pr_data=pr_data,
+    summary=summary,
+    pre=pre,
+    ev=ev,
+    risk=risk,
+    features=features,
+    parsed_fns=combined["functions_changed"],
+    trace_id=trace_id,
+)
 
 def decide_merge_blocker(
     *,
