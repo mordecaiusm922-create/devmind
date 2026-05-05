@@ -1,4 +1,4 @@
-﻿"""
+"""
 summarizer.py -- DevMind LLM summarization pipeline
 
 Responsibility: transform raw PR data into a structured security summary
@@ -239,7 +239,31 @@ def _build_full_prompt(pr_data: dict, files_with_diff: list, pre) -> str:
 
 
 def _build_chunk_prompt(pr_data: dict, chunk: list, chunk_num: int, total: int, pre) -> str:
-  return (
+    return (
+        f"PR ANALYSIS -- chunk {chunk_num}/{total}\n\n"
+        f"Title: {pr_data.get('title', '')}\n"
+        f"Author: @{pr_data.get('author', '')}\n"
+        f"Repository: {pr_data.get('repo', '')}\n"
+        f"Files changed: {pr_data.get('changed_files', 0)} "
+        f"(+{pr_data.get('additions', 0)} / -{pr_data.get('deletions', 0)})\n\n"
+        f"{pre.to_prompt_context()}\n\n"
+        f"Commit messages:\n{_format_commits(pr_data.get('commit_messages', []))}\n\n"
+        f"Changed files (this chunk):\n{_format_file_list(chunk)}\n\n"
+        f"Diffs:\n{_format_diffs(chunk)}\n\n"
+        f"{_output_schema_instruction()}"
+    )
+
+
+def _output_schema_instruction() -> str:
+    """
+    Explicit JSON schema sent with every LLM call.
+
+    Falsifiability rules:
+      - attack_path requires attacker_control_verified: true and >= 3 exploit_steps.
+      - Adding a scanner (Trivy, Snyk, Grype) is a security improvement, NOT a vulnerability.
+      - permissions_analysis is mandatory when workflow files are present in the diff.
+    """
+    return (
         "Return ONLY a JSON object with these exact top-level keys:\n"
         "{\n"
         '  "what": "Precise 1-2 sentence description of what changed.",\n'
@@ -267,8 +291,7 @@ def _build_chunk_prompt(pr_data: dict, chunk: list, chunk_num: int, total: int, 
         "    ],\n"
         '    "sink": "The exact resource compromised (e.g. secrets.AWS_KEY at line 82).",\n'
         '    "blast_radius": "repo-only | org-wide | cross-account | public",\n'
-        '    "impact": "account_takeover | data_exfiltration | privilege_escalation '
-        '| rce | supply_chain | other"\n'
+        '    "impact": "account_takeover | data_exfiltration | privilege_escalation | rce | supply_chain | other"\n'
         "  },\n"
         "  // attack_path MUST be populated when risk >= medium AND attacker_control_verified is true.\n"
         "  // attack_path MUST be null when attacker_control cannot be confirmed in the diff.\n"
@@ -315,31 +338,6 @@ def _build_chunk_prompt(pr_data: dict, chunk: list, chunk_num: int, total: int, 
         "- evidence is mandatory for every vulnerability entry.\n"
         "- all strings must use ASCII-safe characters only.\n"
     )
-        '      "trigger": "pull_request_target | workflow_run | push | other",\n'
-        '      "risk": "Exact CI/CD risk description referencing the workflow file and trigger.",\n'
-        '      "severity": "low | medium | high | critical",\n'
-        '      "line": "filename:Lx"\n'
-        "    }\n"
-        "  ],\n"
-        '  "key_changes": ["filename:L12-18 -- what changed and why it matters"],\n'
-        '  "review_focus": "Single most critical security concern and exact code path.",\n'
-        '  "evidence": [\n'
-        "    {\n"
-        '      "claim": "short claim",\n'
-        '      "location": "filename:L12-18",\n'
-        '      "snippet": "exact code from diff"\n'
-        "    }\n"
-        "  ]\n"
-        "}\n\n"
-        "Hard rules:\n"
-        "- vulnerabilities must be grounded in the diff -- no invented CVEs.\n"
-        "- attack_path MUST be populated (not null) when risk >= medium and vulnerabilities is non-empty.\n"
-        "- if risk is high or critical, vulnerabilities must contain at least one entry.\n"
-        "- if workflow files are present, ci_cd_risks must contain at least one entry.\n"
-        "- evidence is mandatory for every vulnerability.\n"
-        "- all string values must use ASCII-safe characters only -- no Unicode em-dashes or arrows.\n"
-    )
-
 
 # =============================================================================
 # NORMALIZATION AND VALIDATION
