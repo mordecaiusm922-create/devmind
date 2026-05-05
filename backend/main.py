@@ -633,9 +633,10 @@ async def _run_pipeline(repo: str, pr_number: int, trace_id: str) -> dict[str, A
         analysis_breaker.failure()
         raise
     except ValueError as exc:
-        analysis_breaker.failure()
-        _metric("analysis_validation_error")
-        raise _err(422, ErrorCode.VALIDATION_ERROR, str(exc), trace_id=trace_id)
+            analysis_breaker.failure()
+            _metric("analysis_validation_error")
+            log.error("validation_error_detail", extra={"exc": str(exc), "trace_id": trace_id}, exc_info=True)
+            raise _err(422, ErrorCode.VALIDATION_ERROR, str(exc), trace_id=trace_id)
     except Exception as exc:
         analysis_breaker.failure()
         msg = str(exc)
