@@ -1,26 +1,7 @@
-"""
-summarizer.py -- DevMind LLM summarization pipeline
-
-Responsibility: transform raw PR data into a structured security summary
-via one LLM call (or chunked calls for large PRs), then hand off to the
-deterministic risk engine in evaluator.py.
-
-Design principles:
-  - Single LLM model, single temperature, declared as module constants.
-  - All JSON produced with ensure_ascii=False -- prevents UTF-8 corruption
-    of non-ASCII chars (em-dashes, arrows) in label strings.
-  - attack_path is REQUIRED when risk >= medium and vulnerabilities exist;
-    the schema instruction enforces this at the prompt level.
-  - Pure functions throughout; the only stateful object is `debug_capture`
-    which is an opt-in side channel for test harnesses.
-"""
-
-from __future__ import annotations
-
 import json
 import os
 import re
-from typing import Any, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -29,93 +10,65 @@ from evaluator import pre_analyse, evaluate, enforce_risk_floor
 
 load_dotenv()
 
-# =============================================================================
-# MODULE CONSTANTS
-# =============================================================================
-
-_GROQ_BASE_URL: str    = "https://api.groq.com/openai/v1"
-MODEL:          str    = "llama-3.3-70b-versatile"
-MAX_TOKENS:     int    = 4096
-TEMPERATURE:    float  = 0.2
-CHUNK_FILE_THRESHOLD: int = 12
-
 client = OpenAI(
     api_key=os.getenv("GROQ_API_KEY"),
-    base_url=_GROQ_BASE_URL,
+    base_url="https://api.groq.com/openai/v1",
 )
 
-# =============================================================================
-# SYSTEM PROMPT
-# =============================================================================
+MODEL = "llama-3.3-70b-versatile"
+MAX_TOKENS = 4096
+TEMPERATURE = 0.2
+CHUNK_FILE_THRESHOLD = 12
+
 
 SYSTEM_PROMPT = (
     "You are DevMind, a security analysis engine for pull requests. "
-    "Your job is to identify REAL, EXPLOITABLE security issues grounded "
-    "exclusively in the diff provided. You do not speculate.\n\n"
+    "Your job is to identify real, exploitable security issues grounded only in the diff.\n\n"
 
-    "FALSIFIABILITY RULE — before making any claim, ask:\n"
-    "  (a) Is attacker control of this input demonstrated in the diff?\n"
-    "  (b) Is there a concrete, reproducible path from input to sensitive resource?\n"
-    "  (c) Does the diff introduce the flaw, or does it fix/detect it?\n"
-    "If any answer is NO, do not claim a vulnerability. Set risk to low.\n\n"
+    "FALSIFIABILITY RULE:\n"
+    "Before claiming a vulnerability, verify all of the following:\n"
+    "1. The attacker can control the entry point.\n"
+    "2. There is a concrete path from entry point to sensitive resource.\n"
+    "3. The diff introduces the flaw, not a mitigation or detection.\n"
+    "If any answer is no, do not claim a vulnerability.\n\n"
 
     "SECURITY IMPROVEMENT RULE:\n"
-    "  - Adding a vulnerability scanner (Trivy, Snyk, Grype, etc.) REDUCES risk.\n"
-    "  - Pinning action versions REDUCES supply chain risk.\n"
-    "  - Updating actions to latest stable versions is NOT a vulnerability unless "
-    "    a specific CVE or breaking change is present in the diff.\n"
-    "  - Never classify a security improvement as a vulnerability.\n\n"
+    "Adding a scanner (Trivy, Snyk, Grype, etc.) reduces risk. "
+    "Pinning actions or updating to a safer version is usually a security improvement, not a vulnerability. "
+    "Do not classify security improvements as vulnerabilities unless the diff proves a specific exploitable flaw.\n\n"
 
-    "CI/CD THREAT MODEL — only flag if ALL conditions are true:\n"
-    "  1. The trigger is pull_request_target or workflow_run.\n"
-    "  2. The workflow explicitly accesses ${{ secrets.* }} or runs untrusted code.\n"
-    "  3. The permissions: block is absent or grants write scope unnecessarily.\n"
-    "  4. An external attacker can reach this trigger without repo write access.\n\n"
-
-    "PERMISSIONS ANALYSIS — always check the diff for:\n"
-    "  - permissions: blocks (presence/absence, scopes granted).\n"
-    "  - secrets accessed before input validation.\n"
-    "  - GITHUB_TOKEN scope relative to the trigger.\n\n"
+    "CI/CD THREAT MODEL:\n"
+    "Only flag a CI/CD issue if all of the following are true:\n"
+    "1. The trigger is pull_request_target, workflow_run, or another externally reachable trigger.\n"
+    "2. The workflow runs untrusted code or accesses secrets before validation.\n"
+    "3. The permissions block is missing or overly broad.\n"
+    "4. The attacker can reach the trigger without repo write access.\n\n"
 
     "ATTACK PATH RULES:\n"
-    "  - entry_point must be a specific file:line in the diff.\n"
-    "  - exploit_steps must list >= 3 concrete, reproducible steps.\n"
-    "  - attacker_control_verified must be true — if you cannot confirm "
-    "    the attacker controls the entry point, set attack_path to null.\n"
-    "  - sink must be a real resource proven reachable in the diff.\n"
-    "  - If risk >= medium but no realistic attack path exists, "
-    "    lower risk to low rather than invent a path.\n\n"
+    "- entry_point must be a specific file:line from the diff.\n"
+    "- exploit_steps must contain at least 3 concrete steps.\n"
+    "- attacker_control_verified must be true, otherwise set attack_path to null.\n"
+    "- sink must be a real resource proven reachable in the diff.\n"
+    "- If risk is medium or higher but no realistic attack path exists, lower risk to low.\n\n"
 
-    "BLAST RADIUS — for every vulnerability estimate:\n"
-    "  - Scope: repo-only | org-wide | cross-account | public.\n"
-    "  - Data at risk: secrets | artifacts | source | prod-infra | none.\n\n"
+    "BLAST RADIUS:\n"
+    "For each vulnerability, estimate scope as one of: repo-only, org-wide, cross-account, public.\n"
+    "Also estimate data at risk as one of: secrets, artifacts, source, prod-infra, none.\n\n"
 
-    "Internal reasoning (do not output):\n"
-    "  1. What changed in the diff?\n"
-    "  2. Does this add security (scanner, pin, permission scope reduction)?\n"
-    "  3. Can an external attacker control the entry point?\n"
-    "  4. What are the exact exploit steps? Are they reproducible?\n"
-    "  5. What is the blast radius if exploited?\n\n"
+    "Internal reasoning only, do not output:\n"
+    "1. What changed?\n"
+    "2. Is it a security improvement or a risk?\n"
+    "3. Can an external attacker control the entry point?\n"
+    "4. What are the exact exploit steps?\n"
+    "5. What is the blast radius?\n\n"
 
     "Output only valid JSON. No markdown. No code fences. No explanations."
 )
 
-# Opt-in side channel for test harnesses -- set to a list before calling
-# summarize_pr() to capture raw LLM I/O.
 debug_capture: list[dict] | None = None
 
 
-# =============================================================================
-# PUBLIC API
-# =============================================================================
-
 def summarize_pr(pr_data: dict) -> tuple[dict, object, object]:
-    """
-    Entry point.  Returns (summary, pre_analysis, evaluation).
-
-    The returned summary contains all LLM fields plus the deterministic
-    scores, triage, and merge_blocker written back by the risk engine.
-    """
     pre = pre_analyse(pr_data)
     files_with_diff = [f for f in pr_data.get("files", []) if f.get("diff")]
 
@@ -125,6 +78,7 @@ def summarize_pr(pr_data: dict) -> tuple[dict, object, object]:
         summary = _summarize_single_pass(pr_data, files_with_diff, pre)
 
     summary = _normalize_summary(summary)
+    summary = _post_validate_summary(summary, pr_data)
     summary = enforce_risk_floor(summary, pre)
 
     hallucinations = _check_hallucinations(summary, pr_data)
@@ -133,16 +87,12 @@ def summarize_pr(pr_data: dict) -> tuple[dict, object, object]:
 
     ev = evaluate(summary, pr_data)
 
-    summary["scores"]        = ev.get("scores", {})
-    summary["triage"]        = ev.get("triage")
+    summary["scores"] = ev.get("scores", {})
+    summary["triage"] = ev.get("triage")
     summary["merge_blocker"] = ev.get("merge_blocker", False)
 
     return summary, pre, ev
 
-
-# =============================================================================
-# INTERNAL PIPELINE
-# =============================================================================
 
 def _summarize_single_pass(pr_data: dict, files_with_diff: list, pre) -> dict:
     prompt = _build_full_prompt(pr_data, files_with_diff, pre)
@@ -190,12 +140,12 @@ def _call_llm(user_prompt: str) -> dict:
         temperature=TEMPERATURE,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": user_prompt},
+            {"role": "user", "content": user_prompt},
         ],
     )
 
     choice = response.choices[0]
-    raw    = choice.message.content or ""
+    raw = choice.message.content or ""
 
     if choice.finish_reason == "length":
         raise ValueError(
@@ -206,19 +156,17 @@ def _call_llm(user_prompt: str) -> dict:
     parsed = _parse_and_validate(raw)
 
     if debug_capture is not None:
-        debug_capture.append({
-            "prompt_chars":  len(user_prompt),
-            "raw":           raw,
-            "finish_reason": choice.finish_reason,
-            "parsed":        parsed,
-        })
+        debug_capture.append(
+            {
+                "prompt_chars": len(user_prompt),
+                "raw": raw,
+                "finish_reason": choice.finish_reason,
+                "parsed": parsed,
+            }
+        )
 
     return parsed
 
-
-# =============================================================================
-# PROMPT BUILDERS
-# =============================================================================
 
 def _build_full_prompt(pr_data: dict, files_with_diff: list, pre) -> str:
     return (
@@ -255,24 +203,15 @@ def _build_chunk_prompt(pr_data: dict, chunk: list, chunk_num: int, total: int, 
 
 
 def _output_schema_instruction() -> str:
-    """
-    Explicit JSON schema sent with every LLM call.
-
-    Falsifiability rules:
-      - attack_path requires attacker_control_verified: true and >= 3 exploit_steps.
-      - Adding a scanner (Trivy, Snyk, Grype) is a security improvement, NOT a vulnerability.
-      - permissions_analysis is mandatory when workflow files are present in the diff.
-    """
     return (
         "Return ONLY a JSON object with these exact top-level keys:\n"
         "{\n"
-        '  "what": "Precise 1-2 sentence description of what changed.",\n'
+        '  "what": "Precise 1 to 2 sentence description of what changed.",\n'
         '  "why": "Technical reason for this change.",\n'
         '  "impact": "Which systems, workflows, or behaviors are affected.",\n'
         '  "risk": {\n'
         '    "level": "low | medium | high | critical",\n'
-        '    "reason": "Exact failure mechanism with file:line reference. '
-        'If the change adds security tooling, level must be low."\n'
+        '    "reason": "Exact failure mechanism with file:line reference. If the change adds security tooling, level must be low."\n'
         "  },\n"
         '  "permissions_analysis": {\n'
         '    "permissions_block_present": true,\n'
@@ -286,23 +225,19 @@ def _output_schema_instruction() -> str:
         '    "attacker_control_verified": true,\n'
         '    "exploit_steps": [\n'
         '      "Step 1: attacker forks the repo and opens a PR.",\n'
-        '      "Step 2: pull_request_target trigger fires with write permissions.",\n'
-        '      "Step 3: workflow accesses ${{ secrets.AWS_KEY }} at line 82."\n'
+        '      "Step 2: workflow trigger fires with unsafe trust boundary.",\n'
+        '      "Step 3: secrets or privileged token are exposed."\n'
         "    ],\n"
-        '    "sink": "The exact resource compromised (e.g. secrets.AWS_KEY at line 82).",\n'
+        '    "sink": "The exact resource compromised.",\n'
         '    "blast_radius": "repo-only | org-wide | cross-account | public",\n'
         '    "impact": "account_takeover | data_exfiltration | privilege_escalation | rce | supply_chain | other"\n'
         "  },\n"
-        "  // attack_path MUST be populated when risk >= medium AND attacker_control_verified is true.\n"
-        "  // attack_path MUST be null when attacker_control cannot be confirmed in the diff.\n"
         '  "vulnerabilities": [\n'
         "    {\n"
-        '      "type": "credential_exposure | sql_injection | xss | auth_bypass | '
-        'privilege_escalation | ci_cd_misconfig | supply_chain | other",\n'
+        '      "type": "credential_exposure | sql_injection | xss | auth_bypass | privilege_escalation | ci_cd_misconfig | supply_chain | other",\n'
         '      "severity": "low | medium | high | critical",\n'
         '      "location": "filename:L12-18",\n'
-        '      "description": "Exact flaw with file:line reference. '
-        'Do NOT list security improvements as vulnerabilities.",\n'
+        '      "description": "Exact flaw with file:line reference. Do NOT list security improvements as vulnerabilities.",\n'
         '      "fix": "Concrete, actionable fix.",\n'
         '      "exploit_path": "Minimum 3 reproducible steps referencing exact diff lines.",\n'
         '      "blast_radius": "repo-only | org-wide | cross-account | public"\n'
@@ -315,10 +250,11 @@ def _output_schema_instruction() -> str:
         '      "severity": "low | medium | high | critical",\n'
         '      "permissions_block_missing": false,\n'
         '      "secrets_exposed": false,\n'
-        '      "line": "filename:Lx"\n'
+        '      "line": "filename:Lx",\n'
+        '      "evidence_snippet": "exact line(s) from diff that prove this risk"\n'
         "    }\n"
         "  ],\n"
-        '  "key_changes": ["filename:L12-18 -- what changed and security impact"],\n'
+        '  "key_changes": ["filename:L12-18 -- what changed and why it matters"],\n'
         '  "review_focus": "Single most critical concern with exact file:line.",\n'
         '  "evidence": [\n'
         "    {\n"
@@ -329,25 +265,17 @@ def _output_schema_instruction() -> str:
         "  ]\n"
         "}\n\n"
         "Hard rules:\n"
-        "- Adding Trivy, Snyk, or any scanner = security improvement, NOT a vulnerability.\n"
-        "- attack_path requires attacker_control_verified: true and >= 3 exploit_steps.\n"
-        "- If attacker_control_verified is false, attack_path MUST be null.\n"
-        "- vulnerabilities must not include security improvements or version updates "
-        "without a specific CVE.\n"
-        "- if workflow files are present, populate permissions_analysis.\n"
-        "- evidence is mandatory for every vulnerability entry.\n"
-        "- all strings must use ASCII-safe characters only.\n"
+        "- Adding Trivy, Snyk, or any scanner is a security improvement, not a vulnerability.\n"
+        "- Attack path requires attacker_control_verified to be true and at least 3 exploit_steps.\n"
+        "- If attacker_control_verified is false, attack_path must be null.\n"
+        "- Vulnerabilities must not include security improvements or version updates without a specific CVE.\n"
+        "- If workflow files are present, populate permissions_analysis.\n"
+        "- Evidence is mandatory for every vulnerability entry.\n"
+        "- All strings must use ASCII-safe characters only.\n"
     )
 
-# =============================================================================
-# NORMALIZATION AND VALIDATION
-# =============================================================================
 
 def _normalize_summary(data: dict) -> dict:
-    """
-    Coerce LLM output into the canonical summary shape.
-    All setdefault calls are safe because the field is only set when absent.
-    """
     if not isinstance(data, dict):
         raise ValueError("LLM output did not parse into an object.")
 
@@ -355,85 +283,146 @@ def _normalize_summary(data: dict) -> dict:
     data.setdefault("why", "")
     data.setdefault("impact", "")
     data.setdefault("risk", {})
+    data.setdefault("permissions_analysis", None)
     data.setdefault("attack_path", None)
     data.setdefault("vulnerabilities", [])
     data.setdefault("ci_cd_risks", [])
     data.setdefault("key_changes", [])
     data.setdefault("review_focus", "")
-    data.setdefault("permissions_analysis", None)
+    data.setdefault("evidence", [])
 
-    # Normalize risk field -- accept string "level -- reason" or dict
     risk = data.get("risk", {})
     if isinstance(risk, str):
-        parts  = risk.split("--", 1)
-        level  = parts[0].strip().lower()
+        parts = risk.split("--", 1)
+        level = parts[0].strip().lower()
         reason = parts[1].strip() if len(parts) > 1 else risk.strip()
         data["risk"] = {"level": level, "reason": reason}
     elif isinstance(risk, dict):
-        data["risk"]["level"]  = str(risk.get("level", "low")).lower()
+        data["risk"]["level"] = str(risk.get("level", "low")).lower()
         data["risk"]["reason"] = str(risk.get("reason", "")).strip()
     else:
         data["risk"] = {"level": "low", "reason": ""}
 
     if not isinstance(data["vulnerabilities"], list):
         data["vulnerabilities"] = []
-
     if not isinstance(data["ci_cd_risks"], list):
         data["ci_cd_risks"] = []
-
     if not isinstance(data["key_changes"], list):
         data["key_changes"] = [str(data["key_changes"])]
-
     if not isinstance(data["evidence"], list):
         data["evidence"] = []
 
     if data["attack_path"] is not None and not isinstance(data["attack_path"], dict):
         data["attack_path"] = None
 
-    # Sanitize all string values: replace common multi-byte punctuation with
-    # ASCII equivalents so downstream JSON serialization is always clean.
-    _sanitize_strings(data)
+    # Drop ci_cd_risks without evidence_snippet -- ungrounded claims inflate score.
+    data["ci_cd_risks"] = [
+        r for r in data["ci_cd_risks"]
+        if isinstance(r, dict) and r.get("evidence_snippet", "").strip()
+    ]
 
+    _sanitize_strings(data)
     return data
 
 
-def _sanitize_strings(obj: Any) -> None:
+def _post_validate_summary(summary: dict, pr_data: dict) -> dict:
     """
-    Walk the summary tree and replace problematic multi-byte chars in-place.
+    Big-tech style consistency gate:
+    - Security improvements cannot be vulnerabilities.
+    - If attack_path is weak or unsupported, remove it.
+    - High risk requires real evidence and a real exploit path.
+    """
+    risk_level = str((summary.get("risk") or {}).get("level", "low")).lower()
+    vulnerabilities = summary.get("vulnerabilities", [])
+    attack_path = summary.get("attack_path")
 
-    This is a belt-and-suspenders measure on top of ensure_ascii=False in
-    json.dumps: it ensures that if any consumer serializes with the default
-    ensure_ascii=True they still get readable output rather than \\uXXXX escapes
-    or, worse, garbled Latin-1 bytes.
-    """
-    _REPLACEMENTS: dict[str, str] = {
-        "\u2014": "--",   # em dash
-        "\u2013": "-",    # en dash
-        "\u2012": "-",    # figure dash
-        "\u2192": "->",   # rightwards arrow
-        "\u2190": "<-",   # leftwards arrow
-        "\u2018": "'",    # left single quotation mark
-        "\u2019": "'",    # right single quotation mark
-        "\u201c": '"',    # left double quotation mark
-        "\u201d": '"',    # right double quotation mark
-        "\u2026": "...",  # horizontal ellipsis
+    # If the PR is clearly a security improvement, do not let the model invent a vuln.
+    title_body = " ".join([
+        pr_data.get("title", "") or "",
+        pr_data.get("body", "") or "",
+        " ".join(pr_data.get("commit_messages", [])),
+        json.dumps(vulnerabilities, ensure_ascii=False),
+        json.dumps(summary.get("ci_cd_risks", []), ensure_ascii=False),
+    ]).lower()
+
+    security_improvement_markers = [
+        "trivy",
+        "snyk",
+        "grype",
+        "scanner",
+        "vulnerability scanner",
+        "pin",
+        "latest version",
+        "security improvement",
+        "reduce risk",
+    ]
+
+    if any(marker in title_body for marker in security_improvement_markers):
+        specific_cve = bool(re.search(r"CVE-\d{4}-\d+", title_body))
+        if not specific_cve:
+            summary["risk"] = {
+                "level": "low",
+                "reason": "Security improvement or dependency maintenance change without a proven exploit path.",
+            }
+            summary["attack_path"] = None
+            summary["vulnerabilities"] = []
+            if not summary.get("ci_cd_risks"):
+                summary["ci_cd_risks"] = []
+
+    # Attack path must be real, not speculative.
+    if attack_path and isinstance(attack_path, dict):
+        attacker_verified = bool(attack_path.get("attacker_control_verified", False))
+        exploit_steps = attack_path.get("exploit_steps", [])
+        if not attacker_verified or not isinstance(exploit_steps, list) or len(exploit_steps) < 3:
+            summary["attack_path"] = None
+
+    # If risk is medium/high/critical but no meaningful attack path, lower it.
+    if risk_level in {"medium", "high", "critical"} and summary.get("attack_path") is None:
+        summary["risk"] = {
+            "level": "low",
+            "reason": "No confirmed attacker-controlled exploit path in the diff.",
+        }
+
+    # High risk should be backed by at least one concrete vulnerability or CI/CD risk.
+    if summary.get("risk", {}).get("level") in {"high", "critical"}:
+        if not summary.get("vulnerabilities") and not summary.get("ci_cd_risks"):
+            summary["risk"] = {
+                "level": "low",
+                "reason": "No concrete vulnerability or CI/CD risk was proven in the diff.",
+            }
+
+    return summary
+
+
+def _sanitize_strings(obj: Any) -> None:
+    replacements = {
+        "\u2014": "--",
+        "\u2013": "-",
+        "\u2012": "-",
+        "\u2192": "->",
+        "\u2190": "<-",
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u2026": "...",
     }
 
-    def _clean(s: str) -> str:
-        for char, replacement in _REPLACEMENTS.items():
-            s = s.replace(char, replacement)
+    def clean(s: str) -> str:
+        for ch, repl in replacements.items():
+            s = s.replace(ch, repl)
         return s
 
     if isinstance(obj, dict):
         for k, v in obj.items():
             if isinstance(v, str):
-                obj[k] = _clean(v)
+                obj[k] = clean(v)
             else:
                 _sanitize_strings(v)
     elif isinstance(obj, list):
         for i, item in enumerate(obj):
             if isinstance(item, str):
-                obj[i] = _clean(item)
+                obj[i] = clean(item)
             else:
                 _sanitize_strings(item)
 
@@ -458,10 +447,10 @@ def _check_hallucinations(summary: dict, pr_data: dict) -> list:
         summary.get("review_focus", ""),
         " ".join(summary.get("key_changes") or []),
         json.dumps(summary.get("vulnerabilities", []), ensure_ascii=False),
-        json.dumps(summary.get("ci_cd_risks", []),     ensure_ascii=False),
+        json.dumps(summary.get("ci_cd_risks", []), ensure_ascii=False),
     ])
 
-    _COMMON_VERBS = frozenset({
+    common = frozenset({
         "make", "take", "have", "give", "find", "call", "send",
         "read", "load", "save", "open", "close", "init", "test",
         "check", "raise", "catch", "throw", "wrap", "list",
@@ -470,7 +459,7 @@ def _check_hallucinations(summary: dict, pr_data: dict) -> list:
     hallucinated = []
     for m in re.finditer(r"\b([a-z][a-z0-9_]{3,})\(\)", summary_text):
         fn = m.group(1)
-        if fn in _COMMON_VERBS:
+        if fn in common:
             continue
         if fn not in corpus:
             hallucinated.append(fn + "()")
@@ -478,22 +467,14 @@ def _check_hallucinations(summary: dict, pr_data: dict) -> list:
     return list(dict.fromkeys(hallucinated))
 
 
-# =============================================================================
-# JSON PARSING
-# =============================================================================
-
 def _extract_json_object(raw: str) -> str:
-    """
-    Extract the first complete JSON object from raw LLM output.
-    Handles models that prefix/suffix the JSON with prose or code fences.
-    """
     start = raw.find("{")
     if start == -1:
         raise ValueError("No JSON object found in model output.")
 
-    depth     = 0
+    depth = 0
     in_string = False
-    escape    = False
+    escape = False
 
     for i in range(start, len(raw)):
         ch = raw[i]
@@ -534,10 +515,6 @@ def _parse_and_validate(raw: str) -> dict:
         return json.loads(cleaned)
 
 
-# =============================================================================
-# FORMATTING HELPERS  (pure, stateless)
-# =============================================================================
-
 def _format_file_list(files: list) -> str:
     if not files:
         return "None"
@@ -549,8 +526,7 @@ def _format_file_list(files: list) -> str:
         icon = icons.get(f.get("status", "modified"), "~")
         skip = f" [skipped: {f['skipped_reason']}]" if f.get("skipped_reason") else ""
         lines.append(
-            f"  {icon} {f.get('filename', '')}  "
-            f"+{f.get('additions', 0)}/-{f.get('deletions', 0)}{skip}"
+            f"  {icon} {f.get('filename', '')}  +{f.get('additions', 0)}/-{f.get('deletions', 0)}{skip}"
         )
 
     return "\n".join(lines)
@@ -566,8 +542,7 @@ def _format_diffs(files: list) -> str:
 
         note = "  [truncated]" if f.get("truncated") else ""
         parts.append(
-            f"### {f.get('filename', '')}  "
-            f"(+{f.get('additions', 0)}/-{f.get('deletions', 0)}){note}\n"
+            f"### {f.get('filename', '')}  (+{f.get('additions', 0)}/-{f.get('deletions', 0)}){note}\n"
             f"```diff\n{diff}\n```"
         )
 
@@ -581,9 +556,7 @@ def _format_commits(messages: list) -> str:
 def _format_review_comments(comments: list) -> str:
     if not comments:
         return "No inline review comments."
-    return "\n".join(
-        f"  [{c['path']}] @{c['user']}: {c['body']}" for c in comments
-    )
+    return "\n".join(f"  [{c['path']}] @{c['user']}: {c['body']}" for c in comments)
 
 
 def _format_issue_comments(comments: list) -> str:
