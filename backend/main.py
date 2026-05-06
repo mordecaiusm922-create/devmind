@@ -37,7 +37,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agent import AgentConfig, DevMindAgent
-from evaluator import enforce_risk_floor
+from evaluator import enforce_risk_floor, compute_risk_score
 from feature_extractor import extract_features
 from github import get_pr_data
 from github_app import (
@@ -796,9 +796,11 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     validated_summary["merge_block_reason"] = reason
 
     features, parsed_functions = _build_code_features(pr_data)
+    risk_signals = compute_risk_score(pre, summary, ev, pr_data) if pre and ev else None
 
     response = _build_response(
         repo=repo,
+        risk_signals=risk_signals,
         pr_number=pr_number,
         pr_data=pr_data,
         summary=validated_summary,
@@ -815,6 +817,7 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
 def _build_response(
     *,
     repo: str,
+    risk_signals: Any = None,
     pr_number: int,
     pr_data: dict[str, Any],
     summary: dict[str, Any],
@@ -866,14 +869,14 @@ def _build_response(
         },
         "probabilistic": ev.get("probabilistic", {}) if isinstance(ev, dict) else {},
         "risk_engine": {
-            "score": summary.get("scores", {}).get("risk_score", 0),
-            "band": summary.get("scores", {}).get("risk_band", "low"),
-            "label": summary.get("scores", {}).get("risk_label", ""),
-            "top_factors": summary.get("scores", {}).get("top_factors", []),
+            "score": risk_signals.risk_score if risk_signals else 0,
+            "band": risk_signals.risk_band if risk_signals else "low",
+            "label": risk_signals.risk_label if risk_signals else "",
+            "top_factors": list(risk_signals.top_factors) if risk_signals else [],
             "breakdown": {
-                "probability": summary.get("scores", {}).get("exploitability_score", 0),
-                "impact": summary.get("scores", {}).get("impact_score", 0),
-                "confidence": summary.get("scores", {}).get("confidence_score", 0),
+                "probability": risk_signals.p_score if risk_signals else 0,
+                "impact": risk_signals.i_score if risk_signals else 0,
+                "confidence": risk_signals.c_score if risk_signals else 0,
             },
         },
         "pre_analysis": {
