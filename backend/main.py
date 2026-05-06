@@ -708,6 +708,7 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         risk_floor=risk_floor,
         vulnerabilities=vulns,
         permissions=permissions,
+        ci_cd_risks=ci_cd_risks,
     )
 
     validated_summary["merge_blocker"] = merge_blocker
