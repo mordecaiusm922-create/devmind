@@ -1161,3 +1161,24 @@ async def github_webhook(
         raise _err(429, ErrorCode.RATE_LIMITED, "Analysis queue is full.", trace_id=trace_id)
 
     return {"accepted": True, "repo": repo, "pr": pr_number, "action": action, "trace_id": trace_id}
+# ── Probabilistic Engine endpoints ──────────────────────────────────────────
+from probabilistic import (
+    evaluate_request, generate_request, repair_request, verify_candidate,
+    EvaluateRequest, GenerateRequest, RepairRequest, VerifyRequest,
+)
+
+@app.post("/evaluate")
+async def evaluate_endpoint(req: EvaluateRequest):
+    return evaluate_request(req)
+
+@app.post("/generate")
+async def generate_endpoint(req: GenerateRequest):
+    return generate_request(req)
+
+@app.post("/repair")
+async def repair_endpoint(req: RepairRequest):
+    return repair_request(req)
+
+@app.post("/verify")
+async def verify_endpoint(req: VerifyRequest):
+    return verify_candidate(req.code, req.properties)

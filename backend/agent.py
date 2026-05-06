@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from summarizer import summarize_pr
-from retriever import retrieve_security_signals, store_memory
+from retriever import retrieve_security_signals
+from memory import record_analysis_result
 
 
 @dataclass
@@ -88,13 +89,14 @@ class DevMindAgent:
                         },
                     )
 
-                store_memory(
+                record_analysis_result(
                     pr_data.get("repo", ""),
-                    event_type="pr",
-                    text=str(summary.get("what", "")),
-                    label=str(summary.get("triage", "")),
+                    pr_number=int(pr_data.get("number") or 0),
+                    trace_id=str(pr_data.get("trace_id", "")),
                     risk=float(summary.get("scores", {}).get("risk_score", 0) or 0),
-                    metadata={"pr_number": pr_data.get("number")},
+                    decision="blocked" if summary.get("merge_blocker") else "approved",
+                    label=str(summary.get("triage") or "unknown"),
+                    explanation=str(summary.get("what", "")),
                 )
                 return AgentResult(
                     summary=summary,
