@@ -796,7 +796,20 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     validated_summary["merge_block_reason"] = reason
 
     features, parsed_functions = _build_code_features(pr_data)
-    risk_signals = compute_risk_score(pre, summary, ev, pr_data) if pre and ev else None
+    _ev_obj = ev
+    if isinstance(ev, dict):
+        from evaluator import Evaluation
+        _ev_inner = ev.get("evaluation", ev)
+        _ev_obj = Evaluation(
+            confidence=_ev_inner.get("confidence", "low"),
+            confidence_score=_ev_inner.get("confidence_score", 0.0),
+            specificity_score=_ev_inner.get("specificity_score", 0.0),
+            generic_phrases_found=tuple(_ev_inner.get("generic_phrases_found", [])),
+            generic_penalty=_ev_inner.get("generic_penalty", 0),
+            is_flagged=_ev_inner.get("is_flagged", False),
+            flag_reason=_ev_inner.get("flag_reason", None),
+        )
+    risk_signals = compute_risk_score(pre, summary, _ev_obj, pr_data) if pre and _ev_obj else None
 
     response = _build_response(
         repo=repo,
