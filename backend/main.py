@@ -699,6 +699,7 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
 
     permissions = validated_summary.get("permissions_analysis", {}) or {}
     vulns = validated_summary.get("vulnerabilities", []) or []
+    ci_cd_risks = validated_summary.get("ci_cd_risks", []) or []
     risk_band = str(validated_summary.get("risk_note", {}).get("level", "low")).lower()
     risk_floor = pre.risk_floor
 
@@ -822,6 +823,7 @@ def decide_merge_blocker(
     risk_floor: str,
     vulnerabilities: list,
     permissions: dict | None,
+    ci_cd_risks: list,
 ) -> tuple[bool, str]:
     if risk_band in ("critical", "high"):
         return True, "High or critical risk detected"
@@ -837,6 +839,14 @@ def decide_merge_blocker(
         if permissions and permissions.get("secrets_accessed_before_validation"):
             return True, "Secrets used before validation"
 
+    # Correlacion CI/CD: trigger peligroso + accion externa = blocker
+    dangerous_triggers = {"pull_request_target", "workflow_run"}
+    for risk in ci_cd_risks:
+        trigger = str(risk.get("trigger", "")).lower()
+        secrets_exposed = risk.get("secrets_exposed", False)
+        severity = str(risk.get("severity", "")).lower()
+        if trigger in dangerous_triggers and (secrets_exposed or severity == "high"):
+            return True, f"Dangerous CI/CD trigger ({trigger}) with secrets or high severity"
     return False, "No blocking conditions met"
 
 # =============================================================================
