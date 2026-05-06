@@ -3,7 +3,7 @@
 import json
 import os
 import re
-from typing import Any
+from typing import Any, Optional
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -17,10 +17,11 @@ client = OpenAI(
     base_url="https://api.groq.com/openai/v1",
 )
 
-MODEL = "llama-3.3-70b-versatile"
-MAX_TOKENS = 4096
-TEMPERATURE = 0.2
-CHUNK_FILE_THRESHOLD = 12
+MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+MAX_TOKENS = int(os.getenv("GROQ_MAX_TOKENS", "4096"))
+TEMPERATURE = float(os.getenv("GROQ_TEMPERATURE", "0.2"))
+CHUNK_FILE_THRESHOLD = int(os.getenv("DEVMD_CHUNK_FILE_THRESHOLD", "12"))
+CHUNK_SIZE = int(os.getenv("DEVMD_CHUNK_SIZE", "6"))
 
 SYSTEM_PROMPT = (
     "You are DevMind, a security analysis engine for pull requests. "
@@ -48,7 +49,17 @@ SYSTEM_PROMPT = (
 debug_capture: list[dict] | None = None
 
 
-def summarize_pr(pr_data: dict) -> tuple[dict, object, object]:
+def summarize_pr(pr_data: dict, model: Any | None = None) -> tuple[dict, object, object]:
+    """
+    Main entrypoint.
+
+    Flow:
+    1. Pre-analyze PR
+    2. Summarize with LLM (single-pass or chunked)
+    3. Normalize + validate + enforce risk floor
+    4. Evaluate with hybrid evaluator
+    5. Attach scores and probabilistic signal
+    """
     pre = pre_analyse(pr_data)
     files_with_diff = [f for f in pr_data.get("files", []) if f.get("diff")]
 
@@ -65,10 +76,16 @@ def summarize_pr(pr_data: dict) -> tuple[dict, object, object]:
     if hallucinations:
         summary["hallucination_warning"] = hallucinations
 
-    ev = evaluate(summary, pr_data)
+    ev = evaluate(summary, pr_data, model=model)
     summary["scores"] = ev.get("scores", {})
     summary["triage"] = ev.get("triage")
     summary["merge_blocker"] = ev.get("merge_blocker", False)
+    summary["probabilistic"] = ev.get("probabilistic", {})
+    summary["risk_signals"] = ev.get("risk_signals", {})
+    summary["usefulness"] = ev.get("usefulness", {})
+    summary["evaluation"] = ev.get("evaluation", {})
+    summary["features"] = ev.get("features", {})
+    summary["feature_vector"] = ev.get("feature_vector", [])
 
     return summary, pre, ev
 
@@ -79,10 +96,9 @@ def _summarize_single_pass(pr_data: dict, files_with_diff: list, pre) -> dict:
 
 
 def _summarize_large_pr(pr_data: dict, files_with_diff: list, pre) -> dict:
-    chunk_size = 6
     chunks = [
-        files_with_diff[i : i + chunk_size]
-        for i in range(0, len(files_with_diff), chunk_size)
+        files_with_diff[i : i + CHUNK_SIZE]
+        for i in range(0, len(files_with_diff), CHUNK_SIZE)
     ]
 
     partial_summaries = []
@@ -93,7 +109,7 @@ def _summarize_large_pr(pr_data: dict, files_with_diff: list, pre) -> dict:
     return _synthesise(pr_data, partial_summaries, pre)
 
 
-def _synthesise(pr_data: dict, partials: list, pre) -> dict:
+def _synthesise(pr_data: dict, partials: list[dict], pre) -> dict:
     prompt = (
         f"SYNTHESIS PHASE\n\n"
         f"PR Title: {pr_data.get('title', '')}\n"
@@ -386,7 +402,7 @@ def _sanitize_strings(obj: Any) -> None:
                 _sanitize_strings(item)
 
 
-def _check_hallucinations(summary: dict, pr_data: dict) -> list:
+def _check_hallucinations(summary: dict, pr_data: dict) -> list[str]:
     corpus_parts = [
         pr_data.get("title", ""),
         pr_data.get("body", ""),

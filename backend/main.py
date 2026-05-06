@@ -1,17 +1,16 @@
 ﻿"""
 main.py -- DevMind SaaS API
 
-Production-grade FastAPI application with:
-  - Strict typing
-  - Structured JSON logging with trace IDs
-  - Layered error taxonomy
-  - Timeout isolation around analysis
-  - Queue-based async webhook processing
-  - Idempotency for GitHub deliveries
-  - Hard payload limits
-  - Strong schema validation
-  - Circuit breaker around fragile stages
-  - Metrics endpoint
+FastAPI application focused on:
+- clean orchestration over the agentic summarizer
+- strict typing
+- structured JSON logging
+- idempotent GitHub webhook handling
+- queue-based background processing
+- rate limiting
+- timeout isolation
+- payload limits
+- explicit merge-blocker decisions
 """
 
 from __future__ import annotations
@@ -32,12 +31,12 @@ from typing import Annotated, Any
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from evaluator import evaluate, enforce_risk_floor
+from agent import AgentConfig, DevMindAgent
 from feature_extractor import extract_features
 from github import get_pr_data
 from github_app import (
@@ -46,9 +45,8 @@ from github_app import (
     post_pr_comment,
     verify_webhook_signature,
 )
-from logger import log_analysis, read_recent_logs
+from logger import read_recent_logs
 from parser import parse_pr_file
-from summarizer import summarize_pr
 
 load_dotenv()
 
@@ -59,13 +57,14 @@ load_dotenv()
 MAX_FILES_PER_PR = 100
 MAX_DIFF_CHARS_PER_PR = 250_000
 MAX_WEBHOOK_BODY_BYTES = 2_000_000
+
 JOB_QUEUE_MAXSIZE = 500
 IDEMPOTENCY_TTL_HOURS = 24
 CACHE_TTL_MINUTES = 30
 ANALYSIS_CACHE_MAX = 256
 
 # =============================================================================
-# 2. STRUCTURED LOGGING
+# 2. LOGGING
 # =============================================================================
 
 _STANDARD_LOG_ATTRS = {
@@ -123,7 +122,7 @@ def _configure_logging() -> logging.Logger:
 log = _configure_logging()
 
 # =============================================================================
-# 3. CONFIGURATION
+# 3. CONFIG
 # =============================================================================
 
 
@@ -198,7 +197,7 @@ def _err(
     )
 
 # =============================================================================
-# 5. STORAGE / CACHES
+# 5. TTL STORAGE
 # =============================================================================
 
 
@@ -284,9 +283,7 @@ class CircuitBreaker:
 
     def allow(self) -> bool:
         with self._lock:
-            if time.monotonic() < self.open_until:
-                return False
-            return True
+            return time.monotonic() >= self.open_until
 
     def success(self) -> None:
         with self._lock:
@@ -304,10 +301,9 @@ class CircuitBreaker:
 analysis_cache = TTLCache(timedelta(minutes=CACHE_TTL_MINUTES), maxsize=ANALYSIS_CACHE_MAX)
 processed_deliveries = TTLSet(timedelta(hours=IDEMPOTENCY_TTL_HOURS))
 analysis_breaker = CircuitBreaker(threshold=5, cooldown_s=30)
-workflow_breaker = CircuitBreaker(threshold=8, cooldown_s=20)
 
 # =============================================================================
-# 6. SUPABASE CLIENT
+# 6. SUPABASE KEY LOOKUP
 # =============================================================================
 
 
@@ -374,10 +370,20 @@ def _require_api_key(
     x_api_key: Annotated[str | None, Header(alias="x-api-key")] = None,
 ) -> str:
     if not x_api_key:
-        raise _err(status.HTTP_401_UNAUTHORIZED, ErrorCode.MISSING_API_KEY, "Pass X-Api-Key header.")
+        raise _err(
+            status.HTTP_401_UNAUTHORIZED,
+            ErrorCode.MISSING_API_KEY,
+            "Pass X-Api-Key header.",
+        )
+
     valid = x_api_key in CFG.static_api_keys or _supabase.key_exists(x_api_key)
     if not valid:
-        raise _err(status.HTTP_401_UNAUTHORIZED, ErrorCode.INVALID_API_KEY, "API key not recognized.")
+        raise _err(
+            status.HTTP_401_UNAUTHORIZED,
+            ErrorCode.INVALID_API_KEY,
+            "API key not recognized.",
+        )
+
     _limiter.check(x_api_key)
     return x_api_key
 
@@ -482,18 +488,30 @@ class SummarySchema(BaseModel):
     analysed_in_chunks: int | None = None
     hallucination_warning: list[str] | None = None
 
+# =============================================================================
+# 11. AGENT
+# =============================================================================
+
+analysis_agent = DevMindAgent(
+    config=AgentConfig(
+        retry_on_failure=True,
+        max_retries=1,
+        verbose=False,
+    )
+)
 
 # =============================================================================
-# 11. METRICS
+# 12. METRICS
 # =============================================================================
 
 METRICS: dict[str, int] = defaultdict(int)
+
 
 def _metric(name: str, delta: int = 1) -> None:
     METRICS[name] += delta
 
 # =============================================================================
-# 12. HELPERS
+# 13. HELPERS
 # =============================================================================
 
 
@@ -509,14 +527,23 @@ def _check_payload_limits(pr_data: dict[str, Any]) -> None:
     files = pr_data.get("files", [])
     diff_chars = sum(len(f.get("diff") or "") for f in files)
     if len(files) > MAX_FILES_PER_PR:
-        raise _err(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, ErrorCode.INVALID_PAYLOAD, "PR has too many files.")
+        raise _err(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            ErrorCode.INVALID_PAYLOAD,
+            "PR has too many files.",
+        )
     if diff_chars > MAX_DIFF_CHARS_PER_PR:
-        raise _err(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, ErrorCode.INVALID_PAYLOAD, "PR diff is too large.")
+        raise _err(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            ErrorCode.INVALID_PAYLOAD,
+            "PR diff is too large.",
+        )
 
 
 def _normalize_summary(summary: dict[str, Any]) -> dict[str, Any]:
     data = dict(summary or {})
     risk_raw = data.get("risk_note") or data.get("risk") or {}
+
     if isinstance(risk_raw, str):
         parts = risk_raw.split("--", 1)
         level = parts[0].strip().lower()
@@ -529,6 +556,7 @@ def _normalize_summary(summary: dict[str, Any]) -> dict[str, Any]:
         }
     else:
         data["risk_note"] = {"level": "low", "reason": ""}
+
     data.pop("risk", None)
     return data
 
@@ -552,7 +580,10 @@ def _build_pr_comment(result: dict[str, Any]) -> str:
     triage = s.get("triage", "P3")
     merge_block = s.get("merge_blocker", False)
     merge_reason = s.get("merge_block_reason")
-    emoji = {"critical": "??", "high": "??", "medium": "??", "low": "??", "minimal": "?"}.get(level, "?")
+    emoji = {"critical": "CRITICAL", "high": "HIGH", "medium": "MEDIUM", "low": "LOW", "minimal": "MINIMAL"}.get(
+        level,
+        "LOW",
+    )
 
     vuln_lines = []
     for v in vulns:
@@ -561,19 +592,19 @@ def _build_pr_comment(result: dict[str, Any]) -> str:
         desc = v.get("description", "")
         fix = v.get("fix", "")
         path = v.get("exploit_path", "")
-        vuln_lines.append(
-            f"> **[{sev}]** `{loc}`\n"
-            f"> {desc}\n"
-            + (f"> **Exploit path:** {path}\n" if path else "")
-            + f"> **Fix:** {fix}"
-        )
+        block = f"**[{sev}]** `{loc}`\n{desc}\n"
+        if path:
+            block += f"**Exploit path:** {path}\n"
+        block += f"**Fix:** {fix}"
+        vuln_lines.append(block)
 
     factors_md = "\n".join(f"- {f}" for f in top_factors) if top_factors else "- None detected"
     vulns_md = "\n\n".join(vuln_lines) if vuln_lines else "_No vulnerabilities detected_"
     blocker_md = "Merge blocked. Critical risk detected." if merge_block else ""
     breakdown = re_obj.get("breakdown", {})
     scores_md = (
-        f"| Metric | Score |\n|--------|-------|\n"
+        f"| Metric | Score |\n"
+        f"|--------|-------|\n"
         f"| Risk Score | `{score}/100` |\n"
         f"| Probability | `{breakdown.get('probability', 0)}` |\n"
         f"| Impact | `{breakdown.get('impact', 0)}` |\n"
@@ -582,7 +613,7 @@ def _build_pr_comment(result: dict[str, Any]) -> str:
 
     return f"""## {emoji} DevMind Risk Analysis
 
-**{triage}** � Risk Score `{score}/100` � **{level.upper()}**
+**{triage}** — Risk Score `{score}/100` — **{level.upper()}**
 {blocker_md}
 
 ### Risk Breakdown
@@ -600,7 +631,73 @@ def _build_pr_comment(result: dict[str, Any]) -> str:
 **Review focus:** {s.get("review_focus", "N/A")}
 
 ---
-_Analyzed by DevMind � trace `{result.get("trace_id", "")}`_"""
+_Analyzed by DevMind • trace `{result.get("trace_id", "")}`_
+"""
+
+
+def decide_merge_blocker(
+    *,
+    risk_band: str,
+    risk_floor: str,
+    vulnerabilities: list,
+    permissions: dict | None,
+    ci_cd_risks: list,
+) -> tuple[bool, str]:
+    if risk_band in ("critical", "high"):
+        return True, "High or critical risk detected"
+
+    if vulnerabilities:
+        severe = [v for v in vulnerabilities if str(v.get("severity", "")).lower() in ("high", "critical")]
+        if severe:
+            return True, "High severity vulnerabilities detected"
+
+    if risk_floor == "medium":
+        if permissions and not permissions.get("trust_boundary_respected", True):
+            return True, "Permissions cross trust boundary"
+        if permissions and permissions.get("secrets_accessed_before_validation"):
+            return True, "Secrets used before validation"
+
+    dangerous_triggers = {"pull_request_target", "workflow_run"}
+    for risk in ci_cd_risks:
+        trigger = str(risk.get("trigger", "")).lower()
+        secrets_exposed = risk.get("secrets_exposed", False)
+        severity = str(risk.get("severity", "")).lower()
+        if trigger in dangerous_triggers and (secrets_exposed or severity == "high"):
+            return True, f"Dangerous CI/CD trigger ({trigger}) with secrets or high severity"
+
+    return False, "No blocking conditions met"
+
+
+def _build_code_features(pr_data: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    parsed_all: list[dict[str, Any]] = []
+    for f in pr_data.get("files", []):
+        fname = f.get("filename", "")
+        patch = f.get("raw_patch", "") or f.get("diff", "")
+        if not patch or f.get("is_noise"):
+            continue
+        try:
+            parsed = parse_pr_file(fname, patch, None)
+            parsed_all.append(parsed)
+        except Exception as exc:
+            log.warning("parse_file_failed", extra={"file": fname, "exc": str(exc)})
+
+    combined: dict[str, list] = {"functions_changed": [], "calls": []}
+    for p in parsed_all:
+        combined["functions_changed"].extend(p.get("functions_changed", []))
+        combined["calls"].extend(p.get("calls", []))
+
+    diff_stats = {
+        "additions": pr_data.get("additions", 0),
+        "deletions": pr_data.get("deletions", 0),
+        "changed_files": pr_data.get("changed_files", 0),
+    }
+    features = extract_features(combined, diff_stats)
+    return features, combined["functions_changed"]
+
+
+# =============================================================================
+# 14. PIPELINE
+# =============================================================================
 
 
 async def _run_pipeline(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
@@ -628,15 +725,20 @@ async def _run_pipeline(repo: str, pr_number: int, trace_id: str) -> dict[str, A
     except asyncio.TimeoutError:
         analysis_breaker.failure()
         _metric("analysis_timeout")
-        raise _err(504, ErrorCode.ANALYSIS_TIMEOUT, f"Analysis timed out after {CFG.analysis_timeout_s}s.", trace_id=trace_id)
+        raise _err(
+            504,
+            ErrorCode.ANALYSIS_TIMEOUT,
+            f"Analysis timed out after {CFG.analysis_timeout_s}s.",
+            trace_id=trace_id,
+        )
     except HTTPException:
         analysis_breaker.failure()
         raise
     except ValueError as exc:
-            analysis_breaker.failure()
-            _metric("analysis_validation_error")
-            log.error("validation_error_detail", extra={"exc": str(exc), "trace_id": trace_id}, exc_info=True)
-            raise _err(422, ErrorCode.VALIDATION_ERROR, str(exc), trace_id=trace_id)
+        analysis_breaker.failure()
+        _metric("analysis_validation_error")
+        log.error("validation_error_detail", extra={"exc": str(exc), "trace_id": trace_id}, exc_info=True)
+        raise _err(422, ErrorCode.VALIDATION_ERROR, str(exc), trace_id=trace_id)
     except Exception as exc:
         analysis_breaker.failure()
         msg = str(exc)
@@ -667,35 +769,13 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     pr_data = _timed("get_pr_data", get_pr_data, repo, pr_number)
     _check_payload_limits(pr_data)
 
-    summary, pre, ev = _timed("summarize", summarize_pr, pr_data)
-    summary = _normalize_summary(summary)
+    agent_result = _timed("agent_run", analysis_agent.run, pr_data)
+    summary = _normalize_summary(agent_result.summary)
+    pre = agent_result.pre_analysis
+    ev = agent_result.evaluation
+
     validated_summary = _validate_summary(summary).model_dump()
-
     validated_summary = enforce_risk_floor(validated_summary, pre)
-
-    all_parsed: list[dict[str, Any]] = []
-    for f in pr_data.get("files", []):
-        fname = f.get("filename", "")
-        patch = f.get("raw_patch", "") or f.get("diff", "")
-        if not patch or f.get("is_noise"):
-            continue
-        try:
-            parsed = parse_pr_file(fname, patch, None)
-            all_parsed.append(parsed)
-        except Exception as exc:
-            log.warning("parse_file_failed", extra={"file": fname, "exc": str(exc), "trace_id": trace_id})
-
-    combined: dict[str, list] = {"functions_changed": [], "calls": []}
-    for p in all_parsed:
-        combined["functions_changed"].extend(p.get("functions_changed", []))
-        combined["calls"].extend(p.get("calls", []))
-
-    diff_stats = {
-        "additions": pr_data.get("additions", 0),
-        "deletions": pr_data.get("deletions", 0),
-        "changed_files": pr_data.get("changed_files", 0),
-    }
-    features = _timed("extract_features", extract_features, combined, diff_stats)
 
     permissions = validated_summary.get("permissions_analysis", {}) or {}
     vulns = validated_summary.get("vulnerabilities", []) or []
@@ -714,7 +794,7 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     validated_summary["merge_blocker"] = merge_blocker
     validated_summary["merge_block_reason"] = reason
 
-    risk = ev.get("risk_signals", {})
+    features, parsed_functions = _build_code_features(pr_data)
 
     response = _build_response(
         repo=repo,
@@ -723,10 +803,9 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         summary=validated_summary,
         pre=pre,
         ev=ev,
-        risk=risk,
-        features=features,
-        parsed_fns=combined["functions_changed"],
         trace_id=trace_id,
+        features=features,
+        parsed_fns=parsed_functions,
     )
     _metric("analysis_done")
     return response
@@ -739,15 +818,15 @@ def _build_response(
     pr_data: dict[str, Any],
     summary: dict[str, Any],
     pre: Any,
-    ev: dict[str, Any],
-    risk: dict[str, Any] | None,
+    ev: Any,
+    trace_id: str,
     features: dict[str, Any],
     parsed_fns: list[Any],
-    trace_id: str,
 ) -> dict[str, Any]:
-    evaluation = ev.get("evaluation", {})
+    evaluation = ev.get("evaluation", {}) if isinstance(ev, dict) else {}
+
     response: dict[str, Any] = {
-        "schema_version": "1.3.0",
+        "schema_version": "1.4.0",
         "trace_id": trace_id,
         "pr_number": pr_number,
         "repo": repo,
@@ -784,6 +863,18 @@ def _build_response(
             "flag_reason": evaluation.get("flag_reason"),
             "generic_phrases_found": evaluation.get("generic_phrases_found", []),
         },
+        "probabilistic": ev.get("probabilistic", {}) if isinstance(ev, dict) else {},
+        "risk_engine": {
+            "score": summary.get("scores", {}).get("risk_score", 0),
+            "band": summary.get("scores", {}).get("risk_band", "low"),
+            "label": summary.get("scores", {}).get("risk_label", ""),
+            "top_factors": summary.get("scores", {}).get("top_factors", []),
+            "breakdown": {
+                "probability": summary.get("scores", {}).get("exploitability_score", 0),
+                "impact": summary.get("scores", {}).get("impact_score", 0),
+                "confidence": summary.get("scores", {}).get("confidence_score", 0),
+            },
+        },
         "pre_analysis": {
             "risk_floor": pre.risk_floor,
             "risk_tags": list(pre.risk_tags),
@@ -798,61 +889,13 @@ def _build_response(
         "parsed_functions": parsed_fns[:10],
     }
 
-    if risk is not None:
-        response["risk_engine"] = {
-            "score": risk.get("risk_score", 0),
-            "band": risk.get("risk_band", "low"),
-            "label": risk.get("risk_label", ""),
-            "top_factors": risk.get("top_factors", []),
-            "breakdown": {
-                "probability": round(risk.get("p_score", 0), 3),
-                "impact": round(risk.get("i_score", 0), 3),
-                "confidence": round(risk.get("c_score", 0), 3),
-            },
-        }
-
     return response
 
-# =============================================================================
-# 13. DECISION LOGIC
-# =============================================================================
-
-
-def decide_merge_blocker(
-    *,
-    risk_band: str,
-    risk_floor: str,
-    vulnerabilities: list,
-    permissions: dict | None,
-    ci_cd_risks: list,
-) -> tuple[bool, str]:
-    if risk_band in ("critical", "high"):
-        return True, "High or critical risk detected"
-
-    if vulnerabilities:
-        severe = [v for v in vulnerabilities if str(v.get("severity", "")).lower() in ("high", "critical")]
-        if severe:
-            return True, "High severity vulnerabilities detected"
-
-    if risk_floor == "medium":
-        if permissions and not permissions.get("trust_boundary_respected", True):
-            return True, "Permissions cross trust boundary"
-        if permissions and permissions.get("secrets_accessed_before_validation"):
-            return True, "Secrets used before validation"
-
-    # Correlacion CI/CD: trigger peligroso + accion externa = blocker
-    dangerous_triggers = {"pull_request_target", "workflow_run"}
-    for risk in ci_cd_risks:
-        trigger = str(risk.get("trigger", "")).lower()
-        secrets_exposed = risk.get("secrets_exposed", False)
-        severity = str(risk.get("severity", "")).lower()
-        if trigger in dangerous_triggers and (secrets_exposed or severity == "high"):
-            return True, f"Dangerous CI/CD trigger ({trigger}) with secrets or high severity"
-    return False, "No blocking conditions met"
 
 # =============================================================================
-# 14. BACKGROUND JOBS
+# 15. BACKGROUND JOBS
 # =============================================================================
+
 
 @dataclass(frozen=True)
 class AnalysisJob:
@@ -878,15 +921,15 @@ async def _job_worker() -> None:
             post_pr_comment(job.repo, job.pr_number, comment, token)
 
             re_obj = result.get("risk_engine", {})
-            level = re_obj.get("band", "low")
+            level = str(re_obj.get("band", "low"))
             score = re_obj.get("score", 0)
-            state = _score_to_merge_state(str(level))
+            state = _score_to_merge_state(level)
             post_commit_status(
                 job.repo,
                 job.commit_sha,
                 token,
                 state,
-                f"Risk {score}/100 - {str(level).upper()}",
+                f"Risk {score}/100 - {level.upper()}",
             )
             _metric("job_success")
         except Exception as exc:
@@ -900,7 +943,7 @@ async def _job_worker() -> None:
             job_queue.task_done()
 
 # =============================================================================
-# 15. APP LIFECYCLE
+# 16. APP LIFECYCLE
 # =============================================================================
 
 
@@ -920,7 +963,7 @@ async def _lifespan(application: FastAPI):
 
 app = FastAPI(
     title="DevMind API",
-    version="1.3.0",
+    version="1.4.0",
     docs_url="/docs" if CFG.is_dev else None,
     redoc_url=None,
     lifespan=_lifespan,
@@ -938,7 +981,7 @@ app.add_middleware(
 )
 
 # =============================================================================
-# 16. MIDDLEWARE / ERROR HANDLERS
+# 17. MIDDLEWARE / ERROR HANDLERS
 # =============================================================================
 
 
@@ -979,7 +1022,7 @@ async def _unhandled_exception(request: Request, exc: Exception):
     )
 
 # =============================================================================
-# 17. ENDPOINTS
+# 18. ENDPOINTS
 # =============================================================================
 
 
@@ -1026,7 +1069,7 @@ if CFG.is_dev:
         return {"headers": dict(request.headers)}
 
 # =============================================================================
-# 18. GITHUB WEBHOOK
+# 19. GITHUB WEBHOOK
 # =============================================================================
 
 _HANDLED_ACTIONS = frozenset({"opened", "synchronize", "reopened"})

@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass
-from typing import Final
+from math import exp
+from typing import Any, Final, Sequence
+
+
+# =========================
+# Thresholds / constants
+# =========================
 
 TRIVIAL_CHURN_THRESHOLD: Final[int] = 8
 
@@ -40,6 +46,60 @@ COVERAGE_PARTIAL: Final[float] = 0.70
 
 CVE_HIGH_COUNT: Final[int] = 3
 CVE_HIGH_IN_DIFF: Final[int] = 2
+
+HYBRID_MODEL_WEIGHT: Final[float] = 0.35
+HYBRID_HEURISTIC_WEIGHT: Final[float] = 0.65
+
+FEATURE_KEYS: Final[tuple[str, ...]] = (
+    "risk_score_norm",
+    "p_score",
+    "i_score",
+    "c_score",
+    "confidence_score",
+    "specificity_score",
+    "generic_penalty_norm",
+    "summary_flagged",
+    "usefulness_score",
+    "has_filenames",
+    "has_functions",
+    "has_specific_changes",
+    "floor_high",
+    "floor_medium",
+    "floor_low",
+    "llm_high",
+    "llm_medium",
+    "llm_low",
+    "additions_large",
+    "additions_medium",
+    "deletions_large",
+    "many_changed_files",
+    "vulnerabilities_found",
+    "attack_path_present",
+    "ci_cd_risk_present",
+    "tag_auth",
+    "tag_payments",
+    "tag_infra",
+    "tag_security",
+    "tag_db_migration",
+    "tag_concurrency",
+    "tag_db_query",
+    "tag_api",
+    "tag_config",
+    "no_tests_touched",
+    "large_diff",
+    "many_files",
+    "has_cve_refs",
+    "security_patterns",
+    "diff_coverage_full",
+    "diff_coverage_partial",
+    "large_pr_chunked",
+    "no_diff_available",
+    "trivial_sensitive_churn",
+    "files_with_diff_norm",
+    "files_skipped_budget_norm",
+    "files_skipped_noise_norm",
+    "total_diff_chars_norm",
+)
 
 _GENERIC_PHRASES: Final[tuple[tuple[str, int], ...]] = (
     (r"\bimproves code quality\b", 2),
@@ -206,6 +266,10 @@ _FACTOR_PRIORITY: Final[dict[str, int]] = {
 }
 
 
+# =========================
+# Dataclasses
+# =========================
+
 @dataclass(frozen=True)
 class PreAnalysis:
     risk_floor: str
@@ -296,6 +360,57 @@ class RiskSignals:
         return d
 
 
+@dataclass(frozen=True)
+class HybridAssessment:
+    heuristic_probability: float
+    model_probability: float | None
+    final_probability: float
+    uncertainty: float
+    source: str
+    threshold: float
+    final_band: str
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+# =========================
+# Utilities
+# =========================
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _sigmoid(x: float) -> float:
+    if x >= 0:
+        z = exp(-x)
+        return 1.0 / (1.0 + z)
+    z = exp(x)
+    return z / (1.0 + z)
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_count(value: Any, scale: float) -> float:
+    return _clamp01(_safe_float(value) / scale if scale > 0 else 0.0)
+
+
+def _count_matches(patterns: Sequence[tuple[re.Pattern[str], Any]], text: str) -> int:
+    return sum(1 for pattern, _ in patterns if pattern.search(text))
+
+
+# =========================
+# Core analysis
+# =========================
+
 def pre_analyse(pr_data: dict) -> PreAnalysis:
     files = pr_data.get("files", [])
 
@@ -308,7 +423,7 @@ def pre_analyse(pr_data: dict) -> PreAnalysis:
     files_skipped_budget = 0
 
     for f in files:
-        filename = f.get("filename", "").lower()
+        filename = str(f.get("filename", "")).lower()
         skip = f.get("skipped_reason")
 
         if skip == "generated/lockfile":
@@ -321,11 +436,11 @@ def pre_analyse(pr_data: dict) -> PreAnalysis:
         for rule_re, floor, tag in _COMPILED_RISK_RULES:
             if rule_re.search(filename):
                 floor_ord = _RISK_ORD.get(floor, 0)
-                churn = f.get("additions", 0) + f.get("deletions", 0)
+                churn = _safe_float(f.get("additions", 0)) + _safe_float(f.get("deletions", 0))
 
                 if churn < TRIVIAL_CHURN_THRESHOLD and floor_ord > 0:
                     floor_ord -= 1
-                    fname = f.get("filename", "")
+                    fname = str(f.get("filename", ""))
                     if fname not in trivially_touched:
                         trivially_touched.append(fname)
 
@@ -333,13 +448,13 @@ def pre_analyse(pr_data: dict) -> PreAnalysis:
 
                 if tag not in risk_tags:
                     risk_tags.append(tag)
-                fname = f.get("filename", "")
+                fname = str(f.get("filename", ""))
                 if fname not in flagged_files:
                     flagged_files.append(fname)
                 break
 
     full_diff = _build_full_diff_text(pr_data)
-    diff_only = " ".join(f.get("diff") or "" for f in files)
+    diff_only = " ".join(str(f.get("diff") or "") for f in files)
 
     security_flags = {flag for sec_re, flag in _COMPILED_SECURITY if sec_re.search(full_diff)}
     if security_flags and "security" not in risk_tags:
@@ -353,7 +468,7 @@ def pre_analyse(pr_data: dict) -> PreAnalysis:
     if cve_count >= CVE_HIGH_COUNT or cve_in_diff >= CVE_HIGH_IN_DIFF:
         risk_level = max(risk_level, _RISK_ORD["high"])
 
-    total_diff_chars = sum(len(f.get("diff") or "") for f in files)
+    total_diff_chars = sum(len(str(f.get("diff") or "")) for f in files)
 
     return PreAnalysis(
         risk_floor=_ORD_RISK[risk_level],
@@ -367,11 +482,18 @@ def pre_analyse(pr_data: dict) -> PreAnalysis:
     )
 
 
-def evaluate(summary: dict, pr_data: dict) -> dict:
+def evaluate(summary: dict, pr_data: dict, model: Any | None = None) -> dict:
     pre = pre_analyse(pr_data)
     ev = _evaluate_summary_quality(summary, pr_data)
     signals = compute_risk_score(pre, summary, ev, pr_data)
     usefulness = _usefulness_check(summary)
+
+    features = extract_features_bundle(pre, signals, ev, usefulness, summary, pr_data)
+    feature_vector = _feature_vector(features)
+
+    heuristic_probability = _heuristic_probability(signals, ev, usefulness, pr_data)
+    model_probability = _predict_model_probability(model, feature_vector) if model is not None else None
+    assessment = combine_probabilities(heuristic_probability, model_probability)
 
     return {
         "scores": {
@@ -388,6 +510,19 @@ def evaluate(summary: dict, pr_data: dict) -> dict:
         "risk_signals": signals.to_dict(),
         "evaluation": ev.to_dict(),
         "usefulness": usefulness.to_dict(),
+        "features": features,
+        "feature_vector": feature_vector,
+        "probabilistic": assessment.to_dict(),
+        "pre_analysis": {
+            "risk_floor": pre.risk_floor,
+            "risk_tags": list(pre.risk_tags),
+            "flagged_files": list(pre.flagged_files),
+            "trivially_touched": list(pre.trivially_touched),
+            "total_diff_chars": pre.total_diff_chars,
+            "files_with_diff": pre.files_with_diff,
+            "files_skipped_noise": pre.files_skipped_noise,
+            "files_skipped_budget": pre.files_skipped_budget,
+        },
     }
 
 
@@ -442,7 +577,7 @@ def compute_risk_score(
     risk_score = _combine_scores(p_score, i_score, c_score, summary, ev)
     risk_band, risk_label = _score_to_band(risk_score)
     top_factors = _build_top_factors(p_signals, i_signals)
-    triage, merge_block = _build_triage(summary, risk_score, ev)
+    triage, merge_block = _build_triage(summary, risk_score)
 
     return RiskSignals(
         p_signals=p_signals,
@@ -459,6 +594,179 @@ def compute_risk_score(
         merge_blocker=merge_block,
     )
 
+
+def extract_features_bundle(
+    pre: PreAnalysis,
+    signals: RiskSignals,
+    ev: Evaluation,
+    usefulness: UsefulnessCheck,
+    summary: dict,
+    pr_data: dict,
+) -> dict[str, float]:
+    files = pr_data.get("files", [])
+    changed_files = _safe_float(pr_data.get("changed_files", len(files)))
+    additions = _safe_float(pr_data.get("additions", 0))
+    deletions = _safe_float(pr_data.get("deletions", 0))
+
+    full_diff = " ".join(str(f.get("diff") or "") for f in files)
+    cve_count = len(set(_RE_CVE.findall(full_diff)))
+    security_hits = _count_matches(_COMPILED_SECURITY, full_diff)
+
+    risk_note_level = str((summary.get("risk_note") or {}).get("level", "low")).lower()
+    floor_high = 1.0 if pre.risk_floor == "high" else 0.0
+    floor_medium = 1.0 if pre.risk_floor == "medium" else 0.0
+    floor_low = 1.0 if pre.risk_floor == "low" else 0.0
+
+    llm_high = 1.0 if risk_note_level == "high" else 0.0
+    llm_medium = 1.0 if risk_note_level == "medium" else 0.0
+    llm_low = 1.0 if risk_note_level not in {"high", "medium"} else 0.0
+
+    features = {
+        "risk_score_norm": _clamp01(signals.risk_score / 100.0),
+        "p_score": signals.p_score,
+        "i_score": signals.i_score,
+        "c_score": signals.c_score,
+        "confidence_score": ev.confidence_score,
+        "specificity_score": ev.specificity_score,
+        "generic_penalty_norm": _clamp01(ev.generic_penalty / 10.0),
+        "summary_flagged": 1.0 if ev.is_flagged else 0.0,
+        "usefulness_score": 1.0 if usefulness.is_useful else 0.0,
+        "has_filenames": 1.0 if usefulness.has_filenames else 0.0,
+        "has_functions": 1.0 if usefulness.has_functions else 0.0,
+        "has_specific_changes": 1.0 if usefulness.has_specific_changes else 0.0,
+        "floor_high": floor_high,
+        "floor_medium": floor_medium,
+        "floor_low": floor_low,
+        "llm_high": llm_high,
+        "llm_medium": llm_medium,
+        "llm_low": llm_low,
+        "additions_large": 1.0 if additions > ADDITIONS_LARGE else (0.5 if additions > ADDITIONS_MEDIUM else 0.0),
+        "additions_medium": 1.0 if ADDITIONS_MEDIUM < additions <= ADDITIONS_LARGE else 0.0,
+        "deletions_large": 1.0 if deletions > DELETIONS_LARGE else 0.0,
+        "many_changed_files": 1.0 if changed_files > FILES_CRITICAL else 0.0,
+        "vulnerabilities_found": _clamp01(len(summary.get("vulnerabilities") or []) / 3.0),
+        "attack_path_present": 1.0 if summary.get("attack_path") else 0.0,
+        "ci_cd_risk_present": 1.0 if summary.get("ci_cd_risks") else 0.0,
+        "tag_auth": 1.0 if "auth" in pre.risk_tags else 0.0,
+        "tag_payments": 1.0 if "payments" in pre.risk_tags else 0.0,
+        "tag_infra": 1.0 if "infra" in pre.risk_tags else 0.0,
+        "tag_security": 1.0 if "security" in pre.risk_tags else 0.0,
+        "tag_db_migration": 1.0 if "db-migration" in pre.risk_tags else 0.0,
+        "tag_concurrency": 1.0 if "concurrency" in pre.risk_tags else 0.0,
+        "tag_db_query": 1.0 if "db-query" in pre.risk_tags else 0.0,
+        "tag_api": 1.0 if "api" in pre.risk_tags else 0.0,
+        "tag_config": 1.0 if "config" in pre.risk_tags else 0.0,
+        "no_tests_touched": 1.0 if "no_tests_touched" in signals.p_signals else 0.0,
+        "large_diff": 1.0 if "large_diff" in signals.p_signals else 0.0,
+        "many_files": 1.0 if "many_files" in signals.p_signals else 0.0,
+        "has_cve_refs": _clamp01(cve_count / 3.0),
+        "security_patterns": _clamp01(security_hits / 4.0),
+        "diff_coverage_full": 1.0 if "diff_coverage_full" in signals.c_signals else 0.0,
+        "diff_coverage_partial": 1.0 if "diff_coverage_partial" in signals.c_signals else 0.0,
+        "large_pr_chunked": 1.0 if "large_pr_chunked" in signals.c_signals else 0.0,
+        "no_diff_available": 1.0 if "no_diff_available" in signals.c_signals else 0.0,
+        "trivial_sensitive_churn": 1.0 if pre.trivially_touched else 0.0,
+        "files_with_diff_norm": _clamp01(pre.files_with_diff / max(1.0, changed_files)),
+        "files_skipped_budget_norm": _clamp01(pre.files_skipped_budget / max(1.0, changed_files)),
+        "files_skipped_noise_norm": _clamp01(pre.files_skipped_noise / max(1.0, len(files) or 1.0)),
+        "total_diff_chars_norm": _clamp01(pre.total_diff_chars / 5000.0),
+    }
+    return features
+
+
+def _feature_vector(features: dict[str, float], order: Sequence[str] = FEATURE_KEYS) -> list[float]:
+    return [_safe_float(features.get(key, 0.0)) for key in order]
+
+
+def _predict_model_probability(model: Any, feature_vector: Sequence[float]) -> float | None:
+    if model is None:
+        return None
+
+    x = [list(feature_vector)]
+
+    if hasattr(model, "predict_proba"):
+        proba = model.predict_proba(x)
+        if proba is None:
+            return None
+        row = proba[0]
+        if len(row) == 1:
+            return _clamp01(_safe_float(row[0]))
+        return _clamp01(_safe_float(row[-1]))
+
+    if callable(model):
+        out = model(x[0])
+        if isinstance(out, (list, tuple)):
+            return _clamp01(_safe_float(out[-1]))
+        return _clamp01(_safe_float(out))
+
+    return None
+
+
+def _heuristic_probability(
+    signals: RiskSignals,
+    ev: Evaluation,
+    usefulness: UsefulnessCheck,
+    pr_data: dict,
+) -> float:
+    base = signals.risk_score / 100.0
+
+    if signals.merge_blocker:
+        base += 0.05
+    if ev.is_flagged:
+        base += 0.03
+    if not usefulness.is_useful:
+        base += 0.02
+    if pr_data.get("is_large_pr"):
+        base += 0.02
+
+    return _clamp01(base)
+
+
+def combine_probabilities(
+    heuristic_probability: float,
+    model_probability: float | None,
+    threshold: float = 0.5,
+) -> HybridAssessment:
+    heuristic_probability = _clamp01(heuristic_probability)
+
+    if model_probability is None:
+        final_probability = heuristic_probability
+        source = "heuristic_only"
+        uncertainty = abs(final_probability - 0.5)
+    else:
+        model_probability = _clamp01(model_probability)
+        final_probability = _clamp01(
+            HYBRID_HEURISTIC_WEIGHT * heuristic_probability
+            + HYBRID_MODEL_WEIGHT * model_probability
+        )
+        source = "hybrid"
+        uncertainty = abs(heuristic_probability - model_probability)
+
+    if final_probability >= 0.85:
+        band = "critical"
+    elif final_probability >= 0.65:
+        band = "high"
+    elif final_probability >= 0.40:
+        band = "medium"
+    elif final_probability >= 0.20:
+        band = "low"
+    else:
+        band = "minimal"
+
+    return HybridAssessment(
+        heuristic_probability=round(heuristic_probability, 4),
+        model_probability=round(model_probability, 4) if model_probability is not None else None,
+        final_probability=round(final_probability, 4),
+        uncertainty=round(_clamp01(uncertainty), 4),
+        source=source,
+        threshold=threshold,
+        final_band=band,
+    )
+
+
+# =========================
+# Signal extraction
+# =========================
 
 def _extract_p_signals(pre: PreAnalysis, pr_data: dict) -> dict[str, float]:
     signals: dict[str, float] = {}
@@ -479,12 +787,12 @@ def _extract_p_signals(pre: PreAnalysis, pr_data: dict) -> dict[str, float]:
             signals[key] = 1.0
 
     files = pr_data.get("files", [])
-    has_tests = any(_RE_TEST_FILE.search(f.get("filename", "")) for f in files)
+    has_tests = any(_RE_TEST_FILE.search(str(f.get("filename", ""))) for f in files)
     if not has_tests:
         signals["no_tests_touched"] = 1.0
 
-    additions = pr_data.get("additions", 0)
-    changed_files = pr_data.get("changed_files", 0)
+    additions = _safe_float(pr_data.get("additions", 0))
+    changed_files = _safe_float(pr_data.get("changed_files", 0))
 
     if additions > ADDITIONS_LARGE:
         signals["large_diff"] = 1.0
@@ -496,7 +804,7 @@ def _extract_p_signals(pre: PreAnalysis, pr_data: dict) -> dict[str, float]:
     elif changed_files > FILES_SEVERAL:
         signals["many_files"] = 0.5
 
-    full_diff = " ".join(f.get("diff") or "" for f in files)
+    full_diff = " ".join(str(f.get("diff") or "") for f in files)
     cve_count = len(set(_RE_CVE.findall(full_diff)))
     if cve_count > 0:
         signals["has_cve_refs"] = min(1.0, cve_count / 3)
@@ -518,9 +826,9 @@ def _extract_i_signals(pre: PreAnalysis, summary: dict, pr_data: dict) -> dict[s
     llm_key = {"high": "llm_high", "medium": "llm_medium"}.get(llm_level, "llm_low")
     signals[llm_key] = 1.0
 
-    additions = pr_data.get("additions", 0)
-    deletions = pr_data.get("deletions", 0)
-    changed_files = pr_data.get("changed_files", 0)
+    additions = _safe_float(pr_data.get("additions", 0))
+    deletions = _safe_float(pr_data.get("deletions", 0))
+    changed_files = _safe_float(pr_data.get("changed_files", 0))
 
     if additions > ADDITIONS_LARGE:
         signals["additions_large"] = 1.0
@@ -576,6 +884,10 @@ def _extract_c_signals(pre: PreAnalysis, ev: Evaluation, pr_data: dict) -> dict[
 
     return signals
 
+
+# =========================
+# Scoring / ranking
+# =========================
 
 def _weighted_sum(signals: dict[str, float], weights: dict[str, float]) -> float:
     if not signals:
@@ -636,7 +948,7 @@ def _score_to_band(score: int) -> tuple[str, str]:
     return "minimal", "Minimal -- low impact PR"
 
 
-def _build_triage(summary: dict, risk_score: int, ev: Evaluation) -> tuple[str, bool]:
+def _build_triage(summary: dict, risk_score: int) -> tuple[str, bool]:
     vulns = summary.get("vulnerabilities", [])
     severities = {str(v.get("severity", "low")).lower() for v in vulns}
 
@@ -669,14 +981,18 @@ def _build_top_factors(
     return out
 
 
+# =========================
+# Summary quality / usefulness
+# =========================
+
 def _evaluate_summary_quality(summary: dict, pr_data: dict) -> Evaluation:
     full_text = " ".join(
         [
-            summary.get("what", ""),
-            summary.get("why", ""),
-            summary.get("impact", ""),
-            summary.get("review_focus", ""),
-            (summary.get("risk_note") or {}).get("reason", ""),
+            str(summary.get("what", "") or ""),
+            str(summary.get("why", "") or ""),
+            str(summary.get("impact", "") or ""),
+            str(summary.get("review_focus", "") or ""),
+            str((summary.get("risk_note") or {}).get("reason", "") or ""),
             " ".join(summary.get("key_changes") or []),
             " ".join(
                 f"{v.get('location', '')} {v.get('description', '')} {v.get('exploit_path', '')}"
@@ -695,7 +1011,7 @@ def _evaluate_summary_quality(summary: dict, pr_data: dict) -> Evaluation:
     for compiled_re, severity in _COMPILED_GENERIC:
         matches = compiled_re.findall(lower)
         if matches:
-            found_phrases.append(matches[0])
+            found_phrases.append(matches[0] if isinstance(matches[0], str) else str(matches[0]))
             total_penalty += severity * len(matches)
 
     specificity_max = sum(w * 3 for _, w in _COMPILED_SPECIFICITY)
@@ -758,11 +1074,11 @@ def _evaluate_summary_quality(summary: dict, pr_data: dict) -> Evaluation:
 def _usefulness_check(summary: dict) -> UsefulnessCheck:
     full_text = " ".join(
         [
-            summary.get("what", ""),
-            summary.get("why", ""),
-            summary.get("impact", ""),
-            summary.get("review_focus", ""),
-            (summary.get("risk_note") or {}).get("reason", ""),
+            str(summary.get("what", "") or ""),
+            str(summary.get("why", "") or ""),
+            str(summary.get("impact", "") or ""),
+            str(summary.get("review_focus", "") or ""),
+            str((summary.get("risk_note") or {}).get("reason", "") or ""),
             " ".join(summary.get("key_changes") or []),
         ]
     )
@@ -807,13 +1123,83 @@ def _usefulness_check(summary: dict) -> UsefulnessCheck:
     )
 
 
+# =========================
+# Hybrid / probability layer
+# =========================
+
+def _build_hybrid_model_input(
+    summary: dict,
+    pr_data: dict,
+    model: Any | None = None,
+) -> dict:
+    pre = pre_analyse(pr_data)
+    ev = _evaluate_summary_quality(summary, pr_data)
+    signals = compute_risk_score(pre, summary, ev, pr_data)
+    usefulness = _usefulness_check(summary)
+    features = extract_features_bundle(pre, signals, ev, usefulness, summary, pr_data)
+    feature_vector = _feature_vector(features)
+    heuristic_probability = _heuristic_probability(signals, ev, usefulness, pr_data)
+    model_probability = _predict_model_probability(model, feature_vector) if model is not None else None
+    assessment = combine_probabilities(heuristic_probability, model_probability)
+
+    return {
+        "pre": pre,
+        "evaluation": ev,
+        "signals": signals,
+        "usefulness": usefulness,
+        "features": features,
+        "feature_vector": feature_vector,
+        "heuristic_probability": heuristic_probability,
+        "model_probability": model_probability,
+        "assessment": assessment,
+    }
+
+
+class HybridEvaluator:
+    """
+    Híbrido:
+    - conserva tu heurística como prior experto
+    - añade una capa probabilística encima
+    - admite modelo externo opcional con predict_proba
+    """
+
+    def __init__(self, model: Any | None = None):
+        self.model = model
+
+    def set_model(self, model: Any | None) -> None:
+        self.model = model
+
+    def evaluate(self, summary: dict, pr_data: dict) -> dict:
+        payload = _build_hybrid_model_input(summary, pr_data, self.model)
+        result = evaluate(summary, pr_data, model=self.model)
+        result["probabilistic"] = payload["assessment"].to_dict()
+        return result
+
+
+# =========================
+# Public helpers
+# =========================
+
+def to_feature_vector(summary: dict, pr_data: dict, model: Any | None = None) -> list[float]:
+    payload = _build_hybrid_model_input(summary, pr_data, model)
+    return payload["feature_vector"]
+
+
+def evaluate_hybrid(summary: dict, pr_data: dict, model: Any | None = None) -> dict:
+    return evaluate(summary, pr_data, model=model)
+
+
+# =========================
+# Internal builder
+# =========================
+
 def _build_full_diff_text(pr_data: dict) -> str:
     files = pr_data.get("files", [])
     return " ".join(
         [
-            pr_data.get("title", "") or "",
-            pr_data.get("body", "") or "",
+            str(pr_data.get("title", "") or ""),
+            str(pr_data.get("body", "") or ""),
             " ".join(pr_data.get("commit_messages", [])),
-            " ".join(f.get("diff") or "" for f in files),
+            " ".join(str(f.get("diff") or "") for f in files),
         ]
     )
