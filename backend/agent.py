@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from summarizer import summarize_pr
+from retriever import retrieve_security_signals, store_memory
 
 
 @dataclass
@@ -67,12 +68,14 @@ class DevMindAgent:
         last_exc: Exception | None = None
         attempts = self.config.max_retries + 1
 
+        retriever_ctx = retrieve_security_signals(pr_data.get("repo", ""), pr_data)
+
         for attempt in range(attempts):
             try:
                 if self.config.verbose:
                     self._emit("agent.start", {"attempt": attempt + 1, "max_attempts": attempts})
 
-                summary, pre, ev = summarize_pr(pr_data)
+                summary, pre, ev = summarize_pr(pr_data, retriever_ctx=retriever_ctx)
 
                 if self.config.verbose:
                     self._emit(
@@ -85,6 +88,14 @@ class DevMindAgent:
                         },
                     )
 
+                store_memory(
+                    pr_data.get("repo", ""),
+                    event_type="pr",
+                    text=str(summary.get("what", "")),
+                    label=str(summary.get("triage", "")),
+                    risk=float(summary.get("scores", {}).get("risk_score", 0) or 0),
+                    metadata={"pr_number": pr_data.get("number")},
+                )
                 return AgentResult(
                     summary=summary,
                     pre_analysis=pre,

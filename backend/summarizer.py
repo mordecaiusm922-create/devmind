@@ -49,7 +49,7 @@ SYSTEM_PROMPT = (
 debug_capture: list[dict] | None = None
 
 
-def summarize_pr(pr_data: dict, model: Any | None = None) -> tuple[dict, object, object]:
+def summarize_pr(pr_data: dict, model: Any | None = None, retriever_ctx: dict | None = None) -> tuple[dict, object, object]:
     """
     Main entrypoint.
 
