@@ -1166,7 +1166,18 @@ from prob_engine import (
     evaluate_request, generate_request, repair_request, verify_candidate,
     EvaluateRequest, GenerateRequest, RepairRequest, VerifyRequest,
 )
+from pipeline import DevMindPipeline, task_from_json
 
+_pipeline = DevMindPipeline()
+
+@app.post("/run")
+async def run_pipeline(payload: dict):
+    from pipeline import run_pipeline_from_json
+    return await run_pipeline_from_json(payload, pipeline=_pipeline)
+
+@app.post("/evaluate")
+async def evaluate_endpoint(req: EvaluateRequest):
+    return evaluate_request(req)
 @app.post("/evaluate")
 async def evaluate_endpoint(req: EvaluateRequest):
     return evaluate_request(req)
