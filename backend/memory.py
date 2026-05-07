@@ -288,3 +288,83 @@ def bootstrap_memory(repo: str, rows: list[dict[str, Any]]) -> None:
             outcome=row.get("outcome"),
             metadata=row.get("metadata") or {},
         )
+
+def record_strategy_result(
+    repo: str,
+    *,
+    pr_number: int,
+    strategy: str,
+    intent: str,
+    utility: float,
+    security: float,
+    verified: bool,
+    decision: str,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return store_event(
+        repo=repo,
+        event_type="strategy_result",
+        entity=f"pr#{pr_number}",
+        text=f"{intent}:{strategy}",
+        label=strategy,
+        risk=round(1.0 - utility, 4),
+        decision=decision,
+        outcome="verified" if verified else "unverified",
+        metadata={
+            "strategy": strategy,
+            "intent": intent,
+            "utility": utility,
+            "security": security,
+            "verified": verified,
+            "pr_number": pr_number,
+            **(metadata or {}),
+        },
+    )
+
+
+def strategy_priors(repo: str, intent: str) -> dict[str, float]:
+    """
+    Returns historical success rate per strategy for a given intent.
+    Used as Bayesian prior in safety_flow scoring.
+    """
+    events = load_events(repo)
+    relevant = [
+        e for e in events
+        if e.get("event_type") == "strategy_result"
+        and str(e.get("metadata", {}).get("intent", "")) == intent
+    ]
+    if not relevant:
+        return {}
+
+    totals: dict[str, list[float]] = defaultdict(list)
+    for e in relevant:
+        strategy = str(e.get("label") or "unknown")
+        utility = float(e.get("metadata", {}).get("utility", 0.5))
+        totals[strategy].append(utility)
+
+    return {
+        strategy: round(sum(vals) / len(vals), 4)
+        for strategy, vals in totals.items()
+    }
+
+
+def get_prior_for_prompt(repo: str, prompt: str) -> dict[str, Any]:
+    """
+    Given a prompt, infer intent and return strategy priors.
+    """
+    text = prompt.lower()
+    if any(k in text for k in ("secret", "token", "password", "api_key")):
+        intent = "secure_fix"
+    elif any(k in text for k in ("sql", "injection", "query")):
+        intent = "sql_fix"
+    elif any(k in text for k in ("auth", "permission", "rbac")):
+        intent = "auth_fix"
+    else:
+        intent = "general_fix"
+
+    priors = strategy_priors(repo, intent)
+    return {
+        "intent": intent,
+        "priors": priors,
+        "n_observations": len(priors),
+    }
