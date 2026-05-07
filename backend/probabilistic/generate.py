@@ -31,58 +31,46 @@ def _strategy_templates(mode: str) -> list[tuple[str, str]]:
 
 
 def _candidate_diff(prompt: str, context: ContextModel, strategy: str, explanation: str, idx: int) -> str:
-    files = context.files[:3]
-    file_hint = files[0] if files else "target_file.py"
-    lower = prompt.lower()
-    if any(k in lower for k in ("race", "concurrency", "thread", "lock")):
-        body = f"""diff --git a/{file_hint} b/{file_hint}
---- a/{file_hint}
-+++ b/{file_hint}
-@@
-- # unsafe critical section
-+ # {strategy}: protect critical section with explicit synchronization
-+ # TODO: replace with repo-specific lock / atomic primitive
-"""
-    elif any(k in lower for k in ("payment", "billing", "charge", "invoice")):
-        body = f"""diff --git a/{file_hint} b/{file_hint}
---- a/{file_hint}
-+++ b/{file_hint}
-@@
-- process_payment(payload)
-+ process_payment_with_idempotency(payload)
-+ # {strategy}: enforce deduplication and rollback-safe semantics
-"""
-    elif any(k in lower for k in ("auth", "token", "secret", "login")):
-        body = f"""diff --git a/{file_hint} b/{file_hint}
---- a/{file_hint}
-+++ b/{file_hint}
-@@
-- logger.info(user_token)
-+ logger.info("auth event")
-+ # {strategy}: avoid secret exposure and validate inputs
-"""
-    elif any(k in lower for k in ("performance", "latency", "slow", "optimize")):
-        body = f"""diff --git a/{file_hint} b/{file_hint}
---- a/{file_hint}
-+++ b/{file_hint}
-@@
-- for item in items:
--     compute(item)
-+ # {strategy}: batch or short-circuit hot-path work
-+ for item in items:
-+     compute(item)
-"""
-    else:
-        body = f"""diff --git a/{file_hint} b/{file_hint}
---- a/{file_hint}
-+++ b/{file_hint}
-@@
-- old_logic()
-+ new_logic()
-+ # {strategy}: conservative placeholder patch for evaluation pipeline
-"""
-    return body.strip() + f"\n# explanation: {explanation}\n# variant: {idx}"
+    import os
+    from groq import Groq
 
+    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+    file_context = ""
+    if context.files:
+        file_context = f"Files involved: {', '.join(context.files[:3])}"
+    if context.repo:
+        file_context += f"\nRepo: {context.repo}"
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"You are a security-focused code fix generator. "
+                    f"Strategy: {strategy}. {explanation} "
+                    f"Output ONLY a valid unified diff in this exact format:\n"
+                    f"diff --git a/filename b/filename\n"
+                    f"--- a/filename\n"
+                    f"+++ b/filename\n"
+                    f"@@ ... @@\n"
+                    f"- removed line\n"
+                    f"+ added line\n"
+                    f"No explanations, no markdown, no extra text. Only the diff."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Fix this issue: {prompt}\n\n{file_context}",
+            },
+        ],
+        max_tokens=600,
+        temperature=0.2,
+    )
+
+    diff = response.choices[0].message.content.strip()
+    return f"{diff}\n# strategy: {strategy}\n# variant: {idx}"
 
 def generate_request(req: GenerateRequest) -> GenerateResult:
     templates = _strategy_templates(req.mode)
