@@ -956,12 +956,12 @@ async def _job_worker() -> None:
                 mode="secure",
                 context={"repo": job.repo, "pr_number": job.pr_number},
             )
-            try:
+           try:
                 sf_result = await asyncio.to_thread(run_safety_flow, sf_req)
             except Exception as sf_exc:
                 log.warning("safety_flow_failed", extra={"exc": str(sf_exc), "trace_id": job.trace_id})
                 sf_result = None
-                if sf_result and sf_result.get("selected"):
+            if sf_result and sf_result.get("selected"):
                 try:
                     from memory import record_strategy_result
                     sel = sf_result["selected"]
