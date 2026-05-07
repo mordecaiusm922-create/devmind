@@ -943,15 +943,13 @@ class AnalysisJob:
 
 job_queue: asyncio.Queue[AnalysisJob] | None = None
 
-
 async def _job_worker() -> None:
     assert job_queue is not None
     while True:
         job = await job_queue.get()
-       try:
+        try:
             token = get_installation_token(job.installation_id)
             result = await _run_pipeline(job.repo, job.pr_number, trace_id=job.trace_id)
-            # Run safety_flow analysis
             sf_prompt = f"analyze security of PR #{job.pr_number} in {job.repo}"
             sf_req = SafetyFlowRequest(
                 prompt=sf_prompt,
@@ -965,12 +963,6 @@ async def _job_worker() -> None:
                 sf_result = None
             comment = _build_pr_comment(result, sf_result=sf_result)
             post_pr_comment(job.repo, job.pr_number, comment, token)
-    log.warning("safety_flow_failed", extra={"exc": str(sf_exc), "trace_id": job.trace_id})
-    sf_result = None
-
-comment = _build_pr_comment(result, sf_result=sf_result)
-            post_pr_comment(job.repo, job.pr_number, comment, token)
-
             re_obj = result.get("risk_engine", {})
             level = str(re_obj.get("band", "low"))
             score = re_obj.get("score", 0)
