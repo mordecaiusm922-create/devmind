@@ -948,21 +948,23 @@ async def _job_worker() -> None:
     assert job_queue is not None
     while True:
         job = await job_queue.get()
-        try:
+       try:
             token = get_installation_token(job.installation_id)
             result = await _run_pipeline(job.repo, job.pr_number, trace_id=job.trace_id)
-            # Run safety_flow analysis in parallel
-from safety_flow import SafetyFlowRequest, run_safety_flow
-pr_data = result.get("_pr_data", {})
-sf_prompt = f"analyze security of PR #{job.pr_number} in {job.repo}"
-sf_req = SafetyFlowRequest(
-    prompt=sf_prompt,
-    mode="secure",
-    context={"repo": job.repo, "pr_number": job.pr_number},
-)
-try:
-    sf_result = await asyncio.to_thread(run_safety_flow, sf_req)
-except Exception as sf_exc:
+            # Run safety_flow analysis
+            sf_prompt = f"analyze security of PR #{job.pr_number} in {job.repo}"
+            sf_req = SafetyFlowRequest(
+                prompt=sf_prompt,
+                mode="secure",
+                context={"repo": job.repo, "pr_number": job.pr_number},
+            )
+            try:
+                sf_result = await asyncio.to_thread(run_safety_flow, sf_req)
+            except Exception as sf_exc:
+                log.warning("safety_flow_failed", extra={"exc": str(sf_exc), "trace_id": job.trace_id})
+                sf_result = None
+            comment = _build_pr_comment(result, sf_result=sf_result)
+            post_pr_comment(job.repo, job.pr_number, comment, token)
     log.warning("safety_flow_failed", extra={"exc": str(sf_exc), "trace_id": job.trace_id})
     sf_result = None
 
