@@ -19,7 +19,8 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy application code
+# Copy application code — bump CACHEBUST to force full rebuild
+ARG CACHEBUST=2
 COPY . .
 # Create logs directory (volume can be mounted over this)
 RUN mkdir -p /app/logs
