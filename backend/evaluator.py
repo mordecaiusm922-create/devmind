@@ -163,7 +163,7 @@ _SECURITY_PATTERNS: Final[tuple[tuple[str, str], ...]] = (
     (r"CVE-\d{4}-\d+", "known_cve"),
 )
 
-_RISK_ORD: Final[dict[str, int]] = {"low": 0, "medium": 1, "high": 2}
+_RISK_ORD: Final[dict[str, int]] = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 _ORD_RISK: Final[dict[int, str]] = {v: k for k, v in _RISK_ORD.items()}
 
 _RE_FILENAME = re.compile(r"\b[\w/-]+\.(?:py|js|ts|tsx|jsx|go|rb|java|rs|sql|yaml|yml|json|toml|sh|cfg|ini|env|md)\b")
@@ -574,7 +574,7 @@ def compute_risk_score(
     i_score = _weighted_sum(i_signals, _I_WEIGHTS)
     c_score = _weighted_sum(c_signals, _C_WEIGHTS)
 
-    risk_score = _combine_scores(p_score, i_score, c_score, summary, ev)
+    risk_score = _combine_scores(p_score, i_score, c_score, summary, ev, pr_data)
     risk_band, risk_label = _score_to_band(risk_score)
     top_factors = _build_top_factors(p_signals, i_signals)
     triage, merge_block = _build_triage(summary, risk_score)
@@ -732,7 +732,8 @@ def combine_probabilities(
     if model_probability is None:
         final_probability = heuristic_probability
         source = "heuristic_only"
-        uncertainty = abs(final_probability - 0.5)
+        margin = abs(final_probability - threshold) / max(threshold, 1.0 - threshold)
+        uncertainty = 1.0 - margin
     else:
         model_probability = _clamp01(model_probability)
         final_probability = _clamp01(
@@ -819,11 +820,11 @@ def _extract_p_signals(pre: PreAnalysis, pr_data: dict) -> dict[str, float]:
 def _extract_i_signals(pre: PreAnalysis, summary: dict, pr_data: dict) -> dict[str, float]:
     signals: dict[str, float] = {}
 
-    floor_key = {"high": "floor_high", "medium": "floor_medium"}.get(pre.risk_floor, "floor_low")
+    floor_key = {"critical": "floor_high", "high": "floor_high", "medium": "floor_medium"}.get(pre.risk_floor, "floor_low")
     signals[floor_key] = 1.0
 
     llm_level = str((summary.get("risk_note") or {}).get("level", "low")).lower()
-    llm_key = {"high": "llm_high", "medium": "llm_medium"}.get(llm_level, "llm_low")
+    llm_key = {"critical": "llm_high", "high": "llm_high", "medium": "llm_medium"}.get(llm_level, "llm_low")
     signals[llm_key] = 1.0
 
     additions = _safe_float(pr_data.get("additions", 0))
@@ -848,7 +849,7 @@ def _extract_i_signals(pre: PreAnalysis, summary: dict, pr_data: dict) -> dict[s
     if summary.get("attack_path"):
         signals["attack_path_present"] = 1.0
 
-    if summary.get("ci_cd_risks"):
+    if _has_grounded_ci_cd_risk(summary, pr_data):
         signals["ci_cd_risk_present"] = 1.0
 
     return signals
@@ -857,7 +858,7 @@ def _extract_i_signals(pre: PreAnalysis, summary: dict, pr_data: dict) -> dict[s
 def _extract_c_signals(pre: PreAnalysis, ev: Evaluation, pr_data: dict) -> dict[str, float]:
     signals: dict[str, float] = {}
 
-    cs = ev.confidence_score
+    cs = min(ev.confidence_score, ev.specificity_score + 0.15)
     if cs >= CONFIDENCE_HIGH:
         signals["specificity_high"] = 1.0
     elif cs >= CONFIDENCE_MED:
@@ -893,7 +894,7 @@ def _weighted_sum(signals: dict[str, float], weights: dict[str, float]) -> float
     if not signals:
         return 0.0
     active = [(max(0.0, min(1.0, v)), weights.get(k, 0.0)) for k, v in signals.items()]
-    denom = sum(abs(w) for _, w in active if w != 0)
+    denom = sum(w for w in weights.values() if w > 0)
     if denom <= 0:
         return 0.0
     return max(0.0, min(1.0, sum(v * w for v, w in active) / denom))
@@ -905,6 +906,7 @@ def _combine_scores(
     c_score: float,
     summary: dict,
     ev: Evaluation,
+    pr_data: dict,
 ) -> int:
     base = 0.50 * p_score + 0.35 * i_score + 0.15 * c_score
 
@@ -917,23 +919,58 @@ def _combine_scores(
 
     vulns = summary.get("vulnerabilities") or []
     attack = summary.get("attack_path")
-    ci_cd = summary.get("ci_cd_risks") or []
+    grounded_ci_cd = _has_grounded_ci_cd_risk(summary, pr_data)
     evidence = summary.get("evidence") or []
     llm_level = str((summary.get("risk_note") or {}).get("level", "low")).lower()
+    severities = {str(v.get("severity", "low")).lower() for v in vulns if isinstance(v, dict)}
 
-    if not evidence and (vulns or ci_cd):
+    if not evidence and (vulns or grounded_ci_cd):
         base -= 0.08
 
-    if not vulns and not attack and not ci_cd:
-        base = min(base, 0.69)
+    if not vulns and not attack and not grounded_ci_cd:
+        base = min(base, 0.45)
 
     if llm_level == "low" and not vulns:
-        base = min(base, 0.49)
+        base = min(base, 0.29)
 
-    if ci_cd and not vulns and not attack and not evidence:
+    if grounded_ci_cd and not vulns and not attack and not evidence:
         base = min(base, 0.74)
 
+    if "critical" in severities:
+        base = max(base, 0.85)
+    elif "high" in severities:
+        base = max(base, 0.65)
+    elif "medium" in severities:
+        base = max(base, 0.45)
+
+    if attack:
+        base = max(base, 0.70)
+
     return int(round(max(0.0, min(1.0, base)) * 100))
+
+
+def _has_grounded_ci_cd_risk(summary: dict, pr_data: dict) -> bool:
+    risks = summary.get("ci_cd_risks") or []
+    if not risks:
+        return False
+
+    files = pr_data.get("files", []) if isinstance(pr_data, dict) else []
+    workflow_text = " ".join(
+        f"{f.get('filename', '')} {f.get('diff') or ''}"
+        for f in files
+        if ".github/workflows/" in str(f.get("filename", "")).lower()
+    )
+    if re.search(r"\b(pull_request_target|workflow_run|secrets\.|permissions:|GITHUB_TOKEN)\b", workflow_text, re.IGNORECASE):
+        return True
+
+    for risk in risks:
+        line = str(risk.get("line", "") or "").lower()
+        trigger = str(risk.get("trigger", "") or "").lower()
+        snippet = str(risk.get("evidence_snippet", "") or "")
+        if ".github/workflows/" in line and re.search(r"\b(pull_request_target|workflow_run|secrets\.|permissions:|GITHUB_TOKEN)\b", trigger + " " + snippet, re.IGNORECASE):
+            return True
+
+    return False
 
 
 def _score_to_band(score: int) -> tuple[str, str]:

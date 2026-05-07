@@ -106,7 +106,7 @@ class EvaluationConfig:
         "alignment": 0.08,
     })
     beta: float = 1.0
-    approval_threshold: float = 0.72
+    approval_threshold: float = 0.62
     verification_threshold: float = 0.60
     uncertainty_threshold: float = 0.35
 
@@ -232,10 +232,12 @@ class Evaluator:
         rationale.extend(self._intent_rationale(intent))
 
         # Feature extraction
-        has_env_read = "os.environ.get" in diff or "environment" in explanation
+        all_text = " ".join((prompt, diff, explanation, strategy))
+        has_env_read = re.search(r"\b(os\.environ(?:\.get)?|os\.getenv|environ\.get)\b", diff) is not None
         has_fail_fast = self._has_fail_fast(diff)
-        has_secret_handling = "secret_key" in prompt or "secret" in prompt or "token" in prompt
-        has_auth_context = any(x in prompt for x in ("auth", "authentication", "authorization", "permission", "rbac"))
+        has_secret_handling = any(x in all_text for x in ("secret_key", "secret", "token", "api_key", "password"))
+        has_auth_context = any(x in all_text for x in ("auth", "authentication", "authorization", "permission", "rbac", "policy", "is_admin"))
+        has_sql_context = any(x in all_text for x in ("sql", "query", "cursor.execute", "select ", "injection", "database"))
         minimal = any(x in strategy for x in ("minimal", "small"))
         balanced = any(x in strategy for x in ("balanced",))
         secure = any(x in strategy for x in ("secure", "defense"))
@@ -243,6 +245,11 @@ class Evaluator:
         performance_hint = any(x in strategy for x in ("perf", "fast"))
         imports_os = re.search(r"\bimport\s+os\b", diff) is not None
         touches_settings = "settings.py" in diff or "settings" in prompt
+        hardcoded_secret = self._has_hardcoded_secret(diff)
+        unsafe_sql = self._has_unsafe_sql(diff)
+        safe_sql = self._has_parameterized_sql(diff)
+        removes_auth_check = self._removes_auth_check(diff)
+        has_policy_check = self._has_policy_check(diff)
 
         # Domain-specific scoring
         if has_secret_handling:
@@ -277,6 +284,45 @@ class Evaluator:
             catastrophic_risk += 0.03
             security += 0.05
             rationale.append("auth-related path")
+
+            if removes_auth_check:
+                correctness -= 0.30
+                security -= 0.35
+                robustness -= 0.10
+                catastrophic_risk += 0.35
+                uncertainty += 0.08
+                rationale.append("removes or bypasses authorization check")
+
+            if has_policy_check:
+                correctness += 0.25
+                security += 0.25
+                robustness += 0.10
+                catastrophic_risk -= 0.08
+                rationale.append("uses explicit authorization policy")
+
+            if has_fail_fast:
+                correctness += 0.05
+                robustness += 0.07
+                rationale.append("fails closed on authorization failure")
+
+        if has_sql_context:
+            risk_tags.append("sql")
+
+            if unsafe_sql:
+                correctness -= 0.25
+                security -= 0.35
+                robustness -= 0.08
+                catastrophic_risk += 0.30
+                uncertainty += 0.08
+                rationale.append("raw SQL is built from interpolated input")
+
+            if safe_sql:
+                correctness += 0.22
+                security += 0.30
+                robustness += 0.08
+                catastrophic_risk -= 0.10
+                uncertainty -= 0.03
+                rationale.append("uses parameterized SQL")
 
         if imports_os:
             maintainability += 0.02
@@ -330,11 +376,12 @@ class Evaluator:
             rationale.append("small patch rationale present")
 
         # Penalties
-        if "hardcoded_secret_key" in diff:
+        if hardcoded_secret:
             correctness -= 0.25
             security -= 0.30
             catastrophic_risk += 0.22
             risk_tags.append("hardcoded_secret")
+            rationale.append("introduces hardcoded secret material")
 
         if "os.environ.get" not in diff and has_secret_handling:
             security -= 0.08
@@ -491,14 +538,44 @@ class Evaluator:
 
     def _has_fail_fast(self, diff: str) -> bool:
         d = diff.lower()
-        return ("raise valueerror" in d) or ("raise runtimeerror" in d) or ("assert " in d)
+        return re.search(r"\braise\s+\w*error\b", d) is not None or ("assert " in d)
+
+    def _has_hardcoded_secret(self, diff: str) -> bool:
+        return re.search(
+            r"(?im)^\+?\s*(SECRET_KEY|PASSWORD|TOKEN|API_KEY|PRIVATE_KEY)\s*=\s*['\"][^'\"]{8,}['\"]",
+            diff,
+        ) is not None
+
+    def _has_unsafe_sql(self, diff: str) -> bool:
+        if self._has_parameterized_sql(diff):
+            return False
+        d = diff.lower()
+        if re.search(r"execute\s*\([^,\n]*(\+|%|\.format\(|f['\"])", d):
+            return True
+        if re.search(r"select\s+.*\+\s*\w+", d):
+            return True
+        return False
+
+    def _has_parameterized_sql(self, diff: str) -> bool:
+        d = diff.lower()
+        return re.search(r"execute\s*\([^,\n]+,\s*(\[|\(|\{)", d) is not None
+
+    def _removes_auth_check(self, diff: str) -> bool:
+        d = diff.lower()
+        removes_guard = re.search(r"(?m)^-\s*(if|raise|return).*?(is_admin|permission|authorize|can_|policy|rbac)", d) is not None
+        added_sensitive_action = re.search(r"(?m)^\+\s*return\s+\w*(delete|update|transfer|charge|grant|revoke)", d) is not None
+        return bool(removes_guard and added_sensitive_action)
+
+    def _has_policy_check(self, diff: str) -> bool:
+        d = diff.lower()
+        return re.search(r"(?m)^\+\s*if\s+not\s+.*?(policy\.|can_|authorize|has_permission|is_admin)", d) is not None
 
     def _uncertainty_band(self, uncertainty: float, base: float = 0.08) -> float:
         return min(0.25, base + uncertainty * 0.18)
 
     def _requires_verification(self, task: TaskInput, score: CandidateScore) -> bool:
         mode = (task.mode or "balanced").lower()
-        if score.catastrophic_risk >= 0.05:
+        if score.catastrophic_risk >= 0.25:
             return True
         if score.uncertainty >= self.config.uncertainty_threshold:
             return True
@@ -516,7 +593,7 @@ class Evaluator:
             return True
         if score.security < 0.82:
             return True
-        if score.regression_risk > 0.20:
+        if score.regression_risk > 0.30:
             return True
         if mode == "critical" and score.security < self.config.critical_mode_security_floor:
             return True

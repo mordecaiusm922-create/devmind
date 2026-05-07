@@ -1161,12 +1161,12 @@ async def github_webhook(
         raise _err(429, ErrorCode.RATE_LIMITED, "Analysis queue is full.", trace_id=trace_id)
 
     return {"accepted": True, "repo": repo, "pr": pr_number, "action": action, "trace_id": trace_id}
-# DESPUÉS — pega esto en su lugar:
 from prob_engine import (
     generate_request, repair_request, verify_candidate,
     GenerateRequest, RepairRequest, VerifyRequest,
 )
 from evaluate import evaluate_payload
+from safety_flow import SafetyFlowRequest, run_safety_flow
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
 
@@ -1185,6 +1185,10 @@ class EvaluateRequest(BaseModel):
 async def evaluate_endpoint(req: EvaluateRequest):
     return evaluate_payload(req.model_dump())
 
+@app.post("/safety-flow", dependencies=[Depends(_require_api_key)])
+async def safety_flow_endpoint(req: SafetyFlowRequest):
+    return run_safety_flow(req)
+
 @app.post("/generate")
 async def generate_endpoint(req: GenerateRequest):
     return generate_request(req)
@@ -1195,8 +1199,4 @@ async def repair_endpoint(req: RepairRequest):
 
 @app.post("/verify")
 async def verify_endpoint(req: VerifyRequest):
-    return verify_candidate(req.code, req.properties)
-
-@app.post("/verify")
-async def verify_endpoint(req: VerifyRequest):
-    return verify_candidate(req.code, req.properties)
+    return verify_candidate(req)
