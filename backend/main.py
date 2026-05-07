@@ -1162,7 +1162,7 @@ async def github_webhook(
 
     return {"accepted": True, "repo": repo, "pr": pr_number, "action": action, "trace_id": trace_id}
 # ── Probabilistic Engine endpoints ──────────────────────────────────────────
-from probabilistic import (
+from prob_engine import (
     evaluate_request, generate_request, repair_request, verify_candidate,
     EvaluateRequest, GenerateRequest, RepairRequest, VerifyRequest,
 )
