@@ -47,6 +47,12 @@ from github_app import (
     verify_webhook_signature,
 )
 from logger import read_recent_logs
+from prob_engine import (
+    generate_request, repair_request, verify_candidate,
+    GenerateRequest, RepairRequest, VerifyRequest,
+)
+from evaluate import evaluate_payload
+from safety_flow import SafetyFlowRequest, run_safety_flow
 from parser import parse_pr_file
 
 load_dotenv()
@@ -1161,14 +1167,7 @@ async def github_webhook(
         raise _err(429, ErrorCode.RATE_LIMITED, "Analysis queue is full.", trace_id=trace_id)
 
     return {"accepted": True, "repo": repo, "pr": pr_number, "action": action, "trace_id": trace_id}
-from prob_engine import (
-    generate_request, repair_request, verify_candidate,
-    GenerateRequest, RepairRequest, VerifyRequest,
-)
-from evaluate import evaluate_payload
-from safety_flow import SafetyFlowRequest, run_safety_flow
-from pydantic import BaseModel
-from typing import Any, Dict, List, Optional
+
 
 class EvaluateRequest(BaseModel):
     prompt: str
