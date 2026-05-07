@@ -1161,26 +1161,29 @@ async def github_webhook(
         raise _err(429, ErrorCode.RATE_LIMITED, "Analysis queue is full.", trace_id=trace_id)
 
     return {"accepted": True, "repo": repo, "pr": pr_number, "action": action, "trace_id": trace_id}
-# ── Probabilistic Engine endpoints ──────────────────────────────────────────
+# DESPUÉS — pega esto en su lugar:
 from prob_engine import (
-    evaluate_request, generate_request, repair_request, verify_candidate,
-    EvaluateRequest, GenerateRequest, RepairRequest, VerifyRequest,
+    generate_request, repair_request, verify_candidate,
+    GenerateRequest, RepairRequest, VerifyRequest,
 )
-from pipeline import DevMindPipeline, task_from_json
+from evaluate import evaluate_payload
+from pydantic import BaseModel
+from typing import Any, Dict, List, Optional
 
-_pipeline = DevMindPipeline()
-
-@app.post("/run")
-async def run_pipeline(payload: dict):
-    from pipeline import run_pipeline_from_json
-    return await run_pipeline_from_json(payload, pipeline=_pipeline)
+class EvaluateRequest(BaseModel):
+    prompt: str
+    candidates: List[Dict[str, Any]] = []
+    context: Dict[str, Any] = {}
+    mode: str = "balanced"
+    intent: Dict[str, Any] = {}
+    evidence: Dict[str, Any] = {}
+    history: List[Dict[str, Any]] = []
+    files: List[Dict[str, Any]] = []
+    repo: Optional[str] = None
 
 @app.post("/evaluate")
 async def evaluate_endpoint(req: EvaluateRequest):
-    return evaluate_request(req)
-@app.post("/evaluate")
-async def evaluate_endpoint(req: EvaluateRequest):
-    return evaluate_request(req)
+    return evaluate_payload(req.model_dump())
 
 @app.post("/generate")
 async def generate_endpoint(req: GenerateRequest):
@@ -1189,6 +1192,10 @@ async def generate_endpoint(req: GenerateRequest):
 @app.post("/repair")
 async def repair_endpoint(req: RepairRequest):
     return repair_request(req)
+
+@app.post("/verify")
+async def verify_endpoint(req: VerifyRequest):
+    return verify_candidate(req.code, req.properties)
 
 @app.post("/verify")
 async def verify_endpoint(req: VerifyRequest):
