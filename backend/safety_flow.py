@@ -47,8 +47,16 @@ _REMOVED_AUTH_RE = re.compile(
 
 def run_safety_flow(req: SafetyFlowRequest) -> dict[str, Any]:
     candidates = [_candidate_to_dict(c, i) for i, c in enumerate(req.candidates)]
+    prior_data: dict[str, Any] = {}
+    if req.repo:
+        try:
+            from memory import get_prior_for_prompt
+            prior_data = get_prior_for_prompt(req.repo, req.prompt)
+        except Exception:
+            pass
     if not candidates:
         candidates = _generate_candidates(req.prompt, req.context, req.n_candidates)
+        
 
     payload = {
         "prompt": req.prompt,
@@ -94,6 +102,7 @@ def run_safety_flow(req: SafetyFlowRequest) -> dict[str, Any]:
         "ranking": ranking,
         "selected": selected,
         "decision": decision,
+        "prior": prior_data,
     }
 
 

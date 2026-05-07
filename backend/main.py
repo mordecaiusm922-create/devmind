@@ -961,6 +961,22 @@ async def _job_worker() -> None:
             except Exception as sf_exc:
                 log.warning("safety_flow_failed", extra={"exc": str(sf_exc), "trace_id": job.trace_id})
                 sf_result = None
+                if sf_result and sf_result.get("selected"):
+                try:
+                    from memory import record_strategy_result
+                    sel = sf_result["selected"]
+                    record_strategy_result(
+                        job.repo,
+                        pr_number=job.pr_number,
+                        strategy=str(sel.get("candidate", "unknown")),
+                        intent=sf_result.get("prior", {}).get("intent", "general_fix"),
+                        utility=float(sel.get("utility", 0)),
+                        security=float(sel.get("security", 0)),
+                        verified=bool(sel.get("verified", False)),
+                        decision=str(sf_result.get("decision", {}).get("action", "unknown")),
+                    )
+                except Exception as mem_exc:
+                    log.warning("memory_record_failed", extra={"exc": str(mem_exc)})
             comment = _build_pr_comment(result, sf_result=sf_result)
             post_pr_comment(job.repo, job.pr_number, comment, token)
             re_obj = result.get("risk_engine", {})
