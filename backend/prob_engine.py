@@ -107,7 +107,7 @@ def _score_candidate(
         correctness += 0.10          # no hardcoded secret introduced
     if domain in ("auth", "payments") and _has_fail_fast(diff):
         correctness += 0.10          # domain-specific: fail-fast is correct
-    correctness = min(correctness, 1.0)
+    correctness = min(correctness, 0.95)
 
     # ── security ──
     security = 0.50
@@ -120,7 +120,7 @@ def _score_candidate(
     mitigation_terms = ["sanitiz", "validat", "encrypt", "hash", "escape", "mitigat"]
     if any(t in text.lower() for t in mitigation_terms):
         security += 0.10
-    security = min(security, 1.0)
+    security = min(security, 0.94)
 
     # ── robustness (separate from correctness) ──
     robustness = 0.50
@@ -128,7 +128,7 @@ def _score_candidate(
         robustness += 0.25           # explicit error > silent None
     if "try" in diff and "except" in diff:
         robustness += 0.10
-    robustness = min(robustness, 1.0)
+    robustness = min(robustness, 0.85)
 
     # ── performance ──
     performance = 0.60
