@@ -577,7 +577,7 @@ def _score_to_merge_state(level: str) -> str:
     return "failure" if level in ("critical", "high") else "success"
 
 
-def _build_pr_comment(result: dict[str, Any]) -> str:
+def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> str:
     s = result.get("summary", {})
     re_obj = result.get("risk_engine", {})
     level = re_obj.get("band", "low")
@@ -618,6 +618,17 @@ def _build_pr_comment(result: dict[str, Any]) -> str:
         f"| Confidence | `{breakdown.get('confidence', 0)}` |"
     )
 
+    sf_section = ""
+    if sf_result and sf_result.get("selected"):
+        sel = sf_result["selected"]
+        dec = sf_result.get("decision", {})
+        sf_section = f"""
+### Safety Flow
+**Decision:** `{dec.get('action', 'N/A')}` — Candidate `{sel.get('candidate', 'N/A')}`
+**Risk-adjusted utility:** `{sel.get('risk_adjusted_utility', 0)}`
+**Security:** `{sel.get('security', 0)}`
+**Rationale:** {', '.join(sel.get('rationale', [])[:3])}
+"""
     return f"""## {emoji} DevMind Risk Analysis
 
 **{triage}** — Risk Score `{score}/100` — **{level.upper()}**
@@ -636,7 +647,7 @@ def _build_pr_comment(result: dict[str, Any]) -> str:
 **What:** {s.get("what", "N/A")}
 **Impact:** {s.get("impact", "N/A")}
 **Review focus:** {s.get("review_focus", "N/A")}
-
+{sf_section}
 ---
 _Analyzed by DevMind • trace `{result.get("trace_id", "")}`_
 """
@@ -940,7 +951,22 @@ async def _job_worker() -> None:
         try:
             token = get_installation_token(job.installation_id)
             result = await _run_pipeline(job.repo, job.pr_number, trace_id=job.trace_id)
-            comment = _build_pr_comment(result)
+            # Run safety_flow analysis in parallel
+from safety_flow import SafetyFlowRequest, run_safety_flow
+pr_data = result.get("_pr_data", {})
+sf_prompt = f"analyze security of PR #{job.pr_number} in {job.repo}"
+sf_req = SafetyFlowRequest(
+    prompt=sf_prompt,
+    mode="secure",
+    context={"repo": job.repo, "pr_number": job.pr_number},
+)
+try:
+    sf_result = await asyncio.to_thread(run_safety_flow, sf_req)
+except Exception as sf_exc:
+    log.warning("safety_flow_failed", extra={"exc": str(sf_exc), "trace_id": job.trace_id})
+    sf_result = None
+
+comment = _build_pr_comment(result, sf_result=sf_result)
             post_pr_comment(job.repo, job.pr_number, comment, token)
 
             re_obj = result.get("risk_engine", {})
