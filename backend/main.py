@@ -580,13 +580,15 @@ def _score_to_merge_state(level: str) -> str:
 def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> str:
     s = result.get("summary", {})
     re_obj = result.get("risk_engine", {})
-    level = re_obj.get("band", "low")
-    score = re_obj.get("score", 0)
+    unified_risk = result.get("risk", {})
+    unified_decision = result.get("decision", {})
+    level = unified_risk.get("band", re_obj.get("band", "low"))
+    score = unified_risk.get("score", re_obj.get("score", 0))
     top_factors = re_obj.get("top_factors", [])
     vulns = s.get("vulnerabilities") or []
-    triage = s.get("triage", "P3")
-    merge_block = s.get("merge_blocker", False)
-    merge_reason = s.get("merge_block_reason")
+    triage = result.get("triage", s.get("triage", "P3"))
+    merge_block = unified_decision.get("action") == "BLOCK" or s.get("merge_blocker", False)
+    merge_reason = unified_decision.get("reason") or s.get("merge_block_reason")
     emoji = {"critical": "CRITICAL", "high": "HIGH", "medium": "MEDIUM", "low": "LOW", "minimal": "MINIMAL"}.get(
         level,
         "LOW",
@@ -607,12 +609,14 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
 
     factors_md = "\n".join(f"- {f}" for f in top_factors) if top_factors else "- None detected"
     vulns_md = "\n\n".join(vuln_lines) if vuln_lines else "_No vulnerabilities detected_"
-    blocker_md = "Merge blocked. Critical risk detected." if merge_block else ""
+    blocker_md = f"Merge blocked. {merge_reason}" if merge_block else ""
     breakdown = re_obj.get("breakdown", {})
     scores_md = (
         f"| Metric | Score |\n"
         f"|--------|-------|\n"
         f"| Risk Score | `{score}/100` |\n"
+        f"| Decision | `{unified_decision.get('action', 'N/A')}` |\n"
+        f"| Exploit probability | `{unified_risk.get('p_exploit', 0)}` |\n"
         f"| Probability | `{breakdown.get('probability', 0)}` |\n"
         f"| Impact | `{breakdown.get('impact', 0)}` |\n"
         f"| Confidence | `{breakdown.get('confidence', 0)}` |"
@@ -627,6 +631,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
 **Decision:** `{dec.get('action', 'N/A')}` — Candidate `{sel.get('candidate', 'N/A')}`
 **Risk-adjusted utility:** `{sel.get('risk_adjusted_utility', 0)}`
 **Security:** `{sel.get('security', 0)}`
+**Verified:** `{sel.get('verified', False)}`
 **Rationale:** {', '.join(sel.get('rationale', [])[:3])}
 """
     return f"""## {emoji} DevMind Risk Analysis
@@ -840,6 +845,8 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         features=features,
         parsed_fns=parsed_functions,
     )
+    safety_flow = _run_pr_safety_flow(repo, pr_number, pr_data, response, trace_id)
+    _attach_unified_decision_v2(response, safety_flow)
     _metric("analysis_done")
     return response
 
@@ -926,6 +933,437 @@ def _build_response(
     return response
 
 
+def _run_pr_safety_flow(
+    repo: str,
+    pr_number: int,
+    pr_data: dict[str, Any],
+    response: dict[str, Any],
+    trace_id: str,
+) -> dict[str, Any] | None:
+    req = SafetyFlowRequest(
+        prompt=_build_pr_safety_prompt(repo, pr_number, pr_data, response),
+        mode="secure",
+        repo=repo,
+        context={
+            "repo": repo,
+            "pr_number": pr_number,
+            "title": pr_data.get("title", ""),
+            "filename": _first_relevant_filename(response, pr_data),
+            "risk_engine": response.get("risk_engine", {}),
+            "triage": response.get("summary", {}).get("triage"),
+            "merge_blocker": response.get("summary", {}).get("merge_blocker", False),
+            "vulnerabilities": response.get("summary", {}).get("vulnerabilities", []),
+            "ci_cd_risks": response.get("summary", {}).get("ci_cd_risks", []),
+            "permissions_analysis": response.get("summary", {}).get("permissions_analysis", {}),
+        },
+        intent={"label": "pr_decision", "confidence": 0.82},
+        evidence={
+            "summary_evidence": response.get("summary", {}).get("evidence", []),
+            "risk_engine": response.get("risk_engine", {}),
+            "pre_analysis": response.get("pre_analysis", {}),
+        },
+        files=_normalize_pr_files_for_safety(pr_data),
+        n_candidates=3,
+        max_repair_attempts=1,
+    )
+    try:
+        return run_safety_flow(req)
+    except Exception as exc:
+        log.warning("safety_flow_failed", extra={"exc": str(exc), "trace_id": trace_id})
+        return None
+
+
+def _build_pr_safety_prompt(
+    repo: str,
+    pr_number: int,
+    pr_data: dict[str, Any],
+    response: dict[str, Any],
+) -> str:
+    summary = response.get("summary", {})
+    vulns = summary.get("vulnerabilities") or []
+    ci_cd = summary.get("ci_cd_risks") or []
+
+    vuln_lines = [
+        (
+            f"- {v.get('severity', 'unknown')} {v.get('type', 'vulnerability')} "
+            f"at {v.get('location', '-')}: {v.get('description', '')}. "
+            f"Fix: {v.get('fix', '')}"
+        )
+        for v in vulns
+    ]
+    ci_lines = [
+        (
+            f"- trigger={r.get('trigger', '-')}; severity={r.get('severity', '-')}; "
+            f"risk={r.get('risk', '')}; line={r.get('line', '-')}"
+        )
+        for r in ci_cd
+    ]
+
+    return "\n".join(
+        [
+            f"Analyze and repair security risk for PR {repo}#{pr_number}: {pr_data.get('title', '')}",
+            f"What changed: {summary.get('what', '')}",
+            f"Why: {summary.get('why', '')}",
+            f"Impact: {summary.get('impact', '')}",
+            f"Review focus: {summary.get('review_focus', '')}",
+            "Vulnerabilities:",
+            "\n".join(vuln_lines) if vuln_lines else "- none reported",
+            "CI/CD risks:",
+            "\n".join(ci_lines) if ci_lines else "- none reported",
+            "Generate fix candidates, verify safety properties, and decide whether this PR should be blocked, reviewed, or allowed.",
+        ]
+    )
+
+
+def _normalize_pr_files_for_safety(pr_data: dict[str, Any]) -> list[dict[str, Any]]:
+    files = []
+    for f in pr_data.get("files", []) or []:
+        filename = str(f.get("filename") or "")
+        if not filename:
+            continue
+        files.append(
+            {
+                "filename": filename,
+                "diff": str(f.get("diff") or f.get("patch") or f.get("raw_patch") or ""),
+                "raw_patch": str(f.get("raw_patch") or f.get("diff") or ""),
+                "status": str(f.get("status") or "modified"),
+                "additions": int(f.get("additions") or 0),
+                "deletions": int(f.get("deletions") or 0),
+            }
+        )
+    return files
+
+
+def _first_relevant_filename(response: dict[str, Any], pr_data: dict[str, Any]) -> str:
+    summary = response.get("summary", {})
+    for item in summary.get("vulnerabilities") or []:
+        location = str(item.get("location") or "")
+        if ":" in location:
+            return location.split(":", 1)[0]
+        if location:
+            return location
+    for item in summary.get("key_changes") or []:
+        text = str(item)
+        if ":" in text:
+            candidate = text.split(":", 1)[0].strip()
+            if "." in candidate:
+                return candidate
+    for f in pr_data.get("files", []) or []:
+        filename = str(f.get("filename") or "")
+        if filename:
+            return filename
+    return "app.py"
+
+
+def _attach_unified_decision_v2(response: dict[str, Any], safety_flow: dict[str, Any] | None) -> None:
+    unified = _build_unified_decision_v2(response, safety_flow)
+    response["decision"] = unified["decision"]
+    response["risk"] = unified["risk"]
+    response["fix_candidates"] = unified["fix_candidates"]
+    response["triage"] = unified["triage"]
+    response["safety_flow"] = unified["safety_flow"]
+
+    summary = response.setdefault("summary", {})
+    summary["triage"] = unified["triage"]
+    if unified["decision"]["action"] == "BLOCK":
+        summary["merge_blocker"] = True
+        summary["merge_block_reason"] = unified["decision"]["reason"]
+
+
+def _build_unified_decision_v2(
+    response: dict[str, Any],
+    safety_flow: dict[str, Any] | None,
+) -> dict[str, Any]:
+    summary = response.get("summary", {})
+    risk_engine = response.get("risk_engine", {})
+    vulns = summary.get("vulnerabilities") or []
+    ci_cd_risks = summary.get("ci_cd_risks") or []
+    legacy_score = _as_int(risk_engine.get("score"), 0)
+    legacy_probability = _as_float((risk_engine.get("breakdown") or {}).get("probability"), 0.0)
+
+    selected = (safety_flow or {}).get("selected") or {}
+    sf_decision = (safety_flow or {}).get("decision") or {}
+    sf_score = _safety_flow_risk_score(selected, sf_decision)
+    severity_floor, severity_reason = _finding_severity_floor(vulns, ci_cd_risks, summary)
+    calibrated_score = max(legacy_score, sf_score, severity_floor)
+
+    verified = bool(selected.get("verified", False))
+    has_findings = bool(vulns or ci_cd_risks)
+    if verified and not has_findings and sf_decision.get("action") == "approve":
+        calibrated_score = max(0, calibrated_score - 8)
+
+    calibrated_score = max(0, min(100, calibrated_score))
+    action, reason = _unified_action(
+        calibrated_score=calibrated_score,
+        legacy_merge_blocker=bool(summary.get("merge_blocker", False)),
+        severity_floor=severity_floor,
+        severity_reason=severity_reason,
+        safety_decision=str(sf_decision.get("action") or ""),
+        selected=selected,
+        has_findings=has_findings,
+    )
+    triage = _triage_for_unified_decision(action, calibrated_score, severity_floor)
+    confidence = _unified_confidence(response, safety_flow, calibrated_score)
+    p_exploit = _calibrated_exploit_probability(
+        legacy_probability=legacy_probability,
+        calibrated_score=calibrated_score,
+        selected=selected,
+        vulns=vulns,
+        ci_cd_risks=ci_cd_risks,
+    )
+
+    return {
+        "decision": {
+            "action": action,
+            "confidence": confidence,
+            "reason": reason,
+            "merge_blocker": action == "BLOCK",
+        },
+        "risk": {
+            "score": calibrated_score,
+            "band": _band_for_score(calibrated_score),
+            "p_exploit": p_exploit,
+            "source_scores": {
+                "analyze_pr": legacy_score,
+                "safety_flow": sf_score,
+                "finding_floor": severity_floor,
+            },
+            "calibration": "max(analyze_pr, safety_flow_expected_loss, severity_floor)",
+        },
+        "fix_candidates": _extract_fix_candidates(safety_flow),
+        "triage": triage,
+        "safety_flow": _compact_safety_flow(safety_flow),
+    }
+
+
+def _safety_flow_risk_score(selected: dict[str, Any], decision: dict[str, Any]) -> int:
+    if not selected:
+        return 0
+
+    expected_loss = _as_float(selected.get("expected_loss"), None)
+    if expected_loss is None:
+        expected_loss = 1.0 - _as_float(selected.get("risk_adjusted_utility"), 0.0)
+
+    score = int(round(max(0.0, min(1.0, expected_loss)) * 100))
+    action = str(decision.get("action") or "").lower()
+    if action == "reject":
+        score = max(score, 90)
+    elif action == "revise":
+        score = max(score, 70)
+    elif action == "needs_verification":
+        score = max(score, 55)
+
+    if selected.get("critical_violations"):
+        score = max(score, 88)
+    elif selected.get("violations"):
+        score = max(score, 62)
+
+    return max(0, min(100, score))
+
+
+def _finding_severity_floor(
+    vulns: list[dict[str, Any]],
+    ci_cd_risks: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> tuple[int, str]:
+    floor = 0
+    reason = "No security findings require a floor."
+
+    for vuln in vulns:
+        severity = str(vuln.get("severity", "low")).lower()
+        if severity == "critical" and floor < 88:
+            floor, reason = 88, "Critical vulnerability reported by analyze-pr."
+        elif severity == "high" and floor < 74:
+            floor, reason = 74, "High vulnerability reported by analyze-pr."
+        elif severity == "medium" and floor < 55:
+            floor, reason = 55, "Medium vulnerability reported by analyze-pr."
+        elif severity == "low" and floor < 32:
+            floor, reason = 32, "Low vulnerability reported by analyze-pr."
+
+    for risk in ci_cd_risks:
+        severity = str(risk.get("severity", "low")).lower()
+        trigger = str(risk.get("trigger", "")).lower()
+        if trigger in {"pull_request_target", "workflow_run"} and risk.get("secrets_exposed"):
+            if floor < 86:
+                floor, reason = 86, "CI/CD risk exposes secrets across a trust boundary."
+        elif severity == "high" and floor < 70:
+            floor, reason = 70, "High CI/CD risk reported by analyze-pr."
+        elif severity == "medium" and floor < 52:
+            floor, reason = 52, "Medium CI/CD risk reported by analyze-pr."
+
+    if summary.get("merge_blocker") and floor < 80:
+        floor, reason = 80, str(summary.get("merge_block_reason") or "Legacy merge blocker is active.")
+
+    return floor, reason
+
+
+def _unified_action(
+    *,
+    calibrated_score: int,
+    legacy_merge_blocker: bool,
+    severity_floor: int,
+    severity_reason: str,
+    safety_decision: str,
+    selected: dict[str, Any],
+    has_findings: bool,
+) -> tuple[str, str]:
+    if selected.get("critical_violations"):
+        return "BLOCK", "Safety-flow found critical verification violations."
+
+    if safety_decision == "reject":
+        return "BLOCK", "Safety-flow rejected the best candidate."
+
+    if legacy_merge_blocker or severity_floor >= 80 or calibrated_score >= 85:
+        return "BLOCK", severity_reason
+
+    if safety_decision in {"revise", "needs_verification"}:
+        return "REVIEW", "Safety-flow requires verification before this change can be trusted."
+
+    if selected.get("violations"):
+        return "REVIEW", "Safety-flow found unresolved verification violations."
+
+    if has_findings or calibrated_score >= 40:
+        return "REVIEW", "Security findings or calibrated risk require review."
+
+    return "ALLOW", "No blocking findings and the selected candidate passed verification."
+
+
+def _triage_for_unified_decision(action: str, score: int, severity_floor: int) -> str:
+    if action == "BLOCK":
+        return "P0" if score >= 85 or severity_floor >= 86 else "P1"
+    if action == "REVIEW":
+        if score >= 70:
+            return "P1"
+        if score >= 40:
+            return "P2"
+        return "P3"
+    return "P3"
+
+
+def _unified_confidence(
+    response: dict[str, Any],
+    safety_flow: dict[str, Any] | None,
+    calibrated_score: int,
+) -> float:
+    evaluation = response.get("evaluation", {})
+    selected = (safety_flow or {}).get("selected") or {}
+    operational = (safety_flow or {}).get("operational_metrics") or {}
+    base = 0.50
+    base += 0.20 * _as_float(evaluation.get("confidence_score"), 0.0)
+    base += 0.15 * _as_float(selected.get("verification_score"), 0.0)
+    base += 0.10 * _as_float(operational.get("verification_pass_rate"), 0.0)
+    base += 0.10 * abs((calibrated_score / 100.0) - 0.5) * 2
+    base -= 0.12 * _as_float(selected.get("uncertainty"), 0.0)
+    return round(max(0.0, min(0.99, base)), 4)
+
+
+def _calibrated_exploit_probability(
+    *,
+    legacy_probability: float,
+    calibrated_score: int,
+    selected: dict[str, Any],
+    vulns: list[dict[str, Any]],
+    ci_cd_risks: list[dict[str, Any]],
+) -> float:
+    finding_prior = 0.0
+    if vulns:
+        severities = {str(v.get("severity", "low")).lower() for v in vulns}
+        if "critical" in severities:
+            finding_prior = 0.88
+        elif "high" in severities:
+            finding_prior = 0.72
+        elif "medium" in severities:
+            finding_prior = 0.50
+        else:
+            finding_prior = 0.30
+    if ci_cd_risks:
+        finding_prior = max(finding_prior, 0.45)
+
+    model_prior = 1.0 - _as_float(selected.get("security"), 0.5)
+    score_prior = calibrated_score / 100.0
+    p = max(legacy_probability, finding_prior, model_prior, score_prior * 0.85)
+    return round(max(0.0, min(0.99, p)), 4)
+
+
+def _extract_fix_candidates(safety_flow: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not safety_flow:
+        return []
+
+    candidates = {str(c.get("id")): c for c in safety_flow.get("candidates", [])}
+    out = []
+    for item in safety_flow.get("ranking", [])[:5]:
+        cid = str(item.get("candidate"))
+        candidate = candidates.get(cid, {})
+        out.append(
+            {
+                "id": cid,
+                "strategy": item.get("strategy") or candidate.get("strategy"),
+                "verified": bool(item.get("verified", False)),
+                "risk_adjusted_utility": item.get("risk_adjusted_utility"),
+                "expected_loss": item.get("expected_loss"),
+                "security": item.get("security"),
+                "uncertainty": item.get("uncertainty"),
+                "violations": item.get("violations", []),
+                "critical_violations": item.get("critical_violations", []),
+                "explanation": candidate.get("explanation", ""),
+                "diff": candidate.get("diff", ""),
+            }
+        )
+    return out
+
+
+def _compact_safety_flow(safety_flow: dict[str, Any] | None) -> dict[str, Any]:
+    if not safety_flow:
+        return {
+            "available": False,
+            "decision": {"action": "unavailable"},
+            "selected": None,
+            "ranking": [],
+        }
+
+    return {
+        "available": True,
+        "flow": safety_flow.get("flow", []),
+        "decision": safety_flow.get("decision", {}),
+        "selected": safety_flow.get("selected"),
+        "ranking": safety_flow.get("ranking", [])[:5],
+        "properties": safety_flow.get("properties", []),
+        "representation": safety_flow.get("representation", {}),
+        "operational_metrics": safety_flow.get("operational_metrics", {}),
+        "prior": safety_flow.get("prior", {}),
+    }
+
+
+def _band_for_score(score: int) -> str:
+    if score >= 80:
+        return "critical"
+    if score >= 60:
+        return "high"
+    if score >= 40:
+        return "medium"
+    if score >= 20:
+        return "low"
+    return "minimal"
+
+
+def _as_float(value: Any, default: float | None = 0.0) -> float | None:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_int(value: Any, default: int = 0) -> int:
+    try:
+        if value is None:
+            return default
+        return int(round(float(value)))
+    except (TypeError, ValueError):
+        return default
+
+
 # =============================================================================
 # 15. BACKGROUND JOBS
 # =============================================================================
@@ -950,17 +1388,7 @@ async def _job_worker() -> None:
         try:
             token = get_installation_token(job.installation_id)
             result = await _run_pipeline(job.repo, job.pr_number, trace_id=job.trace_id)
-            sf_prompt = f"analyze security of PR #{job.pr_number} in {job.repo}"
-            sf_req = SafetyFlowRequest(
-                prompt=sf_prompt,
-                mode="secure",
-                context={"repo": job.repo, "pr_number": job.pr_number},
-            )
-            try:
-                sf_result = await asyncio.to_thread(run_safety_flow, sf_req)
-            except Exception as sf_exc:
-                log.warning("safety_flow_failed", extra={"exc": str(sf_exc), "trace_id": job.trace_id})
-                sf_result = None
+            sf_result = result.get("safety_flow")
             if sf_result and sf_result.get("selected"):
                 try:
                     from memory import record_strategy_result
@@ -979,16 +1407,17 @@ async def _job_worker() -> None:
                     log.warning("memory_record_failed", extra={"exc": str(mem_exc)})
             comment = _build_pr_comment(result, sf_result=sf_result)
             post_pr_comment(job.repo, job.pr_number, comment, token)
-            re_obj = result.get("risk_engine", {})
-            level = str(re_obj.get("band", "low"))
-            score = re_obj.get("score", 0)
-            state = _score_to_merge_state(level)
+            risk_obj = result.get("risk", result.get("risk_engine", {}))
+            level = str(risk_obj.get("band", "low"))
+            score = risk_obj.get("score", 0)
+            action = str(result.get("decision", {}).get("action", "")).upper()
+            state = "failure" if action == "BLOCK" else _score_to_merge_state(level)
             post_commit_status(
                 job.repo,
                 job.commit_sha,
                 token,
                 state,
-                f"Risk {score}/100 - {level.upper()}",
+                f"{action or 'RISK'} {score}/100 - {level.upper()}",
             )
             _metric("job_success")
         except Exception as exc:
@@ -1216,6 +1645,15 @@ class EvaluateRequest(BaseModel):
     files: List[Dict[str, Any]] = []
     repo: Optional[str] = None
 
+
+class OutcomeRequest(BaseModel):
+    repo: str
+    pr_number: int = 0
+    outcome: str
+    text: str = ""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
 @app.post("/evaluate")
 async def evaluate_endpoint(req: EvaluateRequest):
     return evaluate_payload(req.model_dump())
@@ -1223,6 +1661,33 @@ async def evaluate_endpoint(req: EvaluateRequest):
 @app.post("/safety-flow", dependencies=[Depends(_require_api_key)])
 async def safety_flow_endpoint(req: SafetyFlowRequest):
     return run_safety_flow(req)
+
+@app.get("/memory", dependencies=[Depends(_require_api_key)])
+async def memory_endpoint(repo: str, recent: int = 10):
+    from memory import summarize_repo_memory
+
+    summary = summarize_repo_memory(repo)
+    limit = max(0, recent)
+    summary["recent_events"] = summary.get("recent_events", [])[-limit:] if limit else []
+    return summary
+
+@app.get("/memory/prior", dependencies=[Depends(_require_api_key)])
+async def memory_prior_endpoint(repo: str, prompt: str):
+    from memory import get_prior_for_prompt
+
+    return get_prior_for_prompt(repo, prompt)
+
+@app.post("/outcome", dependencies=[Depends(_require_api_key)])
+async def outcome_endpoint(req: OutcomeRequest):
+    from memory import record_outcome
+
+    return record_outcome(
+        req.repo,
+        pr_number=req.pr_number,
+        outcome=req.outcome,
+        text=req.text,
+        metadata=req.metadata,
+    )
 
 @app.post("/generate")
 async def generate_endpoint(req: GenerateRequest):
