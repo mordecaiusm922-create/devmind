@@ -968,14 +968,14 @@ def _run_pr_safety_flow(
     )
     try:
         return run_safety_flow(req)
+    except Exception as exc:
+        log.warning("safety_flow_failed", extra={"exc": str(exc), "trace_id": trace_id})
+        return None
 
 @app.post("/run", dependencies=[Depends(_require_api_key)])
 async def run_pipeline_endpoint(payload: dict):
     from pipeline import run_pipeline_from_json
     return await run_pipeline_from_json(payload)
-    except Exception as exc:
-        log.warning("safety_flow_failed", extra={"exc": str(exc), "trace_id": trace_id})
-        return None
 
 
 def _build_pr_safety_prompt(
@@ -1718,4 +1718,6 @@ async def repair_endpoint(req: RepairRequest):
 @app.post("/verify")
 async def verify_endpoint(req: VerifyRequest):
     return verify_candidate(req)
+
+
 
