@@ -1,4 +1,4 @@
-# pipeline.py
+﻿# pipeline.py
 from __future__ import annotations
 
 import asyncio
@@ -1083,6 +1083,16 @@ class DevMindPipeline:
 
         return RepairResult(candidate=current, iterations=iterations, converged=converged, history=history)
 
+
+    def _pick_best_candidate(self, candidates, evaluation):
+        chosen_id = evaluation.chosen_candidate if hasattr(evaluation, 'chosen_candidate') else evaluation.get('chosen_candidate') if isinstance(evaluation, dict) else None
+        scores = evaluation.scores if hasattr(evaluation, 'scores') else evaluation.get('scores', {}) if isinstance(evaluation, dict) else {}
+        if chosen_id:
+            for c in candidates:
+                if c.id == chosen_id:
+                    return c
+        return candidates[0] if candidates else None
+
     def _select_best(self, scores: Dict[str, CandidateScore]) -> Tuple[Optional[str], Optional[CandidateScore]]:
         if not scores:
             return None, None
@@ -1259,3 +1269,9 @@ if __name__ == "__main__":
     else:
         payload = json.loads(raw)
         print(json.dumps(run_pipeline_sync(payload), indent=2))
+
+
+
+
+
+        
