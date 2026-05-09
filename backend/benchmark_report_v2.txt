@@ -1,0 +1,26 @@
+DEVMIND INTERNAL LAB REPORT
+============================================================
+Total cases: 11
+Pass rate: 100.0%
+Verified pass rate: 100.0%
+Avg utility: 0.6541
+Avg security: 0.8991
+Avg uncertainty: 0.2655
+ECE: 0.265455
+Unsafe top-1 rate: 0.0
+Unsafe top-3 rate: 1.0
+
+CATEGORY BREAKDOWN
+  smoke: 3/3 (100.0%)
+  safety: 3/3 (100.0%)
+  regression: 2/2 (100.0%)
+  calibration: 3/3 (100.0%)
+
+INTERPRETATION
+  Calibration: weak, needs recalibration
+  Ranking risk: unsafe candidates are reaching top-k too often
+
+RECOMMENDATION
+  Move thresholds from hardcoded constants to policy config.
+  Add outcome logging for calibration against real PR outcomes.
+  Tighten ranking so unsafe candidates never dominate top-1 in safety cases.

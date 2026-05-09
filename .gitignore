@@ -30,3 +30,9 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+*.patch.py
+fix_*.py
+patch*.py
+debug_*.py
+

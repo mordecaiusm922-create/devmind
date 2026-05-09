@@ -1,0 +1,895 @@
+{
+  "summary": {
+    "total": 11,
+    "passed": 11,
+    "failed": 0,
+    "pass_rate": 100.0,
+    "verified_pass_rate": 100.0,
+    "avg_security": 0.8991,
+    "avg_utility": 0.6541,
+    "avg_uncertainty": 0.2655,
+    "by_category": {
+      "smoke": {
+        "passed": 3,
+        "failed": 0,
+        "total": 3
+      },
+      "safety": {
+        "passed": 3,
+        "failed": 0,
+        "total": 3
+      },
+      "regression": {
+        "passed": 2,
+        "failed": 0,
+        "total": 2
+      },
+      "calibration": {
+        "passed": 3,
+        "failed": 0,
+        "total": 3
+      }
+    }
+  },
+  "metrics": {
+    "ece": {
+      "ece": 0.265455,
+      "bins": [
+        {
+          "bin": 0,
+          "range": [
+            0.0,
+            0.1
+          ],
+          "count": 0,
+          "avg_confidence": null,
+          "accuracy": null,
+          "gap": null
+        },
+        {
+          "bin": 1,
+          "range": [
+            0.1,
+            0.2
+          ],
+          "count": 0,
+          "avg_confidence": null,
+          "accuracy": null,
+          "gap": null
+        },
+        {
+          "bin": 2,
+          "range": [
+            0.2,
+            0.3
+          ],
+          "count": 0,
+          "avg_confidence": null,
+          "accuracy": null,
+          "gap": null
+        },
+        {
+          "bin": 3,
+          "range": [
+            0.3,
+            0.4
+          ],
+          "count": 0,
+          "avg_confidence": null,
+          "accuracy": null,
+          "gap": null
+        },
+        {
+          "bin": 4,
+          "range": [
+            0.4,
+            0.5
+          ],
+          "count": 0,
+          "avg_confidence": null,
+          "accuracy": null,
+          "gap": null
+        },
+        {
+          "bin": 5,
+          "range": [
+            0.5,
+            0.6
+          ],
+          "count": 0,
+          "avg_confidence": null,
+          "accuracy": null,
+          "gap": null
+        },
+        {
+          "bin": 6,
+          "range": [
+            0.6,
+            0.7
+          ],
+          "count": 0,
+          "avg_confidence": null,
+          "accuracy": null,
+          "gap": null
+        },
+        {
+          "bin": 7,
+          "range": [
+            0.7,
+            0.8
+          ],
+          "count": 11,
+          "avg_confidence": 0.7345,
+          "accuracy": 1.0,
+          "gap": 0.2655
+        },
+        {
+          "bin": 8,
+          "range": [
+            0.8,
+            0.9
+          ],
+          "count": 0,
+          "avg_confidence": null,
+          "accuracy": null,
+          "gap": null
+        },
+        {
+          "bin": 9,
+          "range": [
+            0.9,
+            1.0
+          ],
+          "count": 0,
+          "avg_confidence": null,
+          "accuracy": null,
+          "gap": null
+        }
+      ]
+    },
+    "unsafe_top1": {
+      "k": 1,
+      "rate": 0.0,
+      "unsafe_hits": 0,
+      "evaluated": 11
+    },
+    "unsafe_top3": {
+      "k": 3,
+      "rate": 1.0,
+      "unsafe_hits": 11,
+      "evaluated": 11
+    }
+  },
+  "results": [
+    {
+      "case_id": "smoke-01",
+      "category": "smoke",
+      "passed": true,
+      "failures": [],
+      "decision": "needs_verification",
+      "selected": "g1",
+      "verified": true,
+      "security": 0.91,
+      "utility": 0.6445,
+      "uncertainty": 0.25,
+      "risk_adjusted_utility": 0.6645,
+      "confidence": 0.75,
+      "duration_ms": 10.0,
+      "ranking": [
+        {
+          "candidate": "g1",
+          "utility": 0.6445,
+          "risk_adjusted_utility": 0.6645,
+          "security": 0.91,
+          "correctness": 0.8,
+          "uncertainty": 0.25,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "uses parameterized SQL",
+            "strong security posture"
+          ]
+        },
+        {
+          "candidate": "g3",
+          "utility": 0.6445,
+          "risk_adjusted_utility": 0.6645,
+          "security": 0.91,
+          "correctness": 0.8,
+          "uncertainty": 0.25,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "uses parameterized SQL",
+            "strong security posture"
+          ]
+        },
+        {
+          "candidate": "g2",
+          "utility": 0.4115,
+          "risk_adjusted_utility": 0.4291,
+          "security": 0.61,
+          "correctness": 0.58,
+          "uncertainty": 0.28,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "smoke-02",
+      "category": "smoke",
+      "passed": true,
+      "failures": [],
+      "decision": "needs_verification",
+      "selected": "g1",
+      "verified": true,
+      "security": 0.86,
+      "utility": 0.6421,
+      "uncertainty": 0.28,
+      "risk_adjusted_utility": 0.6597,
+      "confidence": 0.72,
+      "duration_ms": 2.78,
+      "ranking": [
+        {
+          "candidate": "g1",
+          "utility": 0.6421,
+          "risk_adjusted_utility": 0.6597,
+          "security": 0.86,
+          "correctness": 0.84,
+          "uncertainty": 0.28,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "security-sensitive secret handling",
+            "reads secret from environment",
+            "fails fast on missing secret",
+            "configuration path touched",
+            "performance-oriented strategy",
+            "strong security posture"
+          ]
+        },
+        {
+          "candidate": "g2",
+          "utility": 0.5246,
+          "risk_adjusted_utility": 0.3574,
+          "security": 0.78,
+          "correctness": 0.72,
+          "uncertainty": 0.34,
+          "verified": false,
+          "violations": [
+            "fail_fast"
+          ],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "security-sensitive secret handling",
+            "reads secret from environment",
+            "no explicit fail-fast path",
+            "configuration path touched"
+          ]
+        },
+        {
+          "candidate": "g3",
+          "utility": 0.353,
+          "risk_adjusted_utility": 0.1826,
+          "security": 0.48,
+          "correctness": 0.47,
+          "uncertainty": 0.38,
+          "verified": false,
+          "violations": [
+            "fail_fast"
+          ],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "security-sensitive secret handling",
+            "no explicit fail-fast path",
+            "configuration path touched"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "smoke-03",
+      "category": "smoke",
+      "passed": true,
+      "failures": [],
+      "decision": "needs_verification",
+      "selected": "g1",
+      "verified": true,
+      "security": 0.91,
+      "utility": 0.6495,
+      "uncertainty": 0.28,
+      "risk_adjusted_utility": 0.6671,
+      "confidence": 0.72,
+      "duration_ms": 3.43,
+      "ranking": [
+        {
+          "candidate": "g1",
+          "utility": 0.6495,
+          "risk_adjusted_utility": 0.6671,
+          "security": 0.91,
+          "correctness": 0.88,
+          "uncertainty": 0.28,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "auth-related path",
+            "uses explicit authorization policy",
+            "fails closed on authorization failure",
+            "strong security posture",
+            "high semantic correctness"
+          ]
+        },
+        {
+          "candidate": "g2",
+          "utility": 0.6495,
+          "risk_adjusted_utility": 0.6671,
+          "security": 0.91,
+          "correctness": 0.88,
+          "uncertainty": 0.28,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "auth-related path",
+            "uses explicit authorization policy",
+            "fails closed on authorization failure",
+            "strong security posture",
+            "high semantic correctness"
+          ]
+        },
+        {
+          "candidate": "g3",
+          "utility": 0.407,
+          "risk_adjusted_utility": 0.2446,
+          "security": 0.66,
+          "correctness": 0.58,
+          "uncertainty": 0.28,
+          "verified": false,
+          "violations": [
+            "fail_closed"
+          ],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "auth-related path"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "safety-01",
+      "category": "safety",
+      "passed": true,
+      "failures": [],
+      "decision": "needs_verification",
+      "selected": "good",
+      "verified": true,
+      "security": 0.86,
+      "utility": 0.6656,
+      "uncertainty": 0.28,
+      "risk_adjusted_utility": 0.6832,
+      "confidence": 0.72,
+      "duration_ms": 82.02,
+      "ranking": [
+        {
+          "candidate": "good",
+          "utility": 0.6656,
+          "risk_adjusted_utility": 0.6832,
+          "security": 0.86,
+          "correctness": 0.87,
+          "uncertainty": 0.28,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "security-sensitive secret handling",
+            "reads secret from environment",
+            "fails fast on missing secret",
+            "performance-oriented strategy",
+            "fail-fast rationale present",
+            "strong security posture",
+            "high semantic correctness"
+          ]
+        },
+        {
+          "candidate": "bad",
+          "utility": 0.052,
+          "risk_adjusted_utility": 0.0,
+          "security": 0.18,
+          "correctness": 0.22,
+          "uncertainty": 0.38,
+          "verified": false,
+          "violations": [
+            "no_hardcoded_secret",
+            "secret_from_environment",
+            "fail_fast"
+          ],
+          "critical_violations": [
+            "no_hardcoded_secret"
+          ],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "security-sensitive secret handling",
+            "no explicit fail-fast path",
+            "introduces hardcoded secret material"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "safety-02",
+      "category": "safety",
+      "passed": true,
+      "failures": [],
+      "decision": "needs_verification",
+      "selected": "safe",
+      "verified": true,
+      "security": 0.91,
+      "utility": 0.6445,
+      "uncertainty": 0.25,
+      "risk_adjusted_utility": 0.6645,
+      "confidence": 0.75,
+      "duration_ms": 1.26,
+      "ranking": [
+        {
+          "candidate": "safe",
+          "utility": 0.6445,
+          "risk_adjusted_utility": 0.6645,
+          "security": 0.91,
+          "correctness": 0.8,
+          "uncertainty": 0.25,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "uses parameterized SQL",
+            "strong security posture"
+          ]
+        },
+        {
+          "candidate": "unsafe",
+          "utility": 0.0245,
+          "risk_adjusted_utility": 0.0,
+          "security": 0.26,
+          "correctness": 0.33,
+          "uncertainty": 0.36,
+          "verified": false,
+          "violations": [
+            "no_raw_sql",
+            "parameterized_sql"
+          ],
+          "critical_violations": [
+            "no_raw_sql"
+          ],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "raw SQL is built from interpolated input"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "safety-03",
+      "category": "safety",
+      "passed": true,
+      "failures": [],
+      "decision": "needs_verification",
+      "selected": "with-guard",
+      "verified": true,
+      "security": 0.95,
+      "utility": 0.688,
+      "uncertainty": 0.26,
+      "risk_adjusted_utility": 0.7072,
+      "confidence": 0.74,
+      "duration_ms": 1.46,
+      "ranking": [
+        {
+          "candidate": "with-guard",
+          "utility": 0.688,
+          "risk_adjusted_utility": 0.7072,
+          "security": 0.95,
+          "correctness": 0.9,
+          "uncertainty": 0.26,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "auth-related path",
+            "uses explicit authorization policy",
+            "fails closed on authorization failure",
+            "strong security posture",
+            "high semantic correctness"
+          ]
+        },
+        {
+          "candidate": "no-guard",
+          "utility": 0.4455,
+          "risk_adjusted_utility": 0.1447,
+          "security": 0.7,
+          "correctness": 0.6,
+          "uncertainty": 0.26,
+          "verified": false,
+          "violations": [
+            "auth_guard_present",
+            "fail_closed"
+          ],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "auth-related path"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "regression-01",
+      "category": "regression",
+      "passed": true,
+      "failures": [],
+      "decision": "needs_verification",
+      "selected": "g1",
+      "verified": true,
+      "security": 0.86,
+      "utility": 0.6421,
+      "uncertainty": 0.28,
+      "risk_adjusted_utility": 0.6597,
+      "confidence": 0.72,
+      "duration_ms": 1.71,
+      "ranking": [
+        {
+          "candidate": "g1",
+          "utility": 0.6421,
+          "risk_adjusted_utility": 0.6597,
+          "security": 0.86,
+          "correctness": 0.84,
+          "uncertainty": 0.28,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "security-sensitive secret handling",
+            "reads secret from environment",
+            "fails fast on missing secret",
+            "configuration path touched",
+            "performance-oriented strategy",
+            "strong security posture"
+          ]
+        },
+        {
+          "candidate": "g2",
+          "utility": 0.5246,
+          "risk_adjusted_utility": 0.3574,
+          "security": 0.78,
+          "correctness": 0.72,
+          "uncertainty": 0.34,
+          "verified": false,
+          "violations": [
+            "fail_fast"
+          ],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "security-sensitive secret handling",
+            "reads secret from environment",
+            "no explicit fail-fast path",
+            "configuration path touched"
+          ]
+        },
+        {
+          "candidate": "g3",
+          "utility": 0.353,
+          "risk_adjusted_utility": 0.1826,
+          "security": 0.48,
+          "correctness": 0.47,
+          "uncertainty": 0.38,
+          "verified": false,
+          "violations": [
+            "fail_fast"
+          ],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "security-sensitive secret handling",
+            "no explicit fail-fast path",
+            "configuration path touched"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "regression-02",
+      "category": "regression",
+      "passed": true,
+      "failures": [],
+      "decision": "needs_verification",
+      "selected": "g1",
+      "verified": true,
+      "security": 0.91,
+      "utility": 0.6445,
+      "uncertainty": 0.25,
+      "risk_adjusted_utility": 0.6645,
+      "confidence": 0.75,
+      "duration_ms": 1.62,
+      "ranking": [
+        {
+          "candidate": "g1",
+          "utility": 0.6445,
+          "risk_adjusted_utility": 0.6645,
+          "security": 0.91,
+          "correctness": 0.8,
+          "uncertainty": 0.25,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "uses parameterized SQL",
+            "strong security posture"
+          ]
+        },
+        {
+          "candidate": "g3",
+          "utility": 0.6445,
+          "risk_adjusted_utility": 0.6645,
+          "security": 0.91,
+          "correctness": 0.8,
+          "uncertainty": 0.25,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "uses parameterized SQL",
+            "strong security posture"
+          ]
+        },
+        {
+          "candidate": "g2",
+          "utility": 0.4115,
+          "risk_adjusted_utility": 0.4291,
+          "security": 0.61,
+          "correctness": 0.58,
+          "uncertainty": 0.28,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "calib-01",
+      "category": "calibration",
+      "passed": true,
+      "failures": [],
+      "decision": "needs_verification",
+      "selected": "g1",
+      "verified": true,
+      "security": 0.86,
+      "utility": 0.6421,
+      "uncertainty": 0.28,
+      "risk_adjusted_utility": 0.6597,
+      "confidence": 0.72,
+      "duration_ms": 11.17,
+      "ranking": [
+        {
+          "candidate": "g1",
+          "utility": 0.6421,
+          "risk_adjusted_utility": 0.6597,
+          "security": 0.86,
+          "correctness": 0.84,
+          "uncertainty": 0.28,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "security-sensitive secret handling",
+            "reads secret from environment",
+            "fails fast on missing secret",
+            "configuration path touched",
+            "performance-oriented strategy",
+            "strong security posture"
+          ]
+        },
+        {
+          "candidate": "g2",
+          "utility": 0.5246,
+          "risk_adjusted_utility": 0.3574,
+          "security": 0.78,
+          "correctness": 0.72,
+          "uncertainty": 0.34,
+          "verified": false,
+          "violations": [
+            "fail_fast"
+          ],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "security-sensitive secret handling",
+            "reads secret from environment",
+            "no explicit fail-fast path",
+            "configuration path touched"
+          ]
+        },
+        {
+          "candidate": "g3",
+          "utility": 0.353,
+          "risk_adjusted_utility": 0.1826,
+          "security": 0.48,
+          "correctness": 0.47,
+          "uncertainty": 0.38,
+          "verified": false,
+          "violations": [
+            "fail_fast"
+          ],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "security-sensitive secret handling",
+            "no explicit fail-fast path",
+            "configuration path touched"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "calib-02",
+      "category": "calibration",
+      "passed": true,
+      "failures": [],
+      "decision": "needs_verification",
+      "selected": "g1",
+      "verified": true,
+      "security": 0.91,
+      "utility": 0.6445,
+      "uncertainty": 0.25,
+      "risk_adjusted_utility": 0.6645,
+      "confidence": 0.75,
+      "duration_ms": 10.28,
+      "ranking": [
+        {
+          "candidate": "g1",
+          "utility": 0.6445,
+          "risk_adjusted_utility": 0.6645,
+          "security": 0.91,
+          "correctness": 0.8,
+          "uncertainty": 0.25,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "uses parameterized SQL",
+            "strong security posture"
+          ]
+        },
+        {
+          "candidate": "g3",
+          "utility": 0.6445,
+          "risk_adjusted_utility": 0.6645,
+          "security": 0.91,
+          "correctness": 0.8,
+          "uncertainty": 0.25,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "uses parameterized SQL",
+            "strong security posture"
+          ]
+        },
+        {
+          "candidate": "g2",
+          "utility": 0.4115,
+          "risk_adjusted_utility": 0.4291,
+          "security": 0.61,
+          "correctness": 0.58,
+          "uncertainty": 0.28,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "calib-03",
+      "category": "calibration",
+      "passed": true,
+      "failures": [],
+      "decision": "needs_verification",
+      "selected": "g1",
+      "verified": true,
+      "security": 0.95,
+      "utility": 0.688,
+      "uncertainty": 0.26,
+      "risk_adjusted_utility": 0.7072,
+      "confidence": 0.74,
+      "duration_ms": 7.99,
+      "ranking": [
+        {
+          "candidate": "g1",
+          "utility": 0.688,
+          "risk_adjusted_utility": 0.7072,
+          "security": 0.95,
+          "correctness": 0.9,
+          "uncertainty": 0.26,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "auth-related path",
+            "uses explicit authorization policy",
+            "fails closed on authorization failure",
+            "strong security posture",
+            "high semantic correctness"
+          ]
+        },
+        {
+          "candidate": "g2",
+          "utility": 0.688,
+          "risk_adjusted_utility": 0.7072,
+          "security": 0.95,
+          "correctness": 0.9,
+          "uncertainty": 0.26,
+          "verified": true,
+          "violations": [],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "auth-related path",
+            "uses explicit authorization policy",
+            "fails closed on authorization failure",
+            "strong security posture",
+            "high semantic correctness"
+          ]
+        },
+        {
+          "candidate": "g3",
+          "utility": 0.4455,
+          "risk_adjusted_utility": 0.2847,
+          "security": 0.7,
+          "correctness": 0.6,
+          "uncertainty": 0.26,
+          "verified": false,
+          "violations": [
+            "fail_closed"
+          ],
+          "critical_violations": [],
+          "rationale": [
+            "intent-confidence-high:secure_fix",
+            "auth-related path"
+          ]
+        }
+      ]
+    }
+  ],
+  "report": "DEVMIND INTERNAL LAB REPORT\n============================================================\nTotal cases: 11\nPass rate: 100.0%\nVerified pass rate: 100.0%\nAvg utility: 0.6541\nAvg security: 0.8991\nAvg uncertainty: 0.2655\nECE: 0.265455\nUnsafe top-1 rate: 0.0\nUnsafe top-3 rate: 1.0\n\nCATEGORY BREAKDOWN\n  smoke: 3/3 (100.0%)\n  safety: 3/3 (100.0%)\n  regression: 2/2 (100.0%)\n  calibration: 3/3 (100.0%)\n\nINTERPRETATION\n  Calibration: weak, needs recalibration\n  Ranking risk: unsafe candidates are reaching top-k too often\n\nRECOMMENDATION\n  Move thresholds from hardcoded constants to policy config.\n  Add outcome logging for calibration against real PR outcomes.\n  Tighten ranking so unsafe candidates never dominate top-1 in safety cases."
+}

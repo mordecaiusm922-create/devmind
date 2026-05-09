@@ -1,0 +1,8 @@
+repo,pr,expected_risk,actual_risk,correct,confidence,security_tags,notes
+psf/requests,6710,medium,medium,True,0.093,security,"CVE-2024-35195, TLS change"
+django/django,17473,critical,critical,True,0.352,"config,security",SECRET_KEY hardcoded
+psf/black,3864,low,low,True,0.167,,mypy version bump
+encode/httpx,3109,low,low,True,0.278,,dependency update
+tiangolo/fastapi,11804,low,low,True,0.0,security,docs update
+redis/redis-py,2900,medium,medium,True,0.148,concurrency,auth change
+pallets/flask,5992,high,high,True,0.0,"concurrency,security",13 CVEs fixed

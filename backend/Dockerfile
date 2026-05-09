@@ -19,13 +19,9 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy application code — only what's needed at runtime
-COPY main.py        .
-COPY summarizer.py  .
-COPY evaluator.py   .
-COPY github.py      .
-COPY logger.py      .
-
+# Copy application code — bump CACHEBUST to force full rebuild
+ARG CACHEBUST=2
+COPY . .
 # Create logs directory (volume can be mounted over this)
 RUN mkdir -p /app/logs
 
