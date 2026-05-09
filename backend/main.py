@@ -1083,7 +1083,8 @@ def _build_unified_decision_v2(
 
     selected = (safety_flow or {}).get("selected") or {}
     sf_decision = (safety_flow or {}).get("decision") or {}
-    sf_score = _safety_flow_risk_score(selected, sf_decision)
+    sf_risk = (safety_flow or {}).get("risk") or {}
+    sf_score = max(_safety_flow_risk_score(selected, sf_decision), _as_int(sf_risk.get("score"), 0))
     severity_floor, severity_reason = _finding_severity_floor(vulns, ci_cd_risks, summary)
     calibrated_score = max(legacy_score, sf_score, severity_floor)
 
@@ -1110,6 +1111,7 @@ def _build_unified_decision_v2(
         selected=selected,
         vulns=vulns,
         ci_cd_risks=ci_cd_risks,
+        safety_flow_risk=sf_risk,
     )
 
     return {
@@ -1129,6 +1131,7 @@ def _build_unified_decision_v2(
                 "finding_floor": severity_floor,
             },
             "calibration": "max(analyze_pr, safety_flow_expected_loss, severity_floor)",
+            "safety_flow_calibration": sf_risk.get("calibration", {}),
         },
         "fix_candidates": _extract_fix_candidates(safety_flow),
         "triage": triage,
@@ -1264,6 +1267,7 @@ def _calibrated_exploit_probability(
     selected: dict[str, Any],
     vulns: list[dict[str, Any]],
     ci_cd_risks: list[dict[str, Any]],
+    safety_flow_risk: dict[str, Any] | None = None,
 ) -> float:
     finding_prior = 0.0
     if vulns:
@@ -1281,7 +1285,8 @@ def _calibrated_exploit_probability(
 
     model_prior = 1.0 - _as_float(selected.get("security"), 0.5)
     score_prior = calibrated_score / 100.0
-    p = max(legacy_probability, finding_prior, model_prior, score_prior * 0.85)
+    safety_prior = _as_float((safety_flow_risk or {}).get("p_exploit"), 0.0)
+    p = max(legacy_probability, finding_prior, model_prior, score_prior * 0.85, safety_prior)
     return round(max(0.0, min(0.99, p)), 4)
 
 
@@ -1327,8 +1332,10 @@ def _compact_safety_flow(safety_flow: dict[str, Any] | None) -> dict[str, Any]:
         "decision": safety_flow.get("decision", {}),
         "selected": safety_flow.get("selected"),
         "ranking": safety_flow.get("ranking", [])[:5],
+        "risk": safety_flow.get("risk", {}),
         "properties": safety_flow.get("properties", []),
         "representation": safety_flow.get("representation", {}),
+        "runtime_evidence": safety_flow.get("runtime_evidence", {}),
         "operational_metrics": safety_flow.get("operational_metrics", {}),
         "prior": safety_flow.get("prior", {}),
     }
@@ -1676,6 +1683,12 @@ async def memory_prior_endpoint(repo: str, prompt: str):
     from memory import get_prior_for_prompt
 
     return get_prior_for_prompt(repo, prompt)
+
+@app.get("/calibration/ece", dependencies=[Depends(_require_api_key)])
+async def calibration_ece_endpoint(repo: str, bins: int = 10):
+    from calibration import expected_calibration_error
+
+    return expected_calibration_error(repo, bins=bins)
 
 @app.post("/outcome", dependencies=[Depends(_require_api_key)])
 async def outcome_endpoint(req: OutcomeRequest):

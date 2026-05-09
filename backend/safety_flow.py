@@ -117,6 +117,10 @@ def run_safety_flow(req: SafetyFlowRequest) -> dict[str, Any]:
         candidate["id"]: _verify_candidate(candidate, properties)
         for candidate in candidates
     }
+    runtime_evidence = {
+        candidate["id"]: _runtime_evidence(candidate, properties, representation)
+        for candidate in candidates
+    }
 
     repair_candidates: list[dict[str, Any]] = []
     if req.max_repair_attempts > 0:
@@ -130,13 +134,19 @@ def run_safety_flow(req: SafetyFlowRequest) -> dict[str, Any]:
                 candidate["id"]: _verify_candidate(candidate, properties)
                 for candidate in candidates
             }
+            runtime_evidence = {
+                candidate["id"]: _runtime_evidence(candidate, properties, representation)
+                for candidate in candidates
+            }
 
-    ranking = _rank_candidates(evaluation["scores"], verifications, prior_data, representation, candidates)
+    ranking = _rank_candidates(evaluation["scores"], verifications, runtime_evidence, prior_data, representation, candidates)
     selected = ranking[0] if ranking else None
     decision = _final_decision(req.mode, selected, evaluation, representation)
-    operational_metrics = _operational_metrics(ranking, verifications, evaluation)
+    operational_metrics = _operational_metrics(ranking, verifications, runtime_evidence, evaluation)
     risk = _safety_flow_risk(representation, selected, decision)
-    record = _record_flow_result(req, selected, decision, representation, operational_metrics)
+    if req.repo:
+        risk = _calibrate_risk(req.repo, risk)
+    record = _record_flow_result(req, selected, decision, representation, operational_metrics, risk)
 
     return {
         "flow": [
@@ -164,6 +174,7 @@ def run_safety_flow(req: SafetyFlowRequest) -> dict[str, Any]:
         "candidates": candidates,
         "evaluation": evaluation,
         "verification": verifications,
+        "runtime_evidence": runtime_evidence,
         "ranking": ranking,
         "selected": selected,
         "decision": decision,
@@ -577,6 +588,7 @@ def _verify_candidate(candidate: dict[str, Any], properties: list[str]) -> dict[
 def _rank_candidates(
     scores: dict[str, Any],
     verifications: dict[str, Any],
+    runtime_evidence: dict[str, Any],
     prior_data: dict[str, Any],
     representation: dict[str, Any],
     candidates: list[dict[str, Any]],
@@ -586,29 +598,39 @@ def _rank_candidates(
     priors = prior_data.get("priors") or {}
     blast_radius = representation.get("blast_radius") or {}
     blast_score = float(blast_radius.get("score") or 0.0)
+    graph_score = float((blast_radius.get("graph") or {}).get("score") or 0.0)
 
     for cid, score in scores.items():
         verification = verifications.get(cid, {})
+        sandbox = runtime_evidence.get(cid, {})
         candidate = candidates_by_id.get(str(cid), {})
         strategy = str(candidate.get("strategy") or cid)
         utility = float(score.get("utility", 0.0))
         uncertainty = float(score.get("uncertainty", 0.0))
         violations = len(verification.get("violations", []))
         critical = len(verification.get("critical_violations", []))
+        sandbox_score = float(sandbox.get("score") or 0.0)
+        sandbox_failed = 1 if sandbox.get("status") == "failed" else 0
         verified_bonus = 0.04 if verification.get("verified") else 0.0
         prior = float(priors.get(strategy, priors.get(str(cid), 0.5)))
         prior_adjustment = (prior - 0.5) * 0.08
         blast_radius_penalty = blast_score * (0.02 if verification.get("verified") else 0.06)
+        graph_penalty = graph_score * 0.04
+        runtime_penalty = (1.0 - sandbox_score) * 0.10 + sandbox_failed * 0.12
         expected_loss = (
             (1.0 - utility) * (0.45 + blast_score)
             + 0.10 * violations
             + 0.25 * critical
             + 0.08 * uncertainty
+            + runtime_penalty
+            + graph_penalty
         )
         adjusted = (
             utility
             + prior_adjustment
             - blast_radius_penalty
+            - graph_penalty
+            - runtime_penalty
             - 0.14 * violations
             - 0.25 * critical
             - 0.08 * uncertainty
@@ -624,7 +646,11 @@ def _rank_candidates(
                 "prior": round(prior, 4),
                 "prior_adjustment": round(prior_adjustment, 4),
                 "blast_radius_penalty": round(blast_radius_penalty, 4),
+                "graph_penalty": round(graph_penalty, 4),
+                "runtime_penalty": round(runtime_penalty, 4),
                 "verification_score": verification.get("score", 0.0),
+                "runtime_evidence_score": round(sandbox_score, 4),
+                "runtime_evidence_status": sandbox.get("status", "inconclusive"),
                 "security": score.get("security"),
                 "correctness": score.get("correctness"),
                 "robustness": score.get("robustness"),
@@ -683,6 +709,14 @@ def _final_decision(
             "merge_blocker": False,
         }
 
+    if selected.get("runtime_evidence_status") == "failed":
+        return {
+            "action": "revise",
+            "reason": "Runtime evidence sandbox failed for the selected candidate.",
+            "candidate": selected["candidate"],
+            "merge_blocker": False,
+        }
+
     if severe_findings:
         top = severe_findings[0]
         return {
@@ -737,8 +771,6 @@ def _build_change_representation(
         finding_surface = str(finding.get("surface") or "")
         if finding_surface and finding_surface not in surface:
             surface.append(finding_surface)
-    trust_boundaries = _trust_boundaries(surface, files)
-    blast_radius = _blast_radius(files, surface, candidates)
     graph_stats: dict[str, Any] = {}
     high_risk_nodes: list[dict[str, Any]] = []
 
@@ -750,6 +782,9 @@ def _build_change_representation(
         high_risk_nodes = find_high_risk_nodes(graph)[:8]
     except Exception:
         graph_stats = {"node_count": 0, "edge_count": 0, "file_count": len(files)}
+
+    trust_boundaries = _trust_boundaries(surface, files)
+    blast_radius = _blast_radius(files, surface, candidates, graph_stats, high_risk_nodes)
 
     return {
         "repo": req.repo,
@@ -945,6 +980,8 @@ def _blast_radius(
     files: list[dict[str, Any]],
     surface: list[str],
     candidates: list[dict[str, Any]],
+    graph_stats: dict[str, Any] | None = None,
+    high_risk_nodes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     surface_weights = {
         "ci_cd": 0.78,
@@ -963,6 +1000,9 @@ def _blast_radius(
     file_count = len(files)
     churn = sum(int(f.get("additions") or 0) + int(f.get("deletions") or 0) for f in files)
     candidate_churn = max((_diff_churn(str(c.get("diff") or ""))[0] for c in candidates), default=0)
+    graph_stats = graph_stats or {}
+    high_risk_nodes = high_risk_nodes or []
+    graph_score = _graph_blast_score(graph_stats, high_risk_nodes)
 
     if file_count >= 8:
         score += 0.10
@@ -977,6 +1017,13 @@ def _blast_radius(
     elif churn >= 40 or candidate_churn >= 20:
         score += 0.04
         reasons.append("moderate_churn")
+
+    if graph_score >= 0.50:
+        score += min(0.14, graph_score * 0.14)
+        reasons.append("graph_high_risk_nodes")
+    elif graph_score >= 0.25:
+        score += min(0.08, graph_score * 0.12)
+        reasons.append("graph_dependency_surface")
 
     score = max(0.0, min(1.0, score))
     if score >= 0.82:
@@ -995,7 +1042,23 @@ def _blast_radius(
         "file_count": file_count,
         "total_churn": churn,
         "max_candidate_churn": candidate_churn,
+        "graph": {
+            "score": round(graph_score, 4),
+            "node_count": int(graph_stats.get("node_count") or 0),
+            "edge_count": int(graph_stats.get("edge_count") or 0),
+            "high_risk_node_count": len(high_risk_nodes),
+        },
     }
+
+
+def _graph_blast_score(graph_stats: dict[str, Any], high_risk_nodes: list[dict[str, Any]]) -> float:
+    node_count = int(graph_stats.get("node_count") or 0)
+    edge_count = int(graph_stats.get("edge_count") or 0)
+    file_count = max(1, int(graph_stats.get("file_count") or 1))
+    density = min(1.0, edge_count / max(1, node_count * 2))
+    fanout = min(1.0, edge_count / max(1, file_count * 8))
+    risky = min(1.0, sum(float(node.get("score") or 0.0) for node in high_risk_nodes) / 3.0)
+    return max(0.0, min(1.0, 0.45 * risky + 0.35 * fanout + 0.20 * density))
 
 
 def _repair_candidates(
@@ -1204,11 +1267,14 @@ def _candidate_filename(candidate: dict[str, Any], context: dict[str, Any]) -> s
 def _operational_metrics(
     ranking: list[dict[str, Any]],
     verifications: dict[str, Any],
+    runtime_evidence: dict[str, Any],
     evaluation: dict[str, Any],
 ) -> dict[str, Any]:
     total = max(1, len(verifications))
     verified = sum(1 for v in verifications.values() if v.get("verified"))
     critical = sum(1 for v in verifications.values() if v.get("critical_violations"))
+    runtime_passed = sum(1 for v in runtime_evidence.values() if v.get("status") == "passed")
+    runtime_failed = sum(1 for v in runtime_evidence.values() if v.get("status") == "failed")
     top_k = ranking[: min(3, len(ranking))]
     unsafe_top_k = sum(
         1
@@ -1226,6 +1292,8 @@ def _operational_metrics(
 
     return {
         "verification_pass_rate": round(verified / total, 4),
+        "runtime_evidence_pass_rate": round(runtime_passed / max(1, len(runtime_evidence)), 4),
+        "runtime_evidence_failure_rate": round(runtime_failed / max(1, len(runtime_evidence)), 4),
         "critical_violation_rate": round(critical / total, 4),
         "unsafe_top_k": unsafe_top_k,
         "mean_uncertainty_top_k": round(mean_uncertainty, 4),
@@ -1252,6 +1320,7 @@ def _safety_flow_risk(
 
     blast = representation.get("blast_radius") or {}
     blast_score = int(round(float(blast.get("score") or 0.0) * 100))
+    graph_score = int(round(float((blast.get("graph") or {}).get("score") or 0.0) * 100))
     selected_score = 0
     if selected:
         selected_score = int(round(float(selected.get("expected_loss") or 0.0) * 100))
@@ -1259,8 +1328,10 @@ def _safety_flow_risk(
             selected_score = max(selected_score, 88)
         elif selected.get("violations"):
             selected_score = max(selected_score, 62)
+        if selected.get("runtime_evidence_status") == "failed":
+            selected_score = max(selected_score, 70)
 
-    score = max(finding_score, blast_score, selected_score)
+    score = max(finding_score, blast_score, selected_score, graph_score)
     action = str(decision.get("action") or "").lower()
     if action == "reject":
         score = max(score, 90)
@@ -1298,9 +1369,49 @@ def _safety_flow_risk(
         "source_scores": {
             "findings": finding_score,
             "blast_radius": blast_score,
+            "graph": graph_score,
             "candidate_expected_loss": selected_score,
         },
     }
+
+
+def _runtime_evidence(
+    candidate: dict[str, Any],
+    properties: list[str],
+    representation: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        from execution_sandbox import verify_runtime_evidence
+
+        return verify_runtime_evidence(candidate, properties, representation)
+    except Exception as exc:
+        return {
+            "mode": "deterministic_local",
+            "status": "inconclusive",
+            "score": 0.5,
+            "checks": [{"name": "sandbox_error", "status": "warn", "evidence": str(exc)}],
+            "failed_checks": [],
+            "warning_checks": ["sandbox_error"],
+        }
+
+
+def _calibrate_risk(repo: str, risk: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from calibration import calibrate_probability
+
+        raw = float(risk.get("p_exploit") or 0.0)
+        calibrated = calibrate_probability(repo, raw)
+        risk["p_exploit_raw"] = calibrated["raw_probability"]
+        risk["p_exploit"] = calibrated["probability"]
+        risk["calibration"] = {
+            "method": calibrated["method"],
+            "summary": calibrated["summary"],
+        }
+        if "bin" in calibrated:
+            risk["calibration"]["bin"] = calibrated["bin"]
+    except Exception as exc:
+        risk["calibration"] = {"method": "unavailable", "error": str(exc)}
+    return risk
 
 
 def _record_flow_result(
@@ -1309,6 +1420,7 @@ def _record_flow_result(
     decision: dict[str, Any],
     representation: dict[str, Any],
     operational_metrics: dict[str, Any],
+    risk_model: dict[str, Any],
 ) -> dict[str, Any] | None:
     if not req.repo:
         return None
@@ -1337,6 +1449,8 @@ def _record_flow_result(
                 "trust_boundaries": representation.get("trust_boundaries", []),
                 "blast_radius": representation.get("blast_radius", {}),
                 "operational_metrics": operational_metrics,
+                "risk": risk_model,
+                "p_exploit": risk_model.get("p_exploit"),
             },
         )
     except Exception as exc:
