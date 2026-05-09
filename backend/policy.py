@@ -113,28 +113,6 @@ def decide_policy(
     mode: str | RiskMode | None = None,
     thresholds: Optional[PolicyThresholds] = None,
 ) -> PolicyDecision:
-    """
-    Central policy gate for DevMind.
-
-    evaluation:
-      Can be dict or object with fields:
-      - decision
-      - risk_summary
-      - requires_verification
-      - requires_repair
-      - chosen_candidate
-
-    selected:
-      Can be dict/object with fields:
-      - candidate
-      - utility
-      - security
-      - uncertainty
-      - verified
-      - critical_violations
-      - violations
-      - risk_adjusted_utility
-    """
     th = thresholds or PolicyThresholds()
     rm = _as_mode(mode)
     sensitive_mode = _is_sensitive_mode(rm)
@@ -165,14 +143,15 @@ def decide_policy(
     regression = _risk_summary_value(risk_summary, "regression", 0.0)
     risk_uncertainty = _risk_summary_value(risk_summary, "uncertainty", uncertainty)
 
+    repair_converged = bool(_get(evaluation, "repair_converged", True))
+    repair_iterations = int(_get(evaluation, "repair_iterations", 0) or 0)
+
     critical_violations = _has_critical_violations(selected)
     any_violations = _has_any_violations(selected)
 
-    # Core policy flags
     low_security = security < th.low_security_penalty_threshold
     security_block = security < th.min_security_block
     security_review = security < th.min_security_approve
-    security_sensitive = any(x >= th.min_security_review for x in [security])
 
     risk_block = catastrophic > th.max_catastrophic_risk_review or regression > th.max_regression_risk_review
     high_risk_for_approval = catastrophic > th.max_catastrophic_risk_approve or regression > th.max_regression_risk_approve
@@ -180,7 +159,7 @@ def decide_policy(
     uncertainty_block = uncertainty > th.max_uncertainty_review
     uncertainty_review = uncertainty > th.max_uncertainty_approve
 
-    # Hard stops
+    # Hard stop 1: critical violations
     if critical_violations and th.critical_violation_block:
         return PolicyDecision(
             action=Action.REJECT,
@@ -194,10 +173,12 @@ def decide_policy(
                 "critical_violations": True,
                 "low_security": low_security,
                 "uncertainty_high": uncertainty_block,
+                "repair_not_converged": not repair_converged,
             },
             thresholds=asdict(th),
         )
 
+    # Hard stop 2: low security
     if security_block:
         return PolicyDecision(
             action=Action.REJECT,
@@ -211,10 +192,31 @@ def decide_policy(
                 "critical_violations": False,
                 "low_security": True,
                 "uncertainty_high": uncertainty_block,
+                "repair_not_converged": not repair_converged,
             },
             thresholds=asdict(th),
         )
 
+    # Hard stop 3: repair did not converge in critical/secure modes
+    if sensitive_mode and not repair_converged:
+        return PolicyDecision(
+            action=Action.REVISE,
+            merge_blocker=True,
+            reason="Repair loop did not converge in safety-sensitive mode.",
+            candidate=candidate_id,
+            requires_verification=False,
+            requires_repair=True,
+            sensitive_mode=True,
+            policy_flags={
+                "critical_violations": critical_violations,
+                "low_security": low_security,
+                "uncertainty_high": uncertainty_block,
+                "repair_not_converged": True,
+            },
+            thresholds=asdict(th),
+        )
+
+    # Sensitive mode still requires verification unless already certified
     if sensitive_mode and not verified and th.verification_required_for_sensitive_modes:
         return PolicyDecision(
             action=Action.NEEDS_VERIFICATION,
@@ -228,55 +230,63 @@ def decide_policy(
                 "critical_violations": critical_violations,
                 "low_security": low_security,
                 "needs_runtime_verify": True,
+                "repair_not_converged": not repair_converged,
             },
             thresholds=asdict(th),
         )
 
-    # Main decision ladder
+    # Approve only when everything is actually clean
     if (
         utility >= th.approve_utility
         and security >= th.min_security_approve
-        and not uncertainty_review
-        and not high_risk_for_approval
+        and uncertainty <= th.max_uncertainty_approve
+        and catastrophic <= th.max_catastrophic_risk_approve
+        and regression <= th.max_regression_risk_approve
         and verified
+        and repair_converged
+        and not sensitive_mode
     ):
         return PolicyDecision(
             action=Action.APPROVE,
             merge_blocker=False,
-            reason="High utility, acceptable risk, and verification passed.",
+            reason="High utility, acceptable risk, verification passed, and repair converged.",
             candidate=candidate_id,
             requires_verification=False,
             requires_repair=False,
-            sensitive_mode=sensitive_mode,
+            sensitive_mode=False,
             policy_flags={
                 "critical_violations": False,
                 "low_security": low_security,
                 "uncertainty_high": False,
+                "repair_not_converged": False,
             },
             thresholds=asdict(th),
         )
 
+    # Review / verify path
     if (
         utility >= th.review_utility
         or security_review
         or uncertainty_review
         or risk_block
         or any_violations
+        or not repair_converged
     ):
-        merge_blocker = sensitive_mode or risk_block or uncertainty_review or any_violations
+        merge_blocker = sensitive_mode or risk_block or uncertainty_review or any_violations or not repair_converged
         return PolicyDecision(
             action=Action.NEEDS_VERIFICATION,
             merge_blocker=merge_blocker,
             reason="Candidate is promising but requires further verification or risk review.",
             candidate=candidate_id,
             requires_verification=True,
-            requires_repair=not verified and (utility < th.approve_utility or security_review),
+            requires_repair=not verified or not repair_converged or utility < th.approve_utility or security_review,
             sensitive_mode=sensitive_mode,
             policy_flags={
                 "critical_violations": False,
                 "low_security": low_security,
                 "uncertainty_high": uncertainty_review,
                 "risk_high": risk_block,
+                "repair_not_converged": not repair_converged,
             },
             thresholds=asdict(th),
         )
@@ -284,7 +294,7 @@ def decide_policy(
     if utility >= th.reject_utility:
         return PolicyDecision(
             action=Action.NEEDS_REPAIR,
-            merge_blocker=sensitive_mode or uncertainty_block,
+            merge_blocker=sensitive_mode or uncertainty_block or not repair_converged,
             reason="Candidate is not strong enough to approve; repair is recommended.",
             candidate=candidate_id,
             requires_verification=False,
@@ -294,6 +304,7 @@ def decide_policy(
                 "critical_violations": False,
                 "low_security": low_security,
                 "uncertainty_high": uncertainty_block,
+                "repair_not_converged": not repair_converged,
             },
             thresholds=asdict(th),
         )
@@ -311,6 +322,7 @@ def decide_policy(
             "low_security": low_security,
             "uncertainty_high": uncertainty_block,
             "risk_high": risk_block,
+            "repair_not_converged": not repair_converged,
         },
         thresholds=asdict(th),
     )
