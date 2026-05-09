@@ -6,7 +6,9 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from evaluate import evaluate_payload
+from policy import PolicyEngine
 
+policy_engine = PolicyEngine()
 
 class CandidatePayload(BaseModel):
     id: str | None = None
@@ -743,19 +745,21 @@ def _final_decision(
             "merge_blocker": False,
         }
 
-    if mode.lower() in {"secure", "robust", "critical"} or evaluation.get("requires_verification"):
-        return {
-            "action": "needs_verification",
-            "reason": "Candidate passes policy checks but safety-sensitive mode requires human or test verification.",
-            "candidate": selected["candidate"],
-            "merge_blocker": mode.lower() == "critical",
-        }
-
+    # Delegate final decision to central PolicyEngine
+    policy = policy_engine.decide(
+        evaluation=evaluation,
+        selected=selected,
+        mode=mode,
+    )
     return {
-        "action": "approve",
-        "reason": "Candidate has the best risk-adjusted utility and passes policy checks.",
-        "candidate": selected["candidate"],
-        "merge_blocker": False,
+        "action": policy.action.value,
+        "reason": policy.reason,
+        "candidate": policy.candidate,
+        "merge_blocker": policy.merge_blocker,
+        "requires_verification": policy.requires_verification,
+        "requires_repair": policy.requires_repair,
+        "sensitive_mode": policy.sensitive_mode,
+        "policy_flags": policy.policy_flags,
     }
 
 
