@@ -972,11 +972,6 @@ def _run_pr_safety_flow(
         log.warning("safety_flow_failed", extra={"exc": str(exc), "trace_id": trace_id})
         return None
 
-@app.post("/run", dependencies=[Depends(_require_api_key)])
-async def run_pipeline_endpoint(payload: dict):
-    from pipeline import run_pipeline_from_json
-    return await run_pipeline_from_json(payload)
-
 
 def _build_pr_safety_prompt(
     repo: str,
@@ -1482,6 +1477,11 @@ app.add_middleware(
 
 # =============================================================================
 # 17. MIDDLEWARE / ERROR HANDLERS
+
+@app.post("/run", dependencies=[Depends(_require_api_key)])
+async def run_pipeline_endpoint(payload: dict):
+    from pipeline import run_pipeline_from_json
+    return await run_pipeline_from_json(payload)
 # =============================================================================
 
 
