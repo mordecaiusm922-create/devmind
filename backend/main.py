@@ -1,12 +1,4 @@
-﻿"""
-
-
-
-@app.post("/sandbox", dependencies=[Depends(_require_api_key)])
-async def sandbox_endpoint(payload: dict):
-    from sandbox import sandbox_from_dict
-    return sandbox_from_dict(payload)
-
+﻿
 """
 main.py -- DevMind SaaS API
 
@@ -981,6 +973,16 @@ def _run_pr_safety_flow(
         log.warning("safety_flow_failed", extra={"exc": str(exc), "trace_id": trace_id})
         return None
 
+@app.post("/sandbox", dependencies=[Depends(_require_api_key)])
+async def sandbox_endpoint(payload: dict):
+    from sandbox import sandbox_from_dict
+    return sandbox_from_dict(payload)
+
+@app.post("/run", dependencies=[Depends(_require_api_key)])
+async def run_pipeline_endpoint(payload: dict):
+    from pipeline import run_pipeline_from_json
+    return await run_pipeline_from_json(payload)
+
 
 def _build_pr_safety_prompt(
     repo: str,
@@ -1678,6 +1680,16 @@ async def evaluate_endpoint(req: EvaluateRequest):
 @app.post("/safety-flow", dependencies=[Depends(_require_api_key)])
 async def safety_flow_endpoint(req: SafetyFlowRequest):
     return run_safety_flow(req)
+
+@app.post("/sandbox", dependencies=[Depends(_require_api_key)])
+async def sandbox_endpoint(payload: dict):
+    from sandbox import sandbox_from_dict
+    return sandbox_from_dict(payload)
+
+@app.post("/run", dependencies=[Depends(_require_api_key)])
+async def run_pipeline_endpoint(payload: dict):
+    from pipeline import run_pipeline_from_json
+    return await run_pipeline_from_json(payload)
 
 @app.get("/memory", dependencies=[Depends(_require_api_key)])
 async def memory_endpoint(repo: str, recent: int = 10):
