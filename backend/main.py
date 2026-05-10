@@ -1330,6 +1330,7 @@ def _compact_safety_flow(safety_flow: dict[str, Any] | None) -> dict[str, Any]:
         "available": True,
         "flow": safety_flow.get("flow", []),
         "decision": safety_flow.get("decision", {}),
+        "deployment_policy": safety_flow.get("deployment_policy", {}),
         "selected": safety_flow.get("selected"),
         "ranking": safety_flow.get("ranking", [])[:5],
         "risk": safety_flow.get("risk", {}),
@@ -1477,11 +1478,6 @@ app.add_middleware(
 
 # =============================================================================
 # 17. MIDDLEWARE / ERROR HANDLERS
-
-@app.post("/run", dependencies=[Depends(_require_api_key)])
-async def run_pipeline_endpoint(payload: dict):
-    from pipeline import run_pipeline_from_json
-    return await run_pipeline_from_json(payload)
 # =============================================================================
 
 
@@ -1718,6 +1714,3 @@ async def repair_endpoint(req: RepairRequest):
 @app.post("/verify")
 async def verify_endpoint(req: VerifyRequest):
     return verify_candidate(req)
-
-
-

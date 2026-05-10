@@ -9,6 +9,7 @@ from typing import Any, Mapping, Optional
 class Action(str, Enum):
     APPROVE = "approve"
     REVIEW = "review"
+    REVISE = "revise"
     REJECT = "reject"
     NEEDS_VERIFICATION = "needs_verification"
     NEEDS_REPAIR = "needs_repair"
@@ -58,6 +59,16 @@ class PolicyDecision:
     sensitive_mode: bool = False
     policy_flags: dict[str, bool] = field(default_factory=dict)
     thresholds: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class DeploymentPolicyResult:
+    action: str
+    merge_blocker: bool
+    reason: str
+    violations: list[dict[str, Any]] = field(default_factory=list)
+    warnings: list[dict[str, Any]] = field(default_factory=list)
+    evidence: dict[str, Any] = field(default_factory=dict)
 
 
 def _get(obj: Any, key: str, default: Any = None) -> Any:
@@ -342,6 +353,134 @@ def to_dict(decision: PolicyDecision) -> dict[str, Any]:
     return asdict(decision)
 
 
+def evaluate_deployment_policy(
+    *,
+    representation: dict[str, Any],
+    runtime_evidence: dict[str, Any],
+    risk: dict[str, Any],
+    selected: dict[str, Any] | None = None,
+    mode: str | RiskMode | None = None,
+) -> DeploymentPolicyResult:
+    selected = selected or {}
+    mode_value = _as_mode(mode).value
+    violations: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+
+    execution = representation.get("execution_evidence") or {}
+    for check in execution.get("checks", []) or []:
+        name = str(check.get("name") or "")
+        status = str(check.get("status") or "")
+        if status == "fail" and name in {
+            "terraform_public_cidr",
+            "terraform_public_storage",
+            "terraform_public_database",
+            "terraform_iam_wildcard",
+            "terraform_destructive_change",
+            "gha_untrusted_secret_access",
+            "gha_curl_bash",
+        }:
+            violations.append(
+                {
+                    "policy": name,
+                    "severity": "critical",
+                    "action": "BLOCK",
+                    "evidence": check.get("evidence"),
+                    "file": check.get("file"),
+                }
+            )
+        elif status in {"warn", "fail"}:
+            warnings.append(
+                {
+                    "policy": name,
+                    "severity": "medium" if status == "warn" else "high",
+                    "action": "REVIEW",
+                    "evidence": check.get("evidence"),
+                    "file": check.get("file"),
+                }
+            )
+
+    selected_candidate = str(selected.get("candidate") or "")
+    runtime_items = []
+    if selected_candidate and selected_candidate in (runtime_evidence or {}):
+        runtime_items = [runtime_evidence[selected_candidate]]
+    else:
+        runtime_items = list((runtime_evidence or {}).values())
+
+    for check in runtime_items:
+        if check.get("status") == "failed":
+            violations.append(
+                {
+                    "policy": "runtime_evidence_failed",
+                    "severity": "high",
+                    "action": "REVIEW",
+                    "evidence": check.get("failed_checks", []),
+                    "file": check.get("filename"),
+                }
+            )
+
+    blast = representation.get("blast_radius") or {}
+    if str(blast.get("level")) == "critical" and mode_value in {"secure", "critical"}:
+        warnings.append(
+            {
+                "policy": "critical_blast_radius",
+                "severity": "high",
+                "action": "REVIEW",
+                "evidence": blast.get("reasons", []),
+            }
+        )
+
+    if risk.get("score", 0) >= 85:
+        warnings.append(
+            {
+                "policy": "risk_score_threshold",
+                "severity": "high",
+                "action": "REVIEW",
+                "evidence": f"risk.score={risk.get('score')}",
+            }
+        )
+
+    if selected.get("critical_violations"):
+        violations.append(
+            {
+                "policy": "candidate_critical_violations",
+                "severity": "critical",
+                "action": "BLOCK",
+                "evidence": selected.get("critical_violations", []),
+            }
+        )
+
+    if any(v.get("action") == "BLOCK" for v in violations):
+        first = violations[0]
+        return DeploymentPolicyResult(
+            action="BLOCK",
+            merge_blocker=True,
+            reason=f"{first.get('policy')} violated deployment policy.",
+            violations=violations,
+            warnings=warnings,
+            evidence={"mode": mode_value, "execution_status": execution.get("status"), "risk": risk},
+        )
+
+    if violations or warnings:
+        first = (violations or warnings)[0]
+        return DeploymentPolicyResult(
+            action="REVIEW",
+            merge_blocker=mode_value in {"secure", "critical"} or bool(violations),
+            reason=f"{first.get('policy')} requires verification before deployment.",
+            violations=violations,
+            warnings=warnings,
+            evidence={"mode": mode_value, "execution_status": execution.get("status"), "risk": risk},
+        )
+
+    return DeploymentPolicyResult(
+        action="ALLOW",
+        merge_blocker=False,
+        reason="No deployment policy violations detected.",
+        violations=[],
+        warnings=[],
+        evidence={"mode": mode_value, "execution_status": execution.get("status"), "risk": risk},
+    )
+
+
 class PolicyEngine:
     """
     Small wrapper so your pipeline can hold a policy object.
@@ -372,3 +511,20 @@ class PolicyEngine:
         mode: str | RiskMode | None = None,
     ) -> bool:
         return self.decide(evaluation, selected, mode=mode).merge_blocker
+
+    def evaluate_deployment(
+        self,
+        *,
+        representation: dict[str, Any],
+        runtime_evidence: dict[str, Any],
+        risk: dict[str, Any],
+        selected: dict[str, Any] | None = None,
+        mode: str | RiskMode | None = None,
+    ) -> DeploymentPolicyResult:
+        return evaluate_deployment_policy(
+            representation=representation,
+            runtime_evidence=runtime_evidence,
+            risk=risk,
+            selected=selected,
+            mode=mode,
+        )

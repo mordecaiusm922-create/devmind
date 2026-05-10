@@ -148,6 +148,8 @@ def run_safety_flow(req: SafetyFlowRequest) -> dict[str, Any]:
     risk = _safety_flow_risk(representation, selected, decision)
     if req.repo:
         risk = _calibrate_risk(req.repo, risk)
+    deployment_policy = _deployment_policy(req.mode, representation, runtime_evidence, risk, selected)
+    decision, risk = _apply_deployment_policy(decision, risk, deployment_policy)
     record = _record_flow_result(req, selected, decision, representation, operational_metrics, risk)
 
     return {
@@ -180,6 +182,7 @@ def run_safety_flow(req: SafetyFlowRequest) -> dict[str, Any]:
         "ranking": ranking,
         "selected": selected,
         "decision": decision,
+        "deployment_policy": deployment_policy,
         "risk": risk,
         "operational_metrics": operational_metrics,
         "prior": prior_data,
@@ -786,6 +789,7 @@ def _build_change_representation(
         high_risk_nodes = find_high_risk_nodes(graph)[:8]
     except Exception:
         graph_stats = {"node_count": 0, "edge_count": 0, "file_count": len(files)}
+    execution_evidence = _observed_execution_evidence(files)
 
     trust_boundaries = _trust_boundaries(surface, files)
     blast_radius = _blast_radius(files, surface, candidates, graph_stats, high_risk_nodes)
@@ -807,6 +811,7 @@ def _build_change_representation(
         "critical_findings": critical_findings,
         "trust_boundaries": trust_boundaries,
         "blast_radius": blast_radius,
+        "execution_evidence": execution_evidence,
         "graph": graph_stats,
         "high_risk_nodes": high_risk_nodes,
         "memory_prior": prior_data,
@@ -1399,6 +1404,22 @@ def _runtime_evidence(
         }
 
 
+def _observed_execution_evidence(files: list[dict[str, Any]]) -> dict[str, Any]:
+    try:
+        from execution_sandbox import verify_observed_change
+
+        return verify_observed_change(files)
+    except Exception as exc:
+        return {
+            "mode": "observed_change_static_execution",
+            "status": "inconclusive",
+            "score": 0.5,
+            "checks": [{"name": "observed_execution_error", "status": "warn", "evidence": str(exc)}],
+            "failed_checks": [],
+            "warning_checks": ["observed_execution_error"],
+        }
+
+
 def _calibrate_risk(repo: str, risk: dict[str, Any]) -> dict[str, Any]:
     try:
         from calibration import calibrate_probability
@@ -1416,6 +1437,68 @@ def _calibrate_risk(repo: str, risk: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         risk["calibration"] = {"method": "unavailable", "error": str(exc)}
     return risk
+
+
+def _deployment_policy(
+    mode: str,
+    representation: dict[str, Any],
+    runtime_evidence: dict[str, Any],
+    risk: dict[str, Any],
+    selected: dict[str, Any] | None,
+) -> dict[str, Any]:
+    try:
+        return policy_engine.evaluate_deployment(
+            representation=representation,
+            runtime_evidence=runtime_evidence,
+            risk=risk,
+            selected=selected,
+            mode=mode,
+        ).__dict__
+    except Exception as exc:
+        return {
+            "action": "REVIEW",
+            "merge_blocker": True,
+            "reason": f"Deployment policy evaluation failed: {exc}",
+            "violations": [],
+            "warnings": [{"policy": "policy_engine_error", "evidence": str(exc)}],
+            "evidence": {},
+        }
+
+
+def _apply_deployment_policy(
+    decision: dict[str, Any],
+    risk: dict[str, Any],
+    deployment_policy: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    action = str(deployment_policy.get("action") or "").upper()
+    if action == "BLOCK":
+        decision = {
+            **decision,
+            "action": "reject",
+            "reason": deployment_policy.get("reason", "Deployment policy blocked this change."),
+            "merge_blocker": True,
+            "deployment_policy_action": "BLOCK",
+        }
+        risk = {**risk, "score": max(int(risk.get("score") or 0), 90), "band": "critical", "triage": "P0"}
+        risk["p_exploit"] = max(float(risk.get("p_exploit") or 0.0), 0.90)
+    elif action == "REVIEW" and decision.get("action") == "approve":
+        decision = {
+            **decision,
+            "action": "needs_verification",
+            "reason": deployment_policy.get("reason", "Deployment policy requires review."),
+            "merge_blocker": bool(deployment_policy.get("merge_blocker", False)),
+            "deployment_policy_action": "REVIEW",
+        }
+        risk = {**risk, "score": max(int(risk.get("score") or 0), 55)}
+        if risk["score"] >= 80:
+            risk["band"] = "critical"
+        elif risk["score"] >= 60:
+            risk["band"] = "high"
+        else:
+            risk["band"] = "medium"
+    else:
+        decision = {**decision, "deployment_policy_action": action or "UNKNOWN"}
+    return decision, risk
 
 
 def _record_flow_result(

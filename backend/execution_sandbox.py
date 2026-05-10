@@ -10,6 +10,8 @@ _DANGEROUS_RUNTIME = re.compile(
     r"\beval\(|\bexec\(|shell\s*=\s*true|os\.system|pickle\.loads|yaml\.load\(|verify\s*=\s*false",
     re.IGNORECASE,
 )
+_TERRAFORM_EXTENSIONS = (".tf", ".tfvars")
+_WORKFLOW_PATH_RE = re.compile(r"(^|/)\.github/workflows/.*\.ya?ml$", re.IGNORECASE)
 
 
 def verify_runtime_evidence(
@@ -50,6 +52,31 @@ def verify_runtime_evidence(
         "filename": filename,
         "status": "failed" if failed else "passed" if passed else "inconclusive",
         "score": round(score, 4),
+        "checks": checks,
+        "failed_checks": [check["name"] for check in failed],
+        "warning_checks": [check["name"] for check in warnings],
+    }
+
+
+def verify_observed_change(files: list[dict[str, Any]]) -> dict[str, Any]:
+    checks: list[dict[str, Any]] = []
+    for file in files:
+        filename = str(file.get("filename") or "")
+        diff = str(file.get("diff") or file.get("raw_patch") or "")
+        lower_name = filename.lower()
+        if lower_name.endswith(_TERRAFORM_EXTENSIONS):
+            checks.extend(_terraform_checks(filename, diff))
+        if _WORKFLOW_PATH_RE.search(filename):
+            checks.extend(_github_actions_checks(filename, diff))
+
+    failed = [check for check in checks if check["status"] == "fail"]
+    warnings = [check for check in checks if check["status"] == "warn"]
+    passed = [check for check in checks if check["status"] == "pass"]
+    score = 1.0 - 0.25 * len(failed) - 0.08 * len(warnings)
+    return {
+        "mode": "observed_change_static_execution",
+        "status": "failed" if failed else "passed" if passed else "not_applicable",
+        "score": round(max(0.0, min(1.0, score)), 4),
         "checks": checks,
         "failed_checks": [check["name"] for check in failed],
         "warning_checks": [check["name"] for check in warnings],
@@ -138,3 +165,45 @@ def _rollback_check(properties: list[str], code: str) -> dict[str, Any]:
     if any(marker in lower for marker in ("rollback", "revert", "rollout undo", "previous module version", "terraform plan")):
         return {"name": "rollback", "status": "pass", "evidence": "Rollback marker present."}
     return {"name": "rollback", "status": "fail", "evidence": "Rollback property required but no rollback marker was found."}
+
+
+def _terraform_checks(filename: str, diff: str) -> list[dict[str, Any]]:
+    added = _added_code(diff).lower()
+    checks: list[dict[str, Any]] = []
+    if not added.strip():
+        return checks
+
+    terraform_rules = (
+        ("terraform_public_cidr", r"0\.0\.0\.0/0", "Public CIDR detected in Terraform change."),
+        ("terraform_public_storage", r"public-read|public_access\s*=\s*true|block_public_acls\s*=\s*false", "Public storage exposure detected."),
+        ("terraform_public_database", r"publicly_accessible\s*=\s*true", "Public database exposure detected."),
+        ("terraform_iam_wildcard", r"action\s*=\s*['\"]\*['\"]|actions\s*=\s*\[\s*['\"]\*['\"]|resource\s*=\s*['\"]\*['\"]|\*:\*", "IAM wildcard permission detected."),
+        ("terraform_destructive_change", r"drop column|skip_final_snapshot\s*=\s*true|prevent_destroy\s*=\s*false|force_destroy\s*=\s*true", "Potential destructive Terraform change detected."),
+    )
+    for name, pattern, evidence in terraform_rules:
+        if re.search(pattern, added, re.IGNORECASE):
+            checks.append({"name": name, "status": "fail", "file": filename, "evidence": evidence})
+
+    if not any(check["status"] == "fail" for check in checks):
+        checks.append({"name": "terraform_static_plan", "status": "pass", "file": filename, "evidence": "No deterministic destructive/public Terraform pattern detected."})
+    return checks
+
+
+def _github_actions_checks(filename: str, diff: str) -> list[dict[str, Any]]:
+    added = _added_code(diff).lower()
+    checks: list[dict[str, Any]] = []
+    if not added.strip():
+        return checks
+
+    if re.search(r"pull_request_target[\s\S]{0,400}(secrets\.|github_token|permissions:\s*write-all)", added):
+        checks.append({"name": "gha_untrusted_secret_access", "status": "fail", "file": filename, "evidence": "pull_request_target can access secrets or broad token permissions."})
+    if re.search(r"uses:\s*[\w.-]+/[\w.-]+@(main|master|latest)", added):
+        checks.append({"name": "gha_unpinned_action", "status": "warn", "file": filename, "evidence": "Action is not pinned to an immutable version."})
+    if re.search(r"curl .*\|.*bash|invoke-webrequest .*\|", added):
+        checks.append({"name": "gha_curl_bash", "status": "fail", "file": filename, "evidence": "Build pipeline executes remote shell content."})
+    if re.search(r"skip[_-]?tests\s*=\s*true|--skip-tests|test\s*:\s*false", added):
+        checks.append({"name": "gha_skips_tests", "status": "warn", "file": filename, "evidence": "Pipeline appears to skip tests."})
+
+    if not checks:
+        checks.append({"name": "gha_static_policy", "status": "pass", "file": filename, "evidence": "No deterministic unsafe GitHub Actions pattern detected."})
+    return checks
