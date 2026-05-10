@@ -1168,6 +1168,7 @@ class DevMindPipeline:
         current = candidate
         converged = False
         iterations = 0
+        semantic_stagnation_count = 0
 
         for i in range(self.max_repair_iters):
             iterations = i + 1
