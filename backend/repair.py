@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import re
 from dataclasses import dataclass, field, asdict
 from typing import Any, Optional
@@ -35,6 +36,12 @@ class RepairResult:
 # ============================================================
 # Helpers
 # ============================================================
+
+SQLI_PATTERNS = [
+    (r'''execute\s*\(\s*["'].*?["']\s*\+\s*\w+''', "raw_concat"),
+    (r'''execute\s*\(.*?\.format\(''', "format_string"),
+    (r'''execute\s*\(\s*f["']''', "fstring"),
+]
 
 def _safe_str(value: Any, default: str = "") -> str:
     if value is None:
@@ -83,7 +90,53 @@ def _extract_code_text(candidate: dict[str, Any]) -> str:
     return "\n".join([diff, explanation, strategy]).strip()
 
 
-def _rewrite_sql_injection(candidate: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+def _rewrite_sql_injection(diff: str) -> tuple[str, bool]:
+    changed = False
+
+    new = re.sub(
+        r'''cursor\.execute\(\s*["']SELECT \* FROM (\w+) WHERE (\w+) = ['"]\s*["']\s*\+\s*(\w+)\s*\+\s*["']\s*['"]\s*\)''',
+        r'''cursor.execute("SELECT * FROM \1 WHERE \2 = %s", [\3])''',
+        diff,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if new != diff:
+        changed = True
+        diff = new
+
+    new = re.sub(
+        r'''execute\s*\(\s*["']SELECT \* FROM (\w+) WHERE (\w+) = ['"]\s*["']\s*\+\s*(\w+)\s*\+\s*["']\s*['"]\s*\)''',
+        r'''execute("SELECT * FROM \1 WHERE \2 = %s", [\3])''',
+        diff,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if new != diff:
+        changed = True
+        diff = new
+
+    new = re.sub(
+        r'''["']SELECT \* FROM (\w+) WHERE (\w+) = \{\}["']\.format\((\w+)\)''',
+        r'''"SELECT * FROM \1 WHERE \2 = %s", [\3]''',
+        diff,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if new != diff:
+        changed = True
+        diff = new
+
+    new = re.sub(
+        r'''execute\s*\(\s*f["']SELECT \* FROM (\w+) WHERE (\w+) = \{(\w+)\}["']\s*\)''',
+        r'''execute("SELECT * FROM \1 WHERE \2 = %s", [\3])''',
+        diff,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if new != diff:
+        changed = True
+        diff = new
+
+    return diff, changed
+
+
+def _rewrite_sql_injection_candidate(candidate: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """
     Turn string concatenation / interpolation into parameterized SQL patterns.
     This is conservative and intentionally simple.
@@ -105,7 +158,19 @@ def _rewrite_sql_injection(candidate: dict[str, Any]) -> tuple[dict[str, Any], l
         r'f["\'].*\{.*\}.*["\']',
     ]
 
-    if any(re.search(p, text, re.I | re.S) for p in unsafe_concat_patterns):
+    rewritten_diff, rewritten = _rewrite_sql_injection(diff)
+
+    if rewritten:
+        changed = True
+        notes.append("rewrote_sql_to_parameterized_query")
+        candidate["diff"] = rewritten_diff
+        candidate["strategy"] = "parameterized-query"
+        candidate["explanation"] = "AST rewrite: raw SQL -> parameterized query."
+        candidate.setdefault("metadata", {})
+        candidate["metadata"]["repaired"] = True
+        candidate["metadata"]["repair_kind"] = "sql_injection_fix"
+
+    elif any(re.search(p, text, re.I | re.S) for p in unsafe_concat_patterns):
         changed = True
         notes.append("replaced_unsafe_sql_construction")
 
@@ -234,7 +299,7 @@ def _apply_intent_repair(intent: str, candidate: dict[str, Any]) -> tuple[dict[s
     intent = (intent or "general_fix").lower()
 
     if intent == "sql_injection_fix":
-        repaired, notes = _rewrite_sql_injection(candidate)
+        repaired, notes = _rewrite_sql_injection_candidate(candidate)
         return repaired, notes, "parameterize_sql"
     if intent == "secure_fix":
         repaired, notes = _rewrite_secret_fix(candidate)

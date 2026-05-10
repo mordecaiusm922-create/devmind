@@ -21,6 +21,11 @@ except Exception:  # pragma: no cover - keeps the standalone script usable if im
     verify_candidate_evidence = None
     verify_sql_semantics = None
 
+try:
+    from repair import _rewrite_sql_injection
+except Exception:  # pragma: no cover
+    _rewrite_sql_injection = None
+
 
 MAX_REPAIR_BUDGET = 3
 MAX_SECURITY_REGRESSION = 0.10
@@ -696,6 +701,23 @@ class DefaultRepairerEngine:
     ) -> Candidate:
         text = candidate.diff
         prompt = task.prompt.lower()
+        intent_label = str(getattr(intent, "label", "") or "").lower()
+
+        if intent_label == "sql_injection_fix" and _rewrite_sql_injection is not None:
+            new_diff, changed = _rewrite_sql_injection(candidate.diff)
+            if changed:
+                return Candidate(
+                    id=f"sql-safe-{candidate.id}",
+                    diff=new_diff,
+                    strategy="parameterized-query",
+                    explanation="AST rewrite: raw SQL -> parameterized query",
+                    metadata={
+                        **candidate.metadata,
+                        "repaired": True,
+                        "repaired_from": candidate.id,
+                        "repair_type": "ast_sql",
+                    },
+                )
 
         # Specialized repair for secret key handling
         if "secret_key" in prompt or "secret" in prompt:

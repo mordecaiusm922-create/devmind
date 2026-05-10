@@ -22,6 +22,11 @@ _SQL_ASSIGN_DYNAMIC_RE = re.compile(
     r".*\.format\s*\()"
 )
 _VALIDATE_EMAIL_RE = re.compile(r"\bvalidate_email\s*\(", re.IGNORECASE)
+SQL_UNSAFE = [
+    r'''execute\s*\(.*["\'].*\+\s*\w+''',
+    r'''execute\s*\(.*\.format\(''',
+    r'''execute\s*\(\s*f["\']''',
+]
 
 
 def verify_sql_semantics(diff: str, *, require_validate_email: bool | None = None) -> dict[str, Any]:
@@ -138,6 +143,20 @@ def verify_candidate_evidence(candidate: dict[str, Any], context: dict[str, Any]
     sandbox_evidence = run_sandbox(candidate, context or {})
     traps = traps_from_sandbox(sandbox_evidence)
     violations = [_trap_to_violation(trap, sandbox_evidence) for trap in traps]
+    text = "\n".join(
+        str(candidate.get(key, "") or "")
+        for key in ("diff", "code", "content", "strategy", "explanation")
+    )
+    for pat in SQL_UNSAFE:
+        if re.search(pat, text, re.IGNORECASE | re.DOTALL):
+            violations.append(
+                {
+                    "type": "sql_injection",
+                    "severity": "critical",
+                    "message": "SQL string concatenation/interpolation detectada",
+                }
+            )
+            break
     return {
         "sandbox_evidence": sandbox_evidence,
         "traps": [trap.value for trap in traps],
