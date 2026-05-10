@@ -506,6 +506,10 @@ class DefaultEvaluatorEngine:
         prompt = task.prompt.lower()
 
         hardcoded_secret_fix = ("secret_key" in prompt or "secret" in prompt) and "os.environ.get" in text
+        uses_parameterized_query = ("%s" in text) or ("? " in text)
+        uses_string_concat_sql = ("execute" in text) and ("+" in text)
+        uses_orm = ("objects.filter" in text) or ("objects.get" in text)
+        uses_validate = ("validate_email" in text) or ("validate(" in text)
         fail_fast = "raise valueerror" in text or "raise runtimeerror" in text
         imports_os = "import os" in text
         minimal = "minimal" in candidate.strategy.lower()
@@ -524,6 +528,25 @@ class DefaultEvaluatorEngine:
         uncertainty = 0.28
         confidence = 0.72
 
+        if uses_string_concat_sql:
+            security -= 0.35
+            catastrophic_risk += 0.25
+            uncertainty += 0.12
+            correctness -= 0.15
+        if uses_parameterized_query:
+            security += 0.22
+            catastrophic_risk -= 0.10
+            uncertainty -= 0.08
+            correctness += 0.10
+        if uses_orm:
+            security += 0.28
+            catastrophic_risk -= 0.14
+            uncertainty -= 0.10
+            maintainability += 0.08
+        if uses_validate:
+            security += 0.08
+            correctness += 0.06
+            catastrophic_risk -= 0.04
         if hardcoded_secret_fix:
             correctness += 0.18
             security += 0.22
