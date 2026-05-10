@@ -637,7 +637,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
         dec = sf_result.get("decision", {})
         sf_section = f"""
 ### Safety Flow
-**Decision:** `{dec.get('action', 'N/A')}` — Candidate `{sel.get('candidate', 'N/A')}`
+**Decision:** `{dec.get('action', 'N/A')}` -- Candidate `{sel.get('candidate', 'N/A')}`
 **Risk-adjusted utility:** `{sel.get('risk_adjusted_utility', 0)}`
 **Security:** `{sel.get('security', 0)}`
 **Verified:** `{sel.get('verified', False)}`
@@ -645,7 +645,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
 """
     return f"""## {emoji} DevMind Risk Analysis
 
-**{triage}** — Risk Score `{score}/100` — **{level.upper()}**
+**{triage}** -- Risk Score `{score}/100` -- **{level.upper()}**
 {blocker_md}
 
 ### Risk Breakdown
@@ -1723,3 +1723,4 @@ async def repair_endpoint(req: RepairRequest):
 @app.post("/verify")
 async def verify_endpoint(req: VerifyRequest):
     return verify_candidate(req)
+
