@@ -251,47 +251,78 @@ class ApplierEngine(Protocol):
 # ============================================================
 
 class DefaultIntentEngine:
-    KEYWORDS: Tuple[Tuple[str, str], ...] = (
-        (r"\b(secret|secrets|secret_key|token|password|credential)\b", "security"),
-        (r"\b(race condition|concurrency|thread|lock|mutex|deadlock)\b", "concurrency"),
-        (r"\b(performance|latency|fast|optimi[sz]e|throughput)\b", "performance"),
-        (r"\b(refactor|clean up|cleanup|maintainability|simplify)\b", "refactor"),
-        (r"\b(test|unit test|integration test|coverage)\b", "testing"),
-        (r"\b(auth|authentication|authorization|permission|rbac)\b", "auth"),
-        (r"\b(critical|prod|production|payment|billing|money)\b", "critical"),
+    SIGNALS = (
+        (r"\b(sql injection|sqli|parameterized sql|unsafe query)\b", "sql_injection_fix", 0.42),
+        (r"\b(xss|cross[- ]site scripting)\b", "xss_fix", 0.40),
+        (r"\b(csrf|cross[- ]site request forgery)\b", "csrf_fix", 0.38),
+        (r"\b(ssrf|server[- ]side request forgery)\b", "ssrf_fix", 0.42),
+        (r"\b(rce|remote code execution|command injection)\b", "rce_fix", 0.48),
+        (r"\b(auth bypass|authorization bypass|privilege escalation)\b", "auth_bypass_fix", 0.45),
+        (r"\b(secret|secret_key|api[_-]?key|token|password|credential)\b", "secret_fix", 0.36),
+        (r"\b(auth|authentication|authorization|rbac|permission)\b", "auth_fix", 0.28),
+        (r"\b(race condition|deadlock|mutex|lock contention|thread safety)\b", "concurrency_fix", 0.40),
+        (r"\b(timeout|retry|backoff|idempotency|circuit breaker)\b", "reliability_fix", 0.24),
+        (r"\b(performance|latency|throughput|optimi[sz]e|slow query)\b", "performance_fix", 0.26),
+        (r"\b(n\+1|cache miss|memory leak)\b", "performance_fix", 0.32),
+        (r"\b(terraform|helm|kubernetes|k8s|docker|ci/cd|pipeline)\b", "infra_fix", 0.30),
+        (r"\b(refactor|cleanup|maintainability|simplify)\b", "refactor", 0.18),
+        (r"\b(test|unit test|integration test|coverage)\b", "testing", 0.16),
     )
 
     async def infer(self, task: TaskInput) -> IntentHypothesis:
+        import re as _re
         text = (task.prompt or "").lower()
-        counts: Dict[str, int] = {}
+        scores: Dict[str, float] = {}
+        evidence: Dict[str, list] = {}
         notes: List[str] = []
 
-        for pattern, label in self.KEYWORDS:
-            if re.search(pattern, text):
-                counts[label] = counts.get(label, 0) + 1
+        for pattern, label, weight in self.SIGNALS:
+            match = _re.search(pattern, text)
+            if match:
+                scores[label] = scores.get(label, 0.0) + weight
+                evidence.setdefault(label, []).append(match.group(0))
                 notes.append(f"matched:{label}")
 
-        if "secret" in text or "secret_key" in text:
-            label = "secure_fix"
-        elif "race condition" in text or "concurrency" in text:
-            label = "safe_concurrency_fix"
-        elif "performance" in text or "latency" in text:
-            label = "performance_fix"
-        elif "refactor" in text:
-            label = "refactor"
-        else:
-            label = "general_fix"
+        filename = str(task.context.get("filename", "")).lower() if hasattr(task, "context") and task.context else ""
+        if any(x in filename for x in ("auth", "login", "session", "rbac")):
+            scores["auth_fix"] = scores.get("auth_fix", 0.0) + 0.12
+        if any(x in filename for x in ("payment", "billing", "checkout")):
+            scores["critical_payment_fix"] = scores.get("critical_payment_fix", 0.0) + 0.18
+        if any(x in filename for x in ("terraform", "helm", "docker")):
+            scores["infra_fix"] = scores.get("infra_fix", 0.0) + 0.15
 
-        confidence = min(0.95, 0.45 + 0.12 * len(counts))
-        alternatives = [{"label": k, "weight": v} for k, v in sorted(counts.items(), key=lambda x: (-x[1], x[0]))]
+        if not scores:
+            return IntentHypothesis(
+                label="general_fix",
+                confidence=0.41,
+                alternatives=[],
+                notes=["fallback:no_strong_signal"],
+            )
+
+        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        best_label, best_score = ranked[0]
+        second_score = ranked[1][1] if len(ranked) > 1 else 0.0
+        margin = best_score - second_score
+        confidence = min(0.98, max(0.45, 0.58 + (best_score * 0.55) + (margin * 0.18)))
 
         if task.mode in {Mode.SECURE, Mode.CRITICAL}:
-            confidence = min(0.98, confidence + 0.08)
-            notes.append("mode_bias:secure")
+            confidence = min(0.99, confidence + 0.03)
+            notes.append("mode_bias:security_sensitive")
         if task.mode == Mode.FAST:
-            confidence = max(0.35, confidence - 0.05)
+            confidence = max(0.35, confidence - 0.06)
+            notes.append("mode_bias:fast")
 
-        return IntentHypothesis(label=label, confidence=round(confidence, 4), alternatives=alternatives, notes=notes)
+        alternatives = [
+            {"label": label, "score": round(score, 4), "evidence": evidence.get(label, [])}
+            for label, score in ranked[1:4]
+        ]
+
+        return IntentHypothesis(
+            label=best_label,
+            confidence=round(confidence, 4),
+            alternatives=alternatives,
+            notes=notes[:12],
+        )
 
 
 class DefaultRetrieverEngine:
