@@ -675,31 +675,20 @@ class DefaultRepairerEngine:
         candidate: Candidate,
         score: CandidateScore,
     ) -> Candidate:
-        text = candidate.diff
-        prompt = task.prompt.lower()
-
-        # Specialized repair for secret key handling
-        if "secret_key" in prompt or "secret" in prompt:
-            if "import os" not in text:
-                text = text.replace("+SECRET_KEY", "+import os\n+SECRET_KEY")
-            if "raise valueerror" not in text.lower() and "raise runtimeerror" not in text.lower():
-                text += '\n+if not SECRET_KEY:\n+    raise ValueError("SECRET_KEY not set")\n'
-            return Candidate(
-                id=f"{candidate.id}-r1",
-                diff=text,
-                strategy=f"{candidate.strategy}-repaired",
-                explanation=f"{candidate.explanation} | repaired for stronger fail-fast security.",
-                metadata={**candidate.metadata, "repaired": True},
-            )
-
-        # Generic fallback repair
-        text += "\n# repaired"
+        from repair import repair_candidate
+        result = repair_candidate(
+            prompt=task.prompt,
+            candidate={"id": candidate.id, "diff": candidate.diff, "strategy": candidate.strategy, "explanation": candidate.explanation, "metadata": candidate.metadata, "utility": score.utility, "security": score.security, "correctness": score.correctness, "uncertainty": score.uncertainty},
+            evaluation={"intent": intent.label, "utility": score.utility, "security": score.security, "correctness": score.correctness, "uncertainty": score.uncertainty},
+            max_iters=1,
+        )
+        c = result.candidate
         return Candidate(
-            id=f"{candidate.id}-r1",
-            diff=text,
-            strategy=f"{candidate.strategy}-repaired",
-            explanation=f"{candidate.explanation} | generic repair applied.",
-            metadata={**candidate.metadata, "repaired": True},
+            id=c.get("id", candidate.id + "-r1"),
+            diff=c.get("diff", candidate.diff),
+            strategy=c.get("strategy", candidate.strategy),
+            explanation=c.get("explanation", candidate.explanation),
+            metadata=c.get("metadata", candidate.metadata),
         )
 
 
