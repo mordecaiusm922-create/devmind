@@ -1482,8 +1482,15 @@ app.add_middleware(
 
 @app.post("/sandbox", dependencies=[Depends(_require_api_key)])
 async def sandbox_endpoint(payload: dict):
-    from sandbox import sandbox_from_dict
-    return sandbox_from_dict(payload)
+    from sandbox import sandbox_candidate
+    code = (
+        payload.get("code")
+        or payload.get("candidate")
+        or payload.get("diff")
+        or ""
+    )
+    repo = payload.get("repo_path") or payload.get("repo")
+    return sandbox_candidate(code=code, repo_path=repo)
 
 @app.post("/run", dependencies=[Depends(_require_api_key)])
 async def run_pipeline_endpoint(payload: dict):
