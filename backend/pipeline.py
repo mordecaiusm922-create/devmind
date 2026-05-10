@@ -1245,6 +1245,8 @@ class DevMindPipeline:
             score = evaluation.scores.get(current.id)
             if score is None:
                 score = await self.evaluator_engine.evaluate(task, intent, evidence, current)
+            if original_score is None:
+                original_score = score
             prior = self.runtime_memory.get_repair_prior(intent) if self.runtime_memory is not None else 0.5
 
             history_entry = {
@@ -1257,9 +1259,9 @@ class DevMindPipeline:
                 "security": score.security,
                 "uncertainty": score.uncertainty,
                 "decision": evaluation.decision.value,
-                "security_delta": 0.0,
-                "utility_delta": 0.0,
-                "uncertainty_delta": 0.0,
+                "security_delta": round(new_score.security - original_score.security, 4) if (original_score and "new_score" in dir()) else 0.0,
+                "utility_delta": round(new_score.utility - original_score.utility, 4) if (original_score and "new_score" in dir()) else 0.0,
+                "uncertainty_delta": round(new_score.uncertainty - original_score.uncertainty, 4) if (original_score and "new_score" in dir()) else 0.0,
             }
             history.append(history_entry)
 
