@@ -663,7 +663,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
 **Review focus:** {s.get("review_focus", "N/A")}
 {sf_section}
 ---
-_Analyzed by DevMind • trace `{result.get("trace_id", "")}`_
+_Analyzed by DevMind - trace `{result.get("trace_id", "")}`_
 """
 
 
@@ -1723,4 +1723,5 @@ async def repair_endpoint(req: RepairRequest):
 @app.post("/verify")
 async def verify_endpoint(req: VerifyRequest):
     return verify_candidate(req)
+
 
