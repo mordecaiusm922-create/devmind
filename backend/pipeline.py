@@ -1487,7 +1487,12 @@ class DevMindPipeline:
             return zero
 
         initial = repair_result.history[0]
+        # El candidato reparado tiene ID diferente - busca el score original o re-evalua
         final_score = evaluation.scores.get(best_candidate.id)
+        if final_score is None:
+            # Busca cualquier score disponible del candidato base
+            base_id = best_candidate.id.split("-r")[0]
+            final_score = evaluation.scores.get(base_id)
         if final_score is None:
             return zero
 
