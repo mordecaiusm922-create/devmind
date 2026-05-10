@@ -1259,9 +1259,9 @@ class DevMindPipeline:
                 "security": score.security,
                 "uncertainty": score.uncertainty,
                 "decision": evaluation.decision.value,
-                "security_delta": round(new_score.security - original_score.security, 4) if (original_score and "new_score" in dir()) else 0.0,
-                "utility_delta": round(new_score.utility - original_score.utility, 4) if (original_score and "new_score" in dir()) else 0.0,
-                "uncertainty_delta": round(new_score.uncertainty - original_score.uncertainty, 4) if (original_score and "new_score" in dir()) else 0.0,
+                "security_delta": 0.0,
+                "utility_delta": 0.0,
+                "uncertainty_delta": 0.0,
             }
             history.append(history_entry)
 
@@ -1303,7 +1303,9 @@ class DevMindPipeline:
                     "post_utility": new_score.utility,
                     "post_security": new_score.security,
                     "post_uncertainty": new_score.uncertainty,
-                    **delta,
+                    "security_delta": round(new_score.security - original_score.security, 4) if original_score else 0.0,
+                    "utility_delta": round(new_score.utility - original_score.utility, 4) if original_score else 0.0,
+                    "uncertainty_delta": round(new_score.uncertainty - original_score.uncertainty, 4) if original_score else 0.0,
                 }
             )
             temp_eval = self._wrap_single_score(current, new_score)
