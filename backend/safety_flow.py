@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from evaluate import evaluate_payload
 from policy import PolicyEngine
+from verify import verify_sql_semantics
 
 policy_engine = PolicyEngine()
 
@@ -143,6 +144,12 @@ def run_safety_flow(req: SafetyFlowRequest) -> dict[str, Any]:
 
     ranking = _rank_candidates(evaluation["scores"], verifications, runtime_evidence, prior_data, representation, candidates)
     selected = ranking[0] if ranking else None
+    repair_iterations = _repair_iteration_deltas(repair_candidates, evaluation, verifications)
+    repair_converged = _repair_converged(repair_candidates, selected, verifications)
+    evaluation["repair_iterations"] = len(repair_iterations)
+    evaluation["repair_iteration_deltas"] = repair_iterations
+    evaluation["repair_converged"] = repair_converged
+    evaluation["selected_delta"] = _selected_delta(selected, evaluation)
     decision = _final_decision(req.mode, selected, evaluation, representation)
     operational_metrics = _operational_metrics(ranking, verifications, runtime_evidence, evaluation)
     risk = _safety_flow_risk(representation, selected, decision)
@@ -173,6 +180,8 @@ def run_safety_flow(req: SafetyFlowRequest) -> dict[str, Any]:
         },
         "generated": len(req.candidates) == 0,
         "repair_attempted": bool(repair_candidates),
+        "repair_converged": repair_converged,
+        "repair_iterations": repair_iterations,
         "representation": representation,
         "properties": properties,
         "candidates": candidates,
@@ -219,7 +228,7 @@ def _infer_properties(
     if any(k in text for k in ("secret", "token", "api_key", "password")) or "secrets" in surface:
         props.extend(["no_hardcoded_secret", "secret_from_environment", "fail_fast"])
     if any(k in text for k in ("sql", "query", "injection", "cursor.execute")) or "data" in surface:
-        props.extend(["no_raw_sql", "parameterized_sql"])
+        props.extend(["no_raw_sql", "parameterized_sql", "validate_email_present"])
     if any(k in text for k in ("auth", "authorization", "permission", "rbac", "is_admin")) or "auth" in surface:
         props.extend(["auth_guard_present", "no_auth_guard_removal", "fail_closed"])
     if "ci_cd" in surface:
@@ -452,6 +461,10 @@ def _verify_candidate(candidate: dict[str, Any], properties: list[str]) -> dict[
     violations: list[str] = []
     critical: list[str] = []
     evidence: list[str] = []
+    sql_semantics = verify_sql_semantics(
+        diff,
+        require_validate_email="validate_email_present" in properties,
+    )
 
     for prop in properties:
         if prop == "no_hardcoded_secret":
@@ -471,13 +484,24 @@ def _verify_candidate(candidate: dict[str, Any], properties: list[str]) -> dict[
             else:
                 evidence.append(prop)
         elif prop == "no_raw_sql":
-            if _UNSAFE_SQL_RE.search(diff) and not _PARAM_SQL_RE.search(diff):
+            if (
+                (_UNSAFE_SQL_RE.search(diff) and not _PARAM_SQL_RE.search(diff))
+                or bool(sql_semantics.get("critical_violations"))
+            ):
                 violations.append(prop)
                 critical.append(prop)
             else:
                 evidence.append(prop)
         elif prop == "parameterized_sql":
-            if not _PARAM_SQL_RE.search(diff) and "objects.filter" not in diff:
+            if bool(sql_semantics.get("critical_violations")):
+                violations.append(prop)
+                critical.append(prop)
+            elif not _PARAM_SQL_RE.search(diff) and "objects.filter" not in diff:
+                violations.append(prop)
+            else:
+                evidence.append(prop)
+        elif prop == "validate_email_present":
+            if sql_semantics.get("sql_detected") and not sql_semantics.get("validate_email_present"):
                 violations.append(prop)
             else:
                 evidence.append(prop)
@@ -580,6 +604,9 @@ def _verify_candidate(candidate: dict[str, Any], properties: list[str]) -> dict[
             else:
                 evidence.append(prop)
 
+    violations = list(dict.fromkeys(violations))
+    critical = list(dict.fromkeys(critical))
+    evidence = list(dict.fromkeys(evidence))
     score = max(0.0, 1.0 - 0.14 * len(violations) - 0.20 * len(critical))
     return {
         "verified": not violations,
@@ -587,6 +614,7 @@ def _verify_candidate(candidate: dict[str, Any], properties: list[str]) -> dict[
         "violations": violations,
         "critical_violations": critical,
         "evidence": evidence,
+        "sql_semantics": sql_semantics,
     }
 
 
@@ -1132,12 +1160,12 @@ def _repair_patch_for_violations(
             "explanation": "Replace hardcoded secret material with an environment-backed value and fail fast when missing.",
         }
 
-    if {"no_raw_sql", "parameterized_sql"} & violations:
-        body = '+cursor.execute("SELECT * FROM users WHERE email = %s", [email])'
+    if {"no_raw_sql", "parameterized_sql", "validate_email_present"} & violations:
+        body = '+validate_email(email)\n+cursor.execute("SELECT * FROM users WHERE email = %s", [email])'
         return {
             "strategy": "repair-parameterized-sql",
             "diff": _format_diff(filename, body),
-            "explanation": "Use bound parameters so external input cannot change the SQL structure.",
+            "explanation": "Validate the email input and use bound parameters so external input cannot change the SQL structure.",
         }
 
     if {"auth_guard_present", "no_auth_guard_removal", "fail_closed"} & violations:
@@ -1273,6 +1301,77 @@ def _candidate_filename(candidate: dict[str, Any], context: dict[str, Any]) -> s
     return str(context.get("filename") or context.get("file") or "app.py")
 
 
+def _repair_iteration_deltas(
+    repair_candidates: list[dict[str, Any]],
+    evaluation: dict[str, Any],
+    verifications: dict[str, Any],
+) -> list[dict[str, Any]]:
+    scores = evaluation.get("scores") or {}
+    deltas = evaluation.get("deltas") or {}
+    iterations: list[dict[str, Any]] = []
+
+    for idx, candidate in enumerate(repair_candidates, start=1):
+        cid = str(candidate.get("id"))
+        parent_id = str((candidate.get("metadata") or {}).get("repaired_from") or "")
+        before = scores.get(parent_id, {}) if isinstance(scores, dict) else {}
+        after = scores.get(cid, {}) if isinstance(scores, dict) else {}
+        delta = deltas.get(cid, {}) if isinstance(deltas, dict) else {}
+        verification = verifications.get(cid, {}) if isinstance(verifications, dict) else {}
+
+        iterations.append(
+            {
+                "iteration": idx,
+                "candidate": cid,
+                "previous_candidate": parent_id or None,
+                "fixed_properties": list((candidate.get("metadata") or {}).get("fixed_properties") or []),
+                "security_before": before.get("security"),
+                "security_after": after.get("security"),
+                "utility_before": before.get("utility"),
+                "utility_after": after.get("utility"),
+                "uncertainty_before": before.get("uncertainty"),
+                "uncertainty_after": after.get("uncertainty"),
+                "security_delta": round(float(delta.get("security_delta") or 0.0), 4),
+                "utility_delta": round(float(delta.get("utility_delta") or 0.0), 4),
+                "uncertainty_delta": round(float(delta.get("uncertainty_delta") or 0.0), 4),
+                "verified": bool(verification.get("verified")),
+                "violations": list(verification.get("violations") or []),
+                "critical_violations": list(verification.get("critical_violations") or []),
+            }
+        )
+
+    return iterations
+
+
+def _repair_converged(
+    repair_candidates: list[dict[str, Any]],
+    selected: dict[str, Any] | None,
+    verifications: dict[str, Any],
+) -> bool:
+    if not repair_candidates:
+        return True
+    if not selected:
+        return False
+
+    selected_id = str(selected.get("candidate") or "")
+    verification = verifications.get(selected_id, {})
+    return bool(verification.get("verified")) and not verification.get("critical_violations")
+
+
+def _selected_delta(selected: dict[str, Any] | None, evaluation: dict[str, Any]) -> dict[str, float]:
+    zero = {"security_delta": 0.0, "utility_delta": 0.0, "uncertainty_delta": 0.0}
+    if not selected:
+        return zero
+    deltas = evaluation.get("deltas") or {}
+    candidate_delta = deltas.get(str(selected.get("candidate") or "")) if isinstance(deltas, dict) else None
+    if not isinstance(candidate_delta, dict):
+        return zero
+    return {
+        "security_delta": round(float(candidate_delta.get("security_delta") or 0.0), 4),
+        "utility_delta": round(float(candidate_delta.get("utility_delta") or 0.0), 4),
+        "uncertainty_delta": round(float(candidate_delta.get("uncertainty_delta") or 0.0), 4),
+    }
+
+
 def _operational_metrics(
     ranking: list[dict[str, Any]],
     verifications: dict[str, Any],
@@ -1308,7 +1407,7 @@ def _operational_metrics(
         "mean_uncertainty_top_k": round(mean_uncertainty, 4),
         "selected_margin": round(selected_margin, 4),
         "selected_expected_loss": selected.get("expected_loss"),
-        "repair_convergence": bool(str(selected.get("candidate", "")).endswith("_repair")),
+        "repair_convergence": bool(evaluation.get("repair_converged", False)),
         "requires_verification": bool(evaluation.get("requires_verification")),
         "requires_repair": bool(evaluation.get("requires_repair")),
     }
@@ -1538,6 +1637,7 @@ def _record_flow_result(
                 "operational_metrics": operational_metrics,
                 "risk": risk_model,
                 "p_exploit": risk_model.get("p_exploit"),
+                "repair_converged": operational_metrics.get("repair_convergence"),
             },
         )
     except Exception as exc:

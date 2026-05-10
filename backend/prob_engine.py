@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from verify import verify_sql_semantics
+
 
 # ── Pydantic request models ──────────────────────────────────────────────────
 
@@ -408,6 +410,10 @@ def verify_candidate(req: VerifyRequest) -> dict[str, Any]:
         "has_fail_fast":       _has_fail_fast(diff),
         "no_insecure_fallback": "None" not in diff and "none" not in diff.lower(),
     }
+    sql_semantics = verify_sql_semantics(diff)
+    if sql_semantics.get("sql_detected"):
+        checks["sql_semantic_safe"] = not sql_semantics.get("critical_violations")
+        checks["validate_email_present"] = bool(sql_semantics.get("validate_email_present"))
 
     passed  = all(checks.values())
     failed  = [k for k, v in checks.items() if not v]
@@ -417,5 +423,6 @@ def verify_candidate(req: VerifyRequest) -> dict[str, Any]:
         "passed":    passed,
         "failed":    failed,
         "checks":    checks,
+        "sql_semantics": sql_semantics,
         "verdict":   "approved" if passed else "rejected",
     }

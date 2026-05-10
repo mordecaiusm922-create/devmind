@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import math
 import re
 
+from verify import verify_sql_semantics
+
 
 # ============================================================
 # Core types
@@ -85,6 +87,7 @@ class EvaluationResult:
     chosen_candidate: Optional[str]
     scores: Dict[str, CandidateScore]
     risk_summary: Dict[str, float]
+    deltas: Dict[str, Dict[str, float]] = field(default_factory=dict)
     best_rationale: List[str] = field(default_factory=list)
     requires_verification: bool = False
     requires_repair: bool = False
@@ -158,6 +161,7 @@ class Evaluator:
         scores: Dict[str, CandidateScore] = {}
         for candidate in candidates:
             scores[candidate.id] = self.evaluate_candidate(task, intent, evidence, candidate)
+        deltas = self._score_deltas(task, candidates, scores)
 
         best_candidate_id, best_score = self._select_best(scores)
         if best_candidate_id is None or best_score is None:
@@ -166,6 +170,7 @@ class Evaluator:
                 chosen_candidate=None,
                 scores=scores,
                 risk_summary={"catastrophic": 1.0, "regression": 1.0, "uncertainty": 1.0},
+                deltas=deltas,
                 best_rationale=["no valid best candidate"],
                 requires_verification=False,
                 requires_repair=True,
@@ -191,6 +196,7 @@ class Evaluator:
                 "regression": round(best_score.regression_risk, 4),
                 "uncertainty": round(best_score.uncertainty, 4),
             },
+            deltas=deltas,
             best_rationale=best_score.rationale,
             requires_verification=requires_verification,
             requires_repair=requires_repair,
@@ -547,6 +553,9 @@ class Evaluator:
         ) is not None
 
     def _has_unsafe_sql(self, diff: str) -> bool:
+        semantic = verify_sql_semantics(diff)
+        if semantic.get("critical_violations"):
+            return True
         if self._has_parameterized_sql(diff):
             return False
         d = diff.lower()
@@ -645,6 +654,95 @@ class Evaluator:
         best_id = max(scores.keys(), key=lambda cid: rank(scores[cid]))
         return best_id, scores[best_id]
 
+    def _score_deltas(
+        self,
+        task: TaskInput,
+        candidates: Sequence[Candidate],
+        scores: Dict[str, CandidateScore],
+    ) -> Dict[str, Dict[str, float]]:
+        deltas: Dict[str, Dict[str, float]] = {}
+        previous_state = self._previous_state(task)
+
+        for candidate in candidates:
+            current = scores.get(candidate.id)
+            if current is None:
+                continue
+
+            previous = None
+            parent_id = str(
+                candidate.metadata.get("repaired_from")
+                or candidate.metadata.get("previous_candidate_id")
+                or candidate.metadata.get("parent_id")
+                or ""
+            )
+            if parent_id and parent_id in scores:
+                previous = self._score_metrics(scores[parent_id])
+            else:
+                previous = self._previous_metrics_for(candidate.id, candidate.metadata, previous_state)
+
+            if previous is None:
+                continue
+
+            deltas[candidate.id] = self._metric_delta(previous, self._score_metrics(current))
+
+        return deltas
+
+    def _previous_state(self, task: TaskInput) -> Mapping[str, Any]:
+        metadata = task.metadata or {}
+        context = task.context or {}
+        state = metadata.get("previous_state", context.get("previous_state", {}))
+        return state if isinstance(state, Mapping) else {}
+
+    def _previous_metrics_for(
+        self,
+        candidate_id: str,
+        metadata: Mapping[str, Any],
+        previous_state: Mapping[str, Any],
+    ) -> Optional[Dict[str, float]]:
+        for source in (
+            metadata.get("previous_score"),
+            metadata.get("previous_state"),
+            previous_state.get(candidate_id),
+            (previous_state.get("scores", {}) or {}).get(candidate_id)
+            if isinstance(previous_state.get("scores", {}), Mapping)
+            else None,
+            previous_state,
+        ):
+            metrics = self._coerce_metrics(source)
+            if metrics is not None:
+                return metrics
+        return None
+
+    def _score_metrics(self, score: CandidateScore) -> Dict[str, float]:
+        return {
+            "security": float(score.security),
+            "utility": float(score.utility),
+            "uncertainty": float(score.uncertainty),
+        }
+
+    def _coerce_metrics(self, value: Any) -> Optional[Dict[str, float]]:
+        if isinstance(value, CandidateScore):
+            return self._score_metrics(value)
+        if not isinstance(value, Mapping):
+            return None
+        if not {"security", "utility", "uncertainty"} <= set(value.keys()):
+            return None
+        try:
+            return {
+                "security": float(value["security"]),
+                "utility": float(value["utility"]),
+                "uncertainty": float(value["uncertainty"]),
+            }
+        except (TypeError, ValueError):
+            return None
+
+    def _metric_delta(self, previous: Mapping[str, float], current: Mapping[str, float]) -> Dict[str, float]:
+        return {
+            "security_delta": round(float(current["security"]) - float(previous["security"]), 4),
+            "utility_delta": round(float(current["utility"]) - float(previous["utility"]), 4),
+            "uncertainty_delta": round(float(previous["uncertainty"]) - float(current["uncertainty"]), 4),
+        }
+
 
 # ============================================================
 # Utilities
@@ -677,6 +775,10 @@ def evaluate_payload(
     """
     evaluator = evaluator or Evaluator()
 
+    metadata = dict(payload.get("metadata", {}) or {})
+    if "previous_state" in payload:
+        metadata["previous_state"] = payload.get("previous_state")
+
     task = TaskInput(
         prompt=str(payload.get("prompt", "")),
         context=dict(payload.get("context", {}) or {}),
@@ -684,7 +786,7 @@ def evaluate_payload(
         files=list(payload.get("files", []) or []),
         mode=str(payload.get("mode", "balanced")),
         repo=payload.get("repo"),
-        metadata=dict(payload.get("metadata", {}) or {}),
+        metadata=metadata,
     )
 
     intent_data = dict(payload.get("intent", {}) or {})
@@ -724,6 +826,7 @@ def evaluate_payload(
             "decision": result.decision.value,
             "chosen_candidate": result.chosen_candidate,
             "scores": {cid: asdict(score) for cid, score in result.scores.items()},
+            "deltas": result.deltas,
             "risk_summary": result.risk_summary,
             "best_rationale": result.best_rationale,
             "requires_verification": result.requires_verification,
