@@ -1,4 +1,13 @@
 ﻿"""
+    return verify_candidate(req)
+async def verify_endpoint(req: VerifyRequest):
+
+@app.post("/sandbox", dependencies=[Depends(_require_api_key)])
+async def sandbox_endpoint(payload: dict):
+    from sandbox import sandbox_from_dict
+    return sandbox_from_dict(payload)
+    return verify_candidate(req)
+"""
 main.py -- DevMind SaaS API
 
 FastAPI application focused on:
