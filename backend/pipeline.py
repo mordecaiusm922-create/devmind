@@ -1216,6 +1216,16 @@ class DevMindPipeline:
                 }
             )
             temp_eval = self._wrap_single_score(current, new_score)
+            if (
+                abs(new_score.utility - score.utility) < 0.01
+                and abs(new_score.security - score.security) < 0.01
+                and abs(new_score.correctness - score.correctness) < 0.01
+            ):
+                semantic_stagnation_count += 1
+            else:
+                semantic_stagnation_count = 0
+            if semantic_stagnation_count >= 2:
+                break
             if new_score.utility >= self.approval_threshold and new_score.security >= 0.85 and new_score.uncertainty <= self.uncertainty_threshold:
                 converged = True
                 evaluation = temp_eval
@@ -1467,6 +1477,7 @@ if __name__ == "__main__":
     else:
         payload = json.loads(raw)
         print(json.dumps(run_pipeline_sync(payload), indent=2))
+
 
 
 
