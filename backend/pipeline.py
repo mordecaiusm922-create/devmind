@@ -13,12 +13,17 @@ from enum import Enum
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple
 
 try:
-    from runtime import CandidateScheduler
+    from runtime import CandidateScheduler, RuntimeMemory
     from verify import verify_candidate_evidence, verify_sql_semantics
 except Exception:  # pragma: no cover - keeps the standalone script usable if imported differently.
     CandidateScheduler = None
+    RuntimeMemory = None
     verify_candidate_evidence = None
     verify_sql_semantics = None
+
+
+MAX_REPAIR_BUDGET = 3
+MAX_SECURITY_REGRESSION = 0.10
 
 
 # ============================================================
@@ -899,6 +904,7 @@ class DevMindPipeline:
         self.memory_engine = memory_engine or InMemoryMemoryEngine()
         self.graph_engine = graph_engine or DefaultGraphEngine()
         self.applier_engine = applier_engine or DefaultApplierEngine()
+        self.runtime_memory = RuntimeMemory.load() if RuntimeMemory is not None else None
 
         self.max_candidates = max_candidates
         self.max_repair_iters = max_repair_iters
@@ -1115,13 +1121,11 @@ class DevMindPipeline:
     ) -> EvaluationResult:
         scored: Dict[str, CandidateScore] = {}
 
-        async def _eval(c: Candidate) -> Tuple[str, CandidateScore]:
-            score = await self.evaluator_engine.evaluate(task, intent, evidence, c)
-            return c.id, score
-
-        results = await asyncio.gather(*[_eval(c) for c in candidates])
-        for cid, score in results:
-            scored[cid] = score
+        scores = await asyncio.gather(
+            *[self.evaluator_engine.evaluate(task, intent, evidence, c) for c in candidates]
+        )
+        for candidate, score in zip(candidates, scores):
+            scored[candidate.id] = score
         deltas = self._score_deltas(candidates, scored)
         scheduler = self._scheduler_snapshot(candidates, scored, deltas)
 
@@ -1184,16 +1188,25 @@ class DevMindPipeline:
         current = candidate
         converged = False
         iterations = 0
+        semantic_stagnation_count = 0
+        original_score = evaluation.scores.get(current.id)
+        if original_score is None:
+            original_score = await self.evaluator_engine.evaluate(task, intent, evidence, current)
+        previous_security = float(original_score.security)
+        repair_budget = min(self.max_repair_iters, MAX_REPAIR_BUDGET)
 
-        for i in range(self.max_repair_iters):
+        for i in range(repair_budget):
             iterations = i + 1
             score = evaluation.scores.get(current.id)
             if score is None:
                 score = await self.evaluator_engine.evaluate(task, intent, evidence, current)
+            prior = self.runtime_memory.get_repair_prior(intent) if self.runtime_memory is not None else 0.5
 
             history_entry = {
                 "iteration": iterations,
                 "candidate_id": current.id,
+                "repair_prior": prior,
+                "semantic_stagnation_count": semantic_stagnation_count,
                 "utility": score.utility,
                 "correctness": score.correctness,
                 "security": score.security,
@@ -1213,6 +1226,8 @@ class DevMindPipeline:
 
             # Stop if no meaningful change
             if next_candidate.diff == current.diff and next_candidate.strategy == current.strategy:
+                semantic_stagnation_count += 1
+                history_entry["semantic_stagnation_count"] = semantic_stagnation_count
                 history_entry["repaired_candidate_id"] = next_candidate.id
                 current = next_candidate
                 break
@@ -1221,7 +1236,20 @@ class DevMindPipeline:
 
             # Re-evaluate internal state after repair
             new_score = await self.evaluator_engine.evaluate(task, intent, evidence, current)
-            delta = _score_delta(score, new_score)
+            delta = _score_delta(original_score, new_score)
+            if new_score.security < previous_security - MAX_SECURITY_REGRESSION:
+                history_entry.update(
+                    {
+                        "repaired_candidate_id": current.id,
+                        "killed": True,
+                        "kill_reason": "security_regression",
+                        **delta,
+                    }
+                )
+                if self.runtime_memory is not None:
+                    self.runtime_memory.record_failed_repair(intent, current.strategy, "security_regression", delta)
+                break
+            previous_security = float(new_score.security)
             history_entry.update(
                 {
                     "repaired_candidate_id": current.id,
@@ -1235,6 +1263,8 @@ class DevMindPipeline:
             if new_score.utility >= self.approval_threshold and new_score.security >= 0.85 and new_score.uncertainty <= self.uncertainty_threshold:
                 converged = True
                 evaluation = temp_eval
+                if self.runtime_memory is not None:
+                    self.runtime_memory.record_successful_repair(intent, current.strategy, delta)
                 break
 
         return RepairResult(candidate=current, iterations=iterations, converged=converged, history=history)
@@ -1416,7 +1446,7 @@ class DevMindPipeline:
             return {
                 "security_delta": round(final_score.security - float(initial.get("security", final_score.security)), 4),
                 "utility_delta": round(final_score.utility - float(initial.get("utility", final_score.utility)), 4),
-                "uncertainty_delta": round(float(initial.get("uncertainty", final_score.uncertainty)) - final_score.uncertainty, 4),
+                "uncertainty_delta": round(final_score.uncertainty - float(initial.get("uncertainty", final_score.uncertainty)), 4),
             }
         except (TypeError, ValueError):
             return zero
@@ -1450,7 +1480,7 @@ def _score_delta(previous: CandidateScore, current: CandidateScore) -> Dict[str,
     return {
         "security_delta": round(float(current.security) - float(previous.security), 4),
         "utility_delta": round(float(current.utility) - float(previous.utility), 4),
-        "uncertainty_delta": round(float(previous.uncertainty) - float(current.uncertainty), 4),
+        "uncertainty_delta": round(float(current.uncertainty) - float(previous.uncertainty), 4),
     }
 
 

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import time
 from dataclasses import asdict, dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 
@@ -73,6 +76,78 @@ class RuntimeMemory:
     repo_risk_history: list[dict[str, Any]] = field(default_factory=list)
     repair_priors: dict[str, float] = field(default_factory=dict)
     security_priors: dict[str, float] = field(default_factory=dict)
+    storage_path: str = field(default_factory=lambda: str(Path(__file__).with_name(".runtime_memory.json")))
+
+    @classmethod
+    def load(cls, storage_path: str | None = None) -> "RuntimeMemory":
+        path = Path(storage_path) if storage_path else Path(__file__).with_name(".runtime_memory.json")
+        if not path.exists():
+            return cls(storage_path=str(path))
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return cls(
+                successful_repairs=list(data.get("successful_repairs") or []),
+                failed_repairs=list(data.get("failed_repairs") or []),
+                verifier_patterns=list(data.get("verifier_patterns") or []),
+                regression_patterns=list(data.get("regression_patterns") or []),
+                repo_risk_history=list(data.get("repo_risk_history") or []),
+                repair_priors=dict(data.get("repair_priors") or {}),
+                security_priors=dict(data.get("security_priors") or {}),
+                storage_path=str(path),
+            )
+        except (OSError, json.JSONDecodeError, TypeError):
+            return cls(storage_path=str(path))
+
+    def save(self) -> None:
+        path = Path(self.storage_path)
+        payload = {
+            "successful_repairs": self.successful_repairs[-500:],
+            "failed_repairs": self.failed_repairs[-500:],
+            "verifier_patterns": self.verifier_patterns[-500:],
+            "regression_patterns": self.regression_patterns[-500:],
+            "repo_risk_history": self.repo_risk_history[-500:],
+            "repair_priors": self.repair_priors,
+            "security_priors": self.security_priors,
+        }
+        try:
+            path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        except OSError:
+            pass
+
+    def record_successful_repair(self, intent: Any, strategy: str, delta: dict[str, Any]) -> None:
+        intent_key = _intent_key(intent)
+        utility_delta = float(delta.get("utility_delta", 0.0) or 0.0)
+        security_delta = float(delta.get("security_delta", 0.0) or 0.0)
+        prior = float(self.repair_priors.get(intent_key, 0.5))
+        signal = 0.5 + max(-0.5, min(0.5, 0.35 * utility_delta + 0.45 * security_delta))
+        self.repair_priors[intent_key] = round(max(0.0, min(1.0, 0.75 * prior + 0.25 * signal)), 4)
+        self.successful_repairs.append(
+            {
+                "intent": intent_key,
+                "strategy": strategy,
+                "delta": dict(delta),
+                "recorded_at": time.time(),
+            }
+        )
+        self.save()
+
+    def record_failed_repair(self, intent: Any, strategy: str, reason: str, delta: dict[str, Any] | None = None) -> None:
+        intent_key = _intent_key(intent)
+        prior = float(self.repair_priors.get(intent_key, 0.5))
+        self.repair_priors[intent_key] = round(max(0.0, min(1.0, prior * 0.85)), 4)
+        self.failed_repairs.append(
+            {
+                "intent": intent_key,
+                "strategy": strategy,
+                "reason": reason,
+                "delta": dict(delta or {}),
+                "recorded_at": time.time(),
+            }
+        )
+        self.save()
+
+    def get_repair_prior(self, intent: Any) -> float:
+        return float(self.repair_priors.get(_intent_key(intent), 0.5))
 
     def record_repair(self, env: CandidateEnv, *, success: bool) -> None:
         record = {
@@ -87,6 +162,8 @@ class RuntimeMemory:
             self.failed_repairs.append(record)
 
     def query(self, key: str) -> Any:
+        if key in self.repair_priors:
+            return self.repair_priors[key]
         return getattr(self, key, None)
 
 
@@ -218,6 +295,50 @@ class RuntimeSyscalls:
         return self.memory.query(key)
 
 
+class DevMindRuntime:
+    def __init__(
+        self,
+        *,
+        evaluator: Any = None,
+        verifier: Any = None,
+        repairer: Any = None,
+        sandbox: Any = None,
+        memory: RuntimeMemory | None = None,
+    ) -> None:
+        self.evaluator = evaluator
+        self.verifier = verifier
+        self.repairer = repairer
+        self.sandbox_runner = sandbox
+        self.memory = memory or RuntimeMemory.load()
+
+    async def evaluate(self, candidate: Any, task: Any, intent: Any = None, evidence: Any = None) -> Any:
+        if self.evaluator is None:
+            raise RuntimeError("No evaluator configured")
+        result = self.evaluator.evaluate(task, intent, evidence, candidate)
+        return await result if asyncio.iscoroutine(result) else result
+
+    async def verify(self, candidate: Any, task: Any, intent: Any = None, evidence: Any = None) -> Any:
+        if self.verifier is None:
+            raise RuntimeError("No verifier configured")
+        result = self.verifier.verify(task, intent, evidence, candidate)
+        return await result if asyncio.iscoroutine(result) else result
+
+    async def repair(self, candidate: Any, task: Any, intent: Any = None, evidence: Any = None, score: Any = None) -> Any:
+        if self.repairer is None:
+            raise RuntimeError("No repairer configured")
+        result = self.repairer.repair(task, intent, evidence, candidate, score)
+        return await result if asyncio.iscoroutine(result) else result
+
+    async def sandbox(self, candidate: Any) -> Any:
+        if self.sandbox_runner is None:
+            raise RuntimeError("No sandbox configured")
+        result = self.sandbox_runner(candidate)
+        return await result if asyncio.iscoroutine(result) else result
+
+    async def memory_query(self, intent: Any) -> float:
+        return self.memory.get_repair_prior(intent)
+
+
 def traps_from_sandbox(evidence: dict[str, Any]) -> list[VerificationTrap]:
     traps: list[VerificationTrap] = []
     if evidence.get("syntax_valid") is False:
@@ -236,3 +357,9 @@ def traps_from_sandbox(evidence: dict[str, Any]) -> list[VerificationTrap]:
             traps.append(VerificationTrap.BANDIT_HIGH)
             break
     return list(dict.fromkeys(traps))
+
+
+def _intent_key(intent: Any) -> str:
+    if isinstance(intent, str):
+        return intent or "general"
+    return str(getattr(intent, "label", None) or "general")
