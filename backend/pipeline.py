@@ -390,6 +390,39 @@ class DefaultGeneratorEngine:
                 )
             return candidates[:max_candidates]
 
+        # Security: SQL injection
+        import re as _re2
+        prompt_lower = (task.prompt or "").lower()
+        if _re2.search(r"\b(sql injection|sqli|sql)\b", prompt_lower):
+            candidates.append(Candidate(
+                id="c1",
+                diff='cursor.execute(\n    "SELECT * FROM users WHERE email = \'" + email + "\'"\n)\n',
+                strategy="unsafe-raw-sql",
+                explanation="Raw SQL con string concatenation - vulnerable a injection.",
+                metadata={"mode": task.mode.value, "rank": 1, "intent": "sql_injection_fix", "security_profile": "unsafe"},
+            ))
+            candidates.append(Candidate(
+                id="c2",
+                diff='cursor.execute(\n    "SELECT * FROM users WHERE email = %s",\n    [email],\n)\n',
+                strategy="parameterized-query",
+                explanation="Parameterized query elimina la superficie de SQL injection.",
+                metadata={"mode": task.mode.value, "rank": 2, "intent": "sql_injection_fix", "security_profile": "safe-minimal"},
+            ))
+            candidates.append(Candidate(
+                id="c3",
+                diff='email = validate_email(email)\ncursor.execute(\n    "SELECT * FROM users WHERE email = %s",\n    [email],\n)\n',
+                strategy="validated-parameterized-query",
+                explanation="Validacion mas parameterizacion para mayor seguridad.",
+                metadata={"mode": task.mode.value, "rank": 3, "intent": "sql_injection_fix", "security_profile": "hardened"},
+            ))
+            candidates.append(Candidate(
+                id="c4",
+                diff='user = User.objects.filter(\n    email=email\n).first()\n',
+                strategy="orm-safe-query",
+                explanation="Migra a ORM para eliminar SQL raw.",
+                metadata={"mode": task.mode.value, "rank": 4, "intent": "sql_injection_fix", "security_profile": "architectural"},
+            ))
+            return candidates[:max_candidates]
         # Generic generation path
         base_strategy = strategy or task.mode.value
         candidates.append(
