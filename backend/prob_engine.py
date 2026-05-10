@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from verify import verify_sql_semantics
+from verify import verify_candidate_evidence, verify_sql_semantics
 
 
 # ── Pydantic request models ──────────────────────────────────────────────────
@@ -414,6 +414,8 @@ def verify_candidate(req: VerifyRequest) -> dict[str, Any]:
     if sql_semantics.get("sql_detected"):
         checks["sql_semantic_safe"] = not sql_semantics.get("critical_violations")
         checks["validate_email_present"] = bool(sql_semantics.get("validate_email_present"))
+    sandbox = verify_candidate_evidence(candidate, ctx)
+    checks["sandbox_safe"] = bool(sandbox.get("verified"))
 
     passed  = all(checks.values())
     failed  = [k for k, v in checks.items() if not v]
@@ -424,5 +426,8 @@ def verify_candidate(req: VerifyRequest) -> dict[str, Any]:
         "failed":    failed,
         "checks":    checks,
         "sql_semantics": sql_semantics,
+        "sandbox_evidence": sandbox.get("sandbox_evidence", {}),
+        "traps": sandbox.get("traps", []),
+        "sandbox_violations": sandbox.get("violations", []),
         "verdict":   "approved" if passed else "rejected",
     }

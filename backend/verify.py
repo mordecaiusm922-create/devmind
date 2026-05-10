@@ -3,6 +3,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from sandbox import run_sandbox
+from runtime import VerificationTrap, traps_from_sandbox
+
 
 _SQL_KEYWORDS_RE = re.compile(r"\b(select|insert|update|delete|with)\b", re.IGNORECASE)
 _EXECUTE_CALL_RE = re.compile(r"\.?\bexecute\s*\(", re.IGNORECASE)
@@ -128,4 +131,43 @@ def verify_sql_semantics(diff: str, *, require_validate_email: bool | None = Non
         "violations": violations,
         "critical_violations": critical_violations,
         "validate_email_present": validate_email_present,
+    }
+
+
+def verify_candidate_evidence(candidate: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
+    sandbox_evidence = run_sandbox(candidate, context or {})
+    traps = traps_from_sandbox(sandbox_evidence)
+    violations = [_trap_to_violation(trap, sandbox_evidence) for trap in traps]
+    return {
+        "sandbox_evidence": sandbox_evidence,
+        "traps": [trap.value for trap in traps],
+        "violations": violations,
+        "verified": not any(v["severity"] in {"high", "critical"} for v in violations),
+    }
+
+
+def _trap_to_violation(trap: VerificationTrap, evidence: dict[str, Any]) -> dict[str, Any]:
+    severity = "high"
+    message = f"Sandbox trap: {trap.value}"
+    if trap == VerificationTrap.SYNTAX_ERROR:
+        severity = "critical"
+        message = str(evidence.get("syntax_error") or "Candidate has invalid Python syntax.")
+    elif trap == VerificationTrap.SHELL_EXECUTION:
+        severity = "critical"
+        message = "Candidate uses shell execution or os.system."
+    elif trap == VerificationTrap.UNSAFE_IMPORT:
+        severity = "medium"
+        imports = ", ".join((evidence.get("static_analysis") or {}).get("dangerous_imports") or [])
+        message = f"Candidate imports dangerous modules: {imports}."
+    elif trap == VerificationTrap.TEST_FAILURE:
+        severity = "high"
+        message = "Known repo tests failed in sandbox."
+    elif trap == VerificationTrap.BANDIT_HIGH:
+        severity = "high"
+        message = "Bandit reported a high severity issue."
+
+    return {
+        "property": trap.value,
+        "severity": severity,
+        "message": message,
     }

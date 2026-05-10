@@ -1,5 +1,4 @@
-﻿
-"""
+﻿"""
 main.py -- DevMind SaaS API
 
 FastAPI application focused on:
@@ -54,6 +53,7 @@ from prob_engine import (
 )
 from evaluate import evaluate_payload
 from safety_flow import SafetyFlowRequest, run_safety_flow
+from sandbox import run_sandbox
 from parser import parse_pr_file
 
 load_dotenv()
@@ -629,7 +629,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
         dec = sf_result.get("decision", {})
         sf_section = f"""
 ### Safety Flow
-**Decision:** `{dec.get('action', 'N/A')}` -- Candidate `{sel.get('candidate', 'N/A')}`
+**Decision:** `{dec.get('action', 'N/A')}` — Candidate `{sel.get('candidate', 'N/A')}`
 **Risk-adjusted utility:** `{sel.get('risk_adjusted_utility', 0)}`
 **Security:** `{sel.get('security', 0)}`
 **Verified:** `{sel.get('verified', False)}`
@@ -637,7 +637,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
 """
     return f"""## {emoji} DevMind Risk Analysis
 
-**{triage}** -- Risk Score `{score}/100` -- **{level.upper()}**
+**{triage}** — Risk Score `{score}/100` — **{level.upper()}**
 {blocker_md}
 
 ### Risk Breakdown
@@ -655,7 +655,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
 **Review focus:** {s.get("review_focus", "N/A")}
 {sf_section}
 ---
-_Analyzed by DevMind - trace `{result.get("trace_id", "")}`_
+_Analyzed by DevMind • trace `{result.get("trace_id", "")}`_
 """
 
 
@@ -1479,16 +1479,6 @@ app.add_middleware(
 
 # =============================================================================
 # 17. MIDDLEWARE / ERROR HANDLERS
-
-@app.post("/sandbox", dependencies=[Depends(_require_api_key)])
-async def sandbox_endpoint(payload: dict):
-    from sandbox import sandbox_from_dict
-    return sandbox_from_dict(payload)
-
-@app.post("/run", dependencies=[Depends(_require_api_key)])
-async def run_pipeline_endpoint(payload: dict):
-    from pipeline import run_pipeline_from_json
-    return await run_pipeline_from_json(payload)
 # =============================================================================
 
 
@@ -1665,6 +1655,11 @@ class EvaluateRequest(BaseModel):
     repo: Optional[str] = None
 
 
+class SandboxRequest(BaseModel):
+    candidate: Dict[str, Any]
+    context: Dict[str, Any] = Field(default_factory=dict)
+
+
 class OutcomeRequest(BaseModel):
     repo: str
     pr_number: int = 0
@@ -1680,16 +1675,6 @@ async def evaluate_endpoint(req: EvaluateRequest):
 @app.post("/safety-flow", dependencies=[Depends(_require_api_key)])
 async def safety_flow_endpoint(req: SafetyFlowRequest):
     return run_safety_flow(req)
-
-@app.post("/sandbox", dependencies=[Depends(_require_api_key)])
-async def sandbox_endpoint(payload: dict):
-    from sandbox import sandbox_from_dict
-    return sandbox_from_dict(payload)
-
-@app.post("/run", dependencies=[Depends(_require_api_key)])
-async def run_pipeline_endpoint(payload: dict):
-    from pipeline import run_pipeline_from_json
-    return await run_pipeline_from_json(payload)
 
 @app.get("/memory", dependencies=[Depends(_require_api_key)])
 async def memory_endpoint(repo: str, recent: int = 10):
@@ -1736,4 +1721,6 @@ async def repair_endpoint(req: RepairRequest):
 async def verify_endpoint(req: VerifyRequest):
     return verify_candidate(req)
 
-
+@app.post("/sandbox")
+async def sandbox_endpoint(req: SandboxRequest):
+    return run_sandbox(req.candidate, req.context)

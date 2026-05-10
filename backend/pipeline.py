@@ -1,4 +1,4 @@
-﻿# pipeline.py
+# pipeline.py
 from __future__ import annotations
 
 import asyncio
@@ -13,8 +13,11 @@ from enum import Enum
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple
 
 try:
-    from verify import verify_sql_semantics
+    from runtime import CandidateScheduler
+    from verify import verify_candidate_evidence, verify_sql_semantics
 except Exception:  # pragma: no cover - keeps the standalone script usable if imported differently.
+    CandidateScheduler = None
+    verify_candidate_evidence = None
     verify_sql_semantics = None
 
 
@@ -104,6 +107,7 @@ class EvaluationResult:
     scores: Dict[str, CandidateScore]
     risk_summary: Dict[str, float]
     deltas: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    scheduler: Dict[str, Any] = field(default_factory=dict)
     best_rationale: List[str] = field(default_factory=list)
     requires_verification: bool = False
     requires_repair: bool = False
@@ -116,6 +120,8 @@ class VerificationResult:
     confidence: float
     violations: List[Dict[str, Any]] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
+    sandbox_evidence: Dict[str, Any] = field(default_factory=dict)
+    traps: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -156,6 +162,7 @@ class PipelineResult:
                 "chosen_candidate": self.evaluation.chosen_candidate,
                 "scores": {cid: asdict(score) for cid, score in self.evaluation.scores.items()},
                 "deltas": self.evaluation.deltas,
+                "scheduler": self.evaluation.scheduler,
                 "risk_summary": self.evaluation.risk_summary,
                 "best_rationale": self.evaluation.best_rationale,
                 "requires_verification": self.evaluation.requires_verification,
@@ -244,77 +251,47 @@ class ApplierEngine(Protocol):
 # ============================================================
 
 class DefaultIntentEngine:
-    SIGNALS: Tuple[Tuple[str, str, float], ...] = (
-        (r"\b(sql injection|sqli|parameterized sql|unsafe query)\b", "sql_injection_fix", 0.42),
-        (r"\b(xss|cross[- ]site scripting)\b", "xss_fix", 0.40),
-        (r"\b(csrf|cross[- ]site request forgery)\b", "csrf_fix", 0.38),
-        (r"\b(ssrf|server[- ]side request forgery)\b", "ssrf_fix", 0.42),
-        (r"\b(rce|remote code execution|command injection)\b", "rce_fix", 0.48),
-        (r"\b(auth bypass|authorization bypass|privilege escalation)\b", "auth_bypass_fix", 0.45),
-        (r"\b(secret|secret_key|api[_-]?key|token|password|credential)\b", "secret_fix", 0.36),
-        (r"\b(auth|authentication|authorization|rbac|permission)\b", "auth_fix", 0.28),
-        (r"\b(race condition|deadlock|mutex|lock contention|thread safety)\b", "concurrency_fix", 0.40),
-        (r"\b(timeout|retry|backoff|idempotency|circuit breaker)\b", "reliability_fix", 0.24),
-        (r"\b(performance|latency|throughput|optimi[sz]e|slow query)\b", "performance_fix", 0.26),
-        (r"\b(n\+1|cache miss|memory leak)\b", "performance_fix", 0.32),
-        (r"\b(terraform|helm|kubernetes|k8s|docker|ci/cd|pipeline)\b", "infra_fix", 0.30),
-        (r"\b(refactor|cleanup|maintainability|simplify)\b", "refactor", 0.18),
-        (r"\b(test|unit test|integration test|coverage)\b", "testing", 0.16),
+    KEYWORDS: Tuple[Tuple[str, str], ...] = (
+        (r"\b(secret|secrets|secret_key|token|password|credential)\b", "security"),
+        (r"\b(race condition|concurrency|thread|lock|mutex|deadlock)\b", "concurrency"),
+        (r"\b(performance|latency|fast|optimi[sz]e|throughput)\b", "performance"),
+        (r"\b(refactor|clean up|cleanup|maintainability|simplify)\b", "refactor"),
+        (r"\b(test|unit test|integration test|coverage)\b", "testing"),
+        (r"\b(auth|authentication|authorization|permission|rbac)\b", "auth"),
+        (r"\b(critical|prod|production|payment|billing|money)\b", "critical"),
     )
 
     async def infer(self, task: TaskInput) -> IntentHypothesis:
         text = (task.prompt or "").lower()
-        scores: Dict[str, float] = {}
-        evidence: Dict[str, List[str]] = {}
+        counts: Dict[str, int] = {}
         notes: List[str] = []
 
-        for pattern, label, weight in self.SIGNALS:
-            match = re.search(pattern, text)
-            if match:
-                scores[label] = scores.get(label, 0.0) + weight
-                evidence.setdefault(label, []).append(match.group(0))
+        for pattern, label in self.KEYWORDS:
+            if re.search(pattern, text):
+                counts[label] = counts.get(label, 0) + 1
                 notes.append(f"matched:{label}")
 
-        filename = str(task.context.get("filename", "")).lower()
-        if any(x in filename for x in ("auth", "login", "session", "rbac")):
-            scores["auth_fix"] = scores.get("auth_fix", 0.0) + 0.12
-        if any(x in filename for x in ("payment", "billing", "checkout")):
-            scores["critical_payment_fix"] = scores.get("critical_payment_fix", 0.0) + 0.18
-        if any(x in filename for x in ("terraform", "helm", "docker")):
-            scores["infra_fix"] = scores.get("infra_fix", 0.0) + 0.15
+        if "secret" in text or "secret_key" in text:
+            label = "secure_fix"
+        elif "race condition" in text or "concurrency" in text:
+            label = "safe_concurrency_fix"
+        elif "performance" in text or "latency" in text:
+            label = "performance_fix"
+        elif "refactor" in text:
+            label = "refactor"
+        else:
+            label = "general_fix"
 
-        if not scores:
-            return IntentHypothesis(
-                label="general_fix",
-                confidence=0.41,
-                alternatives=[],
-                notes=["fallback:no_strong_signal"],
-            )
-
-        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        best_label, best_score = ranked[0]
-        second_score = ranked[1][1] if len(ranked) > 1 else 0.0
-        margin = best_score - second_score
-        confidence = min(0.98, max(0.45, 0.58 + (best_score * 0.55) + (margin * 0.18)))
+        confidence = min(0.95, 0.45 + 0.12 * len(counts))
+        alternatives = [{"label": k, "weight": v} for k, v in sorted(counts.items(), key=lambda x: (-x[1], x[0]))]
 
         if task.mode in {Mode.SECURE, Mode.CRITICAL}:
-            confidence = min(0.99, confidence + 0.03)
-            notes.append("mode_bias:security_sensitive")
+            confidence = min(0.98, confidence + 0.08)
+            notes.append("mode_bias:secure")
         if task.mode == Mode.FAST:
-            confidence = max(0.35, confidence - 0.06)
-            notes.append("mode_bias:fast")
+            confidence = max(0.35, confidence - 0.05)
 
-        alternatives = [
-            {"label": label, "score": round(score, 4), "evidence": evidence.get(label, [])}
-            for label, score in ranked[1:4]
-        ]
-
-        return IntentHypothesis(
-            label=best_label,
-            confidence=round(confidence, 4),
-            alternatives=alternatives,
-            notes=notes[:12],
-        )
+        return IntentHypothesis(label=label, confidence=round(confidence, 4), alternatives=alternatives, notes=notes)
 
 
 class DefaultRetrieverEngine:
@@ -382,37 +359,6 @@ class DefaultGeneratorEngine:
                 )
             return candidates[:max_candidates]
 
-        # Security: SQL injection
-        if re.search(r"\b(sql injection|sqli|sql)\b", prompt):
-            candidates.append(Candidate(
-                id="c1",
-                diff='cursor.execute(\n    "SELECT * FROM users WHERE email = \'" + email + "\'"\n)\n',
-                strategy="unsafe-raw-sql",
-                explanation="Raw SQL con string concatenation - vulnerable a injection.",
-                metadata={"mode": task.mode.value, "rank": 1, "intent": "sql_injection_fix", "security_profile": "unsafe"},
-            ))
-            candidates.append(Candidate(
-                id="c2",
-                diff='cursor.execute(\n    "SELECT * FROM users WHERE email = %s",\n    [email],\n)\n',
-                strategy="parameterized-query",
-                explanation="Parameterized query elimina la superficie de SQL injection.",
-                metadata={"mode": task.mode.value, "rank": 2, "intent": "sql_injection_fix", "security_profile": "safe-minimal"},
-            ))
-            candidates.append(Candidate(
-                id="c3",
-                diff='email = validate_email(email)\ncursor.execute(\n    "SELECT * FROM users WHERE email = %s",\n    [email],\n)\n',
-                strategy="validated-parameterized-query",
-                explanation="Validacion mas parameterizacion para mayor seguridad.",
-                metadata={"mode": task.mode.value, "rank": 3, "intent": "sql_injection_fix", "security_profile": "hardened"},
-            ))
-            candidates.append(Candidate(
-                id="c4",
-                diff='user = User.objects.filter(\n    email=email\n).first()\n',
-                strategy="orm-safe-query",
-                explanation="Migra a ORM para eliminar SQL raw.",
-                metadata={"mode": task.mode.value, "rank": 4, "intent": "sql_injection_fix", "security_profile": "architectural"},
-            ))
-            return candidates[:max_candidates]
         # Generic generation path
         base_strategy = strategy or task.mode.value
         candidates.append(
@@ -486,10 +432,6 @@ class DefaultEvaluatorEngine:
         prompt = task.prompt.lower()
 
         hardcoded_secret_fix = ("secret_key" in prompt or "secret" in prompt) and "os.environ.get" in text
-        uses_parameterized_query = ("%s" in text) or ("? " in text)
-        uses_string_concat_sql = ("execute" in text) and ("+" in text)
-        uses_orm = ("objects.filter" in text) or ("objects.get" in text)
-        uses_validate = ("validate_email" in text) or ("validate(" in text)
         fail_fast = "raise valueerror" in text or "raise runtimeerror" in text
         imports_os = "import os" in text
         minimal = "minimal" in candidate.strategy.lower()
@@ -508,25 +450,6 @@ class DefaultEvaluatorEngine:
         uncertainty = 0.28
         confidence = 0.72
 
-        if uses_string_concat_sql:
-            security -= 0.35
-            catastrophic_risk += 0.25
-            uncertainty += 0.12
-            correctness -= 0.15
-        if uses_parameterized_query:
-            security += 0.22
-            catastrophic_risk -= 0.10
-            uncertainty -= 0.08
-            correctness += 0.10
-        if uses_orm:
-            security += 0.28
-            catastrophic_risk -= 0.14
-            uncertainty -= 0.10
-            maintainability += 0.08
-        if uses_validate:
-            security += 0.08
-            correctness += 0.06
-            catastrophic_risk -= 0.04
         if hardcoded_secret_fix:
             correctness += 0.18
             security += 0.22
@@ -747,6 +670,8 @@ class DefaultVerifierEngine:
         prompt = task.prompt.lower()
         violations: List[Dict[str, Any]] = []
         notes: List[str] = []
+        sandbox_evidence: Dict[str, Any] = {}
+        traps: List[str] = []
 
         if "secret_key" in prompt or "secret" in prompt:
             if "hardcoded_secret_key" in text or re.search(r"secret_key\s*=\s*['\"]", text):
@@ -793,6 +718,28 @@ class DefaultVerifierEngine:
                 })
             notes.append("sql semantic verifier executed")
 
+        if verify_candidate_evidence is not None:
+            sandbox = verify_candidate_evidence(
+                {
+                    "id": candidate.id,
+                    "diff": candidate.diff,
+                    "strategy": candidate.strategy,
+                    "explanation": candidate.explanation,
+                    "metadata": candidate.metadata,
+                },
+                {
+                    **(task.context or {}),
+                    "filename": (task.context or {}).get("filename") or (task.context or {}).get("file") or "candidate.py",
+                    "run_tests": (task.context or {}).get("run_tests", False),
+                },
+            )
+            sandbox_evidence = sandbox.get("sandbox_evidence", {})
+            traps = list(sandbox.get("traps", []))
+            for violation in sandbox.get("violations", []):
+                if violation not in violations:
+                    violations.append(violation)
+            notes.append("sandbox evidence attached")
+
         verified = len(violations) == 0
         confidence = 0.95 if verified else 0.63
         if task.mode in {Mode.CRITICAL, Mode.SECURE} and not verified:
@@ -803,6 +750,8 @@ class DefaultVerifierEngine:
             confidence=round(confidence, 4),
             violations=violations,
             notes=notes,
+            sandbox_evidence=sandbox_evidence,
+            traps=traps,
         )
 
 
@@ -1110,6 +1059,7 @@ class DevMindPipeline:
         for cid, score in results:
             scored[cid] = score
         deltas = self._score_deltas(candidates, scored)
+        scheduler = self._scheduler_snapshot(candidates, scored, deltas)
 
         best_candidate_id, best_score = self._select_best(scored)
         if best_candidate_id is None or best_score is None:
@@ -1119,6 +1069,7 @@ class DevMindPipeline:
                 scores=scored,
                 risk_summary={"catastrophic": 1.0, "regression": 1.0, "uncertainty": 1.0},
                 deltas=deltas,
+                scheduler=scheduler,
                 best_rationale=["no valid candidate"],
                 requires_verification=False,
                 requires_repair=True,
@@ -1150,6 +1101,7 @@ class DevMindPipeline:
                 "uncertainty": round(best_score.uncertainty, 4),
             },
             deltas=deltas,
+            scheduler=scheduler,
             best_rationale=best_score.rationale,
             requires_verification=requires_verification,
             requires_repair=requires_repair,
@@ -1168,7 +1120,6 @@ class DevMindPipeline:
         current = candidate
         converged = False
         iterations = 0
-        semantic_stagnation_count = 0
 
         for i in range(self.max_repair_iters):
             iterations = i + 1
@@ -1217,16 +1168,6 @@ class DevMindPipeline:
                 }
             )
             temp_eval = self._wrap_single_score(current, new_score)
-            if (
-                abs(new_score.utility - score.utility) < 0.01
-                and abs(new_score.security - score.security) < 0.01
-                and abs(new_score.correctness - score.correctness) < 0.01
-            ):
-                semantic_stagnation_count += 1
-            else:
-                semantic_stagnation_count = 0
-            if semantic_stagnation_count >= 2:
-                break
             if new_score.utility >= self.approval_threshold and new_score.security >= 0.85 and new_score.uncertainty <= self.uncertainty_threshold:
                 converged = True
                 evaluation = temp_eval
@@ -1278,6 +1219,22 @@ class DevMindPipeline:
                 continue
             deltas[candidate.id] = _score_delta(scores[parent_id], scores[candidate.id])
         return deltas
+
+    def _scheduler_snapshot(
+        self,
+        candidates: List[Candidate],
+        scores: Dict[str, CandidateScore],
+        deltas: Dict[str, Dict[str, float]],
+    ) -> Dict[str, Any]:
+        if CandidateScheduler is None:
+            return {}
+        scheduler = CandidateScheduler()
+        for candidate in candidates:
+            score = scores.get(candidate.id)
+            env = scheduler.add_candidate(candidate, score)
+            if candidate.id in deltas:
+                env.verifier_state["delta"] = deltas[candidate.id]
+        return scheduler.snapshot()
 
     def _decision_from_score(
         self,
@@ -1337,6 +1294,7 @@ class DevMindPipeline:
     ) -> Dict[str, Any]:
         best_score = evaluation.scores.get(best_candidate.id)
         repair_delta = self._repair_delta_summary(repair_result, evaluation, best_candidate)
+        sandbox_evidence = verification.sandbox_evidence if verification else self._summary_sandbox_evidence(task, best_candidate)
         return {
             "intent": intent.label,
             "intent_confidence": intent.confidence,
@@ -1346,6 +1304,8 @@ class DevMindPipeline:
             "correctness": best_score.correctness if best_score else None,
             "risk": evaluation.risk_summary,
             "verification": asdict(verification) if verification else None,
+            "sandbox_evidence": sandbox_evidence,
+            "scheduler": evaluation.scheduler,
             "repair_converged": repair_result.converged if repair_result else False,
             "repair_iterations": repair_result.iterations if repair_result else 0,
             "security_delta": repair_delta["security_delta"],
@@ -1353,6 +1313,25 @@ class DevMindPipeline:
             "uncertainty_delta": repair_delta["uncertainty_delta"],
             "mode": task.mode.value,
         }
+
+    def _summary_sandbox_evidence(self, task: TaskInput, best_candidate: Candidate) -> Dict[str, Any]:
+        if verify_candidate_evidence is None:
+            return {}
+        sandbox = verify_candidate_evidence(
+            {
+                "id": best_candidate.id,
+                "diff": best_candidate.diff,
+                "strategy": best_candidate.strategy,
+                "explanation": best_candidate.explanation,
+                "metadata": best_candidate.metadata,
+            },
+            {
+                **(task.context or {}),
+                "filename": (task.context or {}).get("filename") or (task.context or {}).get("file") or "candidate.py",
+                "run_tests": (task.context or {}).get("run_tests", False),
+            },
+        )
+        return sandbox.get("sandbox_evidence", {})
 
     def _repair_delta_summary(
         self,
@@ -1478,8 +1457,3 @@ if __name__ == "__main__":
     else:
         payload = json.loads(raw)
         print(json.dumps(run_pipeline_sync(payload), indent=2))
-
-
-
-
-
