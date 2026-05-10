@@ -171,3 +171,9 @@ def sandbox_candidate(
             evidence["test_passed"] = _run_pytest(repo_path)
 
     return evidence
+
+def sandbox_from_dict(payload: dict) -> dict:
+    return sandbox_candidate(
+        code=payload.get("code") or payload.get("diff") or "",
+        repo_path=payload.get("repo_path"),
+    )
