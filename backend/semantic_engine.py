@@ -20,7 +20,7 @@ Always include all required fields."""
 def analyze_diff(diff: str, intent: str = "general_fix") -> dict[str, Any]:
     """
     Analiza un diff con Groq y devuelve scores semanticos reales.
-    Reemplaza las heuristicas del evaluator con razonamiento LLM.
+    Incluye behavior_preservation_score como dimension independiente.
     """
     prompt = f"""Analyze this code diff for intent: {intent}
 
@@ -31,13 +31,25 @@ Respond with ONLY this JSON:
 {{
   "security_score": 0.0-1.0,
   "correctness_score": 0.0-1.0,
+  "behavior_preservation": {{
+    "score": 0.0-1.0,
+    "signals": {{
+      "symbol_exists": true/false,
+      "signature_compatible": true/false,
+      "exception_surface_changed": true/false,
+      "caller_compatibility": true/false
+    }},
+    "risks": ["list of behavioral risks"]
+  }},
   "has_sql_injection": true/false,
   "has_hardcoded_secret": true/false,
   "has_unsafe_eval": true/false,
   "missing_dependencies": ["list of undefined functions/imports"],
   "behavioral_risks": ["list of potential regressions"],
   "security_improvements": ["list of security improvements made"],
+  "runtime_confidence": 0.0-1.0,
   "confidence": 0.0-1.0,
+  "reasons": ["list of reasons for decision"],
   "reasoning": "one sentence explanation"
 }}"""
 

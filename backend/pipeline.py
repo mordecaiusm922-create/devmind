@@ -587,8 +587,29 @@ class DefaultEvaluatorEngine:
                 security = security * 0.5 + _groq_security * 0.5
             if _groq_correctness is not None:
                 correctness = correctness * 0.5 + _groq_correctness * 0.5
+            _bp = _groq.get("behavior_preservation", {})
+            _bp_score = _bp.get("score", None) if isinstance(_bp, dict) else None
+            _bp_signals = _bp.get("signals", {}) if isinstance(_bp, dict) else {}
+            if _bp_score is not None:
+                if _bp_score < 0.5:
+                    correctness -= 0.20
+                    uncertainty += 0.15
+                elif _bp_score < 0.7:
+                    correctness -= 0.10
+                    uncertainty += 0.08
+            if not _bp_signals.get("symbol_exists", True):
+                correctness -= 0.15
+                uncertainty += 0.10
+            if _bp_signals.get("exception_surface_changed", False):
+                correctness -= 0.08
+                uncertainty += 0.05
+            _groq_reasons = _groq.get("reasons", [])
+            _runtime_confidence = _groq.get("runtime_confidence", None)
         except Exception:
-            pass
+            _bp_score = None
+            _bp_signals = {}
+            _groq_reasons = []
+            _runtime_confidence = None
         # Sandbox evidence scoring
         if not _ast_safe:
             security -= 0.20
@@ -1508,6 +1529,8 @@ class DevMindPipeline:
             "repair_iterations": repair_result.iterations if repair_result else 0,
             "security_delta": repair_delta["security_delta"],
             "utility_delta": repair_delta["utility_delta"],
+            "behavior_preservation": getattr(best_candidate, "_bp_score", None),
+            "runtime_confidence": getattr(best_candidate, "_runtime_confidence", None),
             "uncertainty_delta": repair_delta["uncertainty_delta"],
             "mode": task.mode.value,
         }
