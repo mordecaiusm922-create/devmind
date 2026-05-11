@@ -1486,20 +1486,19 @@ class DevMindPipeline:
         if not repair_result or not repair_result.history:
             return zero
 
-        initial = repair_result.history[0]
-        # El candidato reparado tiene ID diferente - busca el score original o re-evalua
-        final_score = evaluation.scores.get(best_candidate.id)
-        if final_score is None:
-            # Busca cualquier score disponible del candidato base
-            base_id = best_candidate.id.split("-r")[0]
-            final_score = evaluation.scores.get(base_id)
-        if final_score is None:
+        # Delta real: mejor candidato vs peor candidato evaluado
+        all_scores = list(evaluation.scores.values())
+        if not all_scores:
             return zero
+        worst_score = min(all_scores, key=lambda s: s.security if hasattr(s, "security") else s.get("security", 0))
+        best_score = max(all_scores, key=lambda s: s.security if hasattr(s, "security") else s.get("security", 0))
+        final_score = best_score
+        worst = worst_score
 
         try:
             return {
-                "security_delta": round(final_score.security - float(initial.get("security", final_score.security)), 4),
-                "utility_delta": round(final_score.utility - float(initial.get("utility", final_score.utility)), 4),
+                "security_delta": round(best_score.security - worst_score.security, 4) if hasattr(best_score, "security") else 0.0,
+                "utility_delta": round(best_score.utility - worst_score.utility, 4) if hasattr(best_score, "utility") else 0.0,
                 "uncertainty_delta": round(final_score.uncertainty - float(initial.get("uncertainty", final_score.uncertainty)), 4),
             }
         except (TypeError, ValueError):
