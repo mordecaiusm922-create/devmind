@@ -1529,8 +1529,8 @@ class DevMindPipeline:
             "repair_iterations": repair_result.iterations if repair_result else 0,
             "security_delta": repair_delta["security_delta"],
             "utility_delta": repair_delta["utility_delta"],
-            "behavior_preservation": getattr(best_candidate, "_bp_score", None),
-            "runtime_confidence": getattr(best_candidate, "_runtime_confidence", None),
+            "behavior_preservation": repair_delta.get("behavior_preservation"),
+            "runtime_confidence": repair_delta.get("runtime_confidence"),
             "uncertainty_delta": repair_delta["uncertainty_delta"],
             "mode": task.mode.value,
         }
@@ -1560,7 +1560,7 @@ class DevMindPipeline:
         evaluation: EvaluationResult,
         best_candidate: Candidate,
     ) -> Dict[str, float]:
-        zero = {"security_delta": 0.0, "utility_delta": 0.0, "uncertainty_delta": 0.0}
+        zero = {"security_delta": 0.0, "utility_delta": 0.0, "uncertainty_delta": 0.0, "behavior_preservation": None, "runtime_confidence": None}
         if not repair_result or not repair_result.history:
             return zero
 
@@ -1568,6 +1568,20 @@ class DevMindPipeline:
         all_scores = list(evaluation.scores.values())
         if not all_scores:
             return zero
+
+        # Groq behavior preservation para el mejor candidato
+        _bp_score = None
+        _runtime_confidence = None
+        try:
+            from semantic_engine import analyze_diff
+            _best_diff = best_candidate.diff[:2000] if best_candidate and best_candidate.diff else ""
+            if _best_diff:
+                _groq = analyze_diff(_best_diff, intent="general_fix")
+                _bp = _groq.get("behavior_preservation", {})
+                _bp_score = _bp.get("score") if isinstance(_bp, dict) else None
+                _runtime_confidence = _groq.get("runtime_confidence")
+        except Exception:
+            pass
         worst_score = min(all_scores, key=lambda s: s.security if hasattr(s, "security") else s.get("security", 0))
         best_score = max(all_scores, key=lambda s: s.security if hasattr(s, "security") else s.get("security", 0))
         final_score = best_score
@@ -1578,6 +1592,8 @@ class DevMindPipeline:
                 "security_delta": round(best_score.security - worst_score.security, 4) if hasattr(best_score, "security") else 0.0,
                 "utility_delta": round(best_score.utility - worst_score.utility, 4) if hasattr(best_score, "utility") else 0.0,
                 "uncertainty_delta": round(best_score.uncertainty - worst_score.uncertainty, 4) if hasattr(best_score, "uncertainty") else 0.0,
+                "behavior_preservation": _bp_score,
+                "runtime_confidence": _runtime_confidence,
             }
         except (TypeError, ValueError):
             return zero
