@@ -284,3 +284,35 @@ def _has_tests(root: Path) -> bool:
 
 def _remaining(deadline: float) -> float:
     return max(1.0, min(10.0, deadline - time.monotonic()))
+
+
+def sandbox_candidate(code: str, repo_path: str | None = None) -> dict:
+    """Wrapper de compatibilidad para sandbox_candidate."""
+    candidate = {"code": code, "diff": code}
+    context = {"repo_path": repo_path} if repo_path else {}
+    result = run_sandbox(candidate, context)
+    # Agrega ast_safe para compatibilidad
+    static = result.get("static_analysis", {})
+    unsafe_calls = static.get("unsafe_calls", [])
+    dangerous_imports = static.get("dangerous_imports", [])
+    regex_hits = static.get("regex_hits", [])
+    result["ast_safe"] = (
+        len(unsafe_calls) == 0
+        and len(dangerous_imports) == 0
+        and len(regex_hits) == 0
+        and not static.get("shell_true", False)
+    )
+    result["bandit_issues"] = result.get("bandit_issues", [])
+    return result
+
+
+def sandbox_from_dict(payload: dict) -> dict:
+    """Wrapper para el endpoint /sandbox."""
+    code = (
+        payload.get("code")
+        or payload.get("candidate")
+        or payload.get("diff")
+        or ""
+    )
+    repo = payload.get("repo_path") or payload.get("repo")
+    return sandbox_candidate(code=code, repo_path=repo)

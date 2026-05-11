@@ -510,6 +510,20 @@ class DefaultEvaluatorEngine:
         uses_string_concat_sql = ("execute" in text) and ("+" in text)
         uses_orm = ("objects.filter" in text) or ("objects.get" in text)
         uses_validate = ("validate_email" in text) or ("validate(" in text)
+        # Sandbox evidence - analisis estatico real
+        try:
+            from sandbox import sandbox_candidate
+            _sandbox = sandbox_candidate(candidate.diff[:2000])
+            _ast_safe = _sandbox.get("ast_safe", True)
+            _bandit_issues = _sandbox.get("bandit_issues", [])
+            _static = _sandbox.get("static_analysis", {})
+            _unsafe_calls = len(_static.get("unsafe_calls", []))
+            _dangerous_imports = len(_static.get("dangerous_imports", []))
+        except Exception:
+            _ast_safe = True
+            _bandit_issues = []
+            _unsafe_calls = 0
+            _dangerous_imports = 0
         fail_fast = "raise valueerror" in text or "raise runtimeerror" in text
         imports_os = "import os" in text
         minimal = "minimal" in candidate.strategy.lower()
@@ -547,6 +561,19 @@ class DefaultEvaluatorEngine:
             security += 0.08
             correctness += 0.06
             catastrophic_risk -= 0.04
+        # Sandbox evidence scoring
+        if not _ast_safe:
+            security -= 0.20
+            catastrophic_risk += 0.15
+            uncertainty += 0.10
+        if _unsafe_calls > 0:
+            security -= 0.15 * _unsafe_calls
+            catastrophic_risk += 0.10 * _unsafe_calls
+        if _dangerous_imports > 0:
+            security -= 0.10 * _dangerous_imports
+        if len(_bandit_issues) == 0 and _ast_safe:
+            security += 0.05
+            confidence += 0.03
         if hardcoded_secret_fix:
             correctness += 0.18
             security += 0.22
