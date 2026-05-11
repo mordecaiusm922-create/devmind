@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 from typing import Any
@@ -1062,6 +1062,15 @@ def _blast_radius(
         score += min(0.08, graph_score * 0.12)
         reasons.append("graph_dependency_surface")
 
+    # Surface classifier - reduce false positives for docs/test PRs
+    try:
+        from surface_classifier import classify_change_surface
+        _surface = classify_change_surface(files=files, diff='', prompt='')
+        score = score * _surface.risk_multiplier
+        if _surface.risk_multiplier < 0.5:
+            reasons.append(f'surface:{_surface.surface}')
+    except Exception:
+        pass
     score = max(0.0, min(1.0, score))
     if score >= 0.82:
         level = "critical"
@@ -1642,3 +1651,4 @@ def _record_flow_result(
         )
     except Exception as exc:
         return {"stored": False, "error": str(exc)}
+
