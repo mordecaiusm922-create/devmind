@@ -1499,7 +1499,7 @@ class DevMindPipeline:
             return {
                 "security_delta": round(best_score.security - worst_score.security, 4) if hasattr(best_score, "security") else 0.0,
                 "utility_delta": round(best_score.utility - worst_score.utility, 4) if hasattr(best_score, "utility") else 0.0,
-                "uncertainty_delta": round(final_score.uncertainty - float(initial.get("uncertainty", final_score.uncertainty)), 4),
+                "uncertainty_delta": round(best_score.uncertainty - worst_score.uncertainty, 4) if hasattr(best_score, "uncertainty") else 0.0,
             }
         except (TypeError, ValueError):
             return zero
