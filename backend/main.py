@@ -891,32 +891,44 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         if "risk" in response and isinstance(response["risk"], dict):
             _orig = response["risk"].get("score", 0)
             _new_score = max(0, round(_orig * _m))
-            response["risk"]["score"] = _new_score
-            response["risk"]["surface"] = _surface_ctx.surface
-            response["risk"]["surface_multiplier"] = _m
-            response["risk"]["negative_signals"] = _surface_ctx.negative_signals
-            if _new_score >= 80: response["risk"]["band"] = "critical"
-            elif _new_score >= 60: response["risk"]["band"] = "high"
-            elif _new_score >= 40: response["risk"]["band"] = "medium"
-            elif _new_score >= 20: response["risk"]["band"] = "low"
-            else: response["risk"]["band"] = "minimal"
+            _risk_obj["score"] = _new_score
+            _risk_obj["surface"] = _surface_ctx.surface
+            _risk_obj["surface_multiplier"] = _m
+            _risk_obj["negative_signals"] = _surface_ctx.negative_signals
+            if _new_score >= 80: _risk_obj["band"] = "critical"
+            elif _new_score >= 60: _risk_obj["band"] = "high"
+            elif _new_score >= 40: _risk_obj["band"] = "medium"
+            elif _new_score >= 20: _risk_obj["band"] = "low"
+            else: _risk_obj["band"] = "minimal"
     safety_flow = _run_pr_safety_flow(repo, pr_number, pr_data, response, trace_id)
     _attach_unified_decision_v2(response, safety_flow)
     # Aplica surface multiplier DESPUES de attach (evita sobreescritura)
     if _surface_ctx is not None and _surface_ctx.risk_multiplier < 1.0:
         _m = _surface_ctx.risk_multiplier
-        if "risk" in response and isinstance(response["risk"], dict):
-            _orig = response["risk"].get("score", 0)
+        _risk_obj = response.get("risk") if isinstance(response, dict) else None
+        if _risk_obj is not None and not isinstance(_risk_obj, dict):
+            try:
+                from dataclasses import asdict
+                _risk_obj = asdict(_risk_obj)
+                response["risk"] = _risk_obj
+            except Exception:
+                try:
+                    _risk_obj = dict(_risk_obj)
+                    response["risk"] = _risk_obj
+                except Exception:
+                    _risk_obj = None
+        if isinstance(_risk_obj, dict):
+            _orig = _risk_obj.get("score", 0)
             _new_score = max(0, round(_orig * _m))
-            response["risk"]["score"] = _new_score
-            response["risk"]["surface"] = _surface_ctx.surface
-            response["risk"]["surface_multiplier"] = _m
-            response["risk"]["negative_signals"] = _surface_ctx.negative_signals
-            if _new_score >= 80: response["risk"]["band"] = "critical"
-            elif _new_score >= 60: response["risk"]["band"] = "high"
-            elif _new_score >= 40: response["risk"]["band"] = "medium"
-            elif _new_score >= 20: response["risk"]["band"] = "low"
-            else: response["risk"]["band"] = "minimal"
+            _risk_obj["score"] = _new_score
+            _risk_obj["surface"] = _surface_ctx.surface
+            _risk_obj["surface_multiplier"] = _m
+            _risk_obj["negative_signals"] = _surface_ctx.negative_signals
+            if _new_score >= 80: _risk_obj["band"] = "critical"
+            elif _new_score >= 60: _risk_obj["band"] = "high"
+            elif _new_score >= 40: _risk_obj["band"] = "medium"
+            elif _new_score >= 20: _risk_obj["band"] = "low"
+            else: _risk_obj["band"] = "minimal"
     _metric("analysis_done")
     return response
 
