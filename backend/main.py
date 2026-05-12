@@ -793,6 +793,23 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     pr_data = _timed("get_pr_data", get_pr_data, repo, pr_number)
     _check_payload_limits(pr_data)
 
+    # Surface classification - previene alucinaciones en docs/tests
+    try:
+        from surface_classifier import classify_change_surface
+        _files = pr_data.get("files", []) or []
+        _diff_text = " ".join(f.get("patch", "") or "" for f in _files)[:3000]
+        _surface_ctx = classify_change_surface(_files, _diff_text)
+        pr_data["_surface_ctx"] = {
+            "surface": _surface_ctx.surface,
+            "risk_multiplier": _surface_ctx.risk_multiplier,
+            "disable_fix_generation": _surface_ctx.disable_fix_generation,
+            "disable_runtime_security": _surface_ctx.disable_runtime_security,
+            "use_lightweight_pipeline": _surface_ctx.use_lightweight_pipeline,
+            "negative_signals": _surface_ctx.negative_signals,
+        }
+    except Exception:
+        _surface_ctx = None
+
     agent_result = _timed("agent_run", analysis_agent.run, pr_data)
     summary = _normalize_summary(agent_result.summary)
     pre = agent_result.pre_analysis
@@ -833,6 +850,28 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
             flag_reason=_ev_inner.get("flag_reason", None),
         )
     risk_signals = compute_risk_score(pre, summary, _ev_obj, pr_data) if pre and _ev_obj else None
+
+    # Aplica risk_multiplier del surface classifier
+    if risk_signals and _surface_ctx is not None:
+        _multiplier = _surface_ctx.risk_multiplier
+        if _multiplier < 1.0:
+            _original_score = risk_signals.get("score", 0)
+            risk_signals["score"] = max(0, round(_original_score * _multiplier))
+            risk_signals["surface_multiplier"] = _multiplier
+            risk_signals["surface"] = _surface_ctx.surface
+            risk_signals["negative_signals"] = _surface_ctx.negative_signals
+            # Recalcula band
+            _s = risk_signals["score"]
+            if _s >= 80:
+                risk_signals["band"] = "critical"
+            elif _s >= 60:
+                risk_signals["band"] = "high"
+            elif _s >= 40:
+                risk_signals["band"] = "medium"
+            elif _s >= 20:
+                risk_signals["band"] = "low"
+            else:
+                risk_signals["band"] = "minimal"
 
     response = _build_response(
         repo=repo,
