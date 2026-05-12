@@ -855,23 +855,10 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     if risk_signals and _surface_ctx is not None:
         _multiplier = _surface_ctx.risk_multiplier
         if _multiplier < 1.0:
-            _original_score = risk_signals.get("score", 0)
-            risk_signals["score"] = max(0, round(_original_score * _multiplier))
-            risk_signals["surface_multiplier"] = _multiplier
-            risk_signals["surface"] = _surface_ctx.surface
-            risk_signals["negative_signals"] = _surface_ctx.negative_signals
-            # Recalcula band
-            _s = risk_signals["score"]
-            if _s >= 80:
-                risk_signals["band"] = "critical"
-            elif _s >= 60:
-                risk_signals["band"] = "high"
-            elif _s >= 40:
-                risk_signals["band"] = "medium"
-            elif _s >= 20:
-                risk_signals["band"] = "low"
-            else:
-                risk_signals["band"] = "minimal"
+            # risk_signals puede ser objeto - no modificar, solo pasar a _build_response via pr_data
+            pr_data["_risk_multiplier"] = _multiplier
+            pr_data["_surface"] = _surface_ctx.surface
+            pr_data["_negative_signals"] = _surface_ctx.negative_signals
 
     response = _build_response(
         repo=repo,
