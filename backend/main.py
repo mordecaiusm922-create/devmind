@@ -885,6 +885,21 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         features=features,
         parsed_fns=parsed_functions,
     )
+    # Aplica surface multiplier al risk final en response
+    if _surface_ctx is not None and _surface_ctx.risk_multiplier < 1.0:
+        _m = _surface_ctx.risk_multiplier
+        if "risk" in response and isinstance(response["risk"], dict):
+            _orig = response["risk"].get("score", 0)
+            _new_score = max(0, round(_orig * _m))
+            response["risk"]["score"] = _new_score
+            response["risk"]["surface"] = _surface_ctx.surface
+            response["risk"]["surface_multiplier"] = _m
+            response["risk"]["negative_signals"] = _surface_ctx.negative_signals
+            if _new_score >= 80: response["risk"]["band"] = "critical"
+            elif _new_score >= 60: response["risk"]["band"] = "high"
+            elif _new_score >= 40: response["risk"]["band"] = "medium"
+            elif _new_score >= 20: response["risk"]["band"] = "low"
+            else: response["risk"]["band"] = "minimal"
     safety_flow = _run_pr_safety_flow(repo, pr_number, pr_data, response, trace_id)
     _attach_unified_decision_v2(response, safety_flow)
     _metric("analysis_done")
