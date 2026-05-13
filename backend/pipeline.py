@@ -1747,5 +1747,6 @@ def _log_pipeline_event(prompt: str, candidate, score) -> None:
         except Exception as e:
             import logging as _lg
             _lg.getLogger("devmind").error(f"supabase_log_error: {e}")
+    path = Path(__file__).parent / "data" / "events"
     path.mkdir(parents=True, exist_ok=True)
-    (path / f"{record['id']}.json").write_text(json.dumps(record, indent=2))
+    (path / f"{record['id']}.json").write_text(__import__('json').dumps(record, indent=2))
