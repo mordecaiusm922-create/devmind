@@ -574,7 +574,7 @@ class DefaultEvaluatorEngine:
             if _groq.get("has_sql_injection"):
                 security -= 0.30
                 catastrophic_risk += 0.20
-            if _groq.get("has_hardcoded_secret"):
+            if _groq.get("has_hardcoded_secret") and not hardcoded_secret_fix:
                 security -= 0.25
                 catastrophic_risk += 0.15
             if _groq.get("has_unsafe_eval"):
