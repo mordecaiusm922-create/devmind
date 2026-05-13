@@ -1534,8 +1534,8 @@ class DevMindPipeline:
             "utility_delta": repair_delta["utility_delta"],
             "behavior_preservation": repair_delta.get("behavior_preservation"),
             "runtime_confidence": repair_delta.get("runtime_confidence"),
-            "uncertainty_delta": repair_delta["uncertainty_delta"],
             "mode": task.mode.value,
+            "surface": self._detect_surface(task, best_candidate),
         }
 
     def _summary_sandbox_evidence(self, task: TaskInput, best_candidate: Candidate) -> Dict[str, Any]:
