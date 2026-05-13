@@ -262,7 +262,7 @@ def evaluate_candidate(candidate: Candidate, prompt: str, context: ContextModel,
     for chunk in (corr_e, sec_e, perf_e, maint_e, align_e):
         rationale.extend(chunk)
 
-    return CandidateScores(
+    result = CandidateScores(
         correctness=corr,
         security=sec,
         performance=perf,
@@ -272,6 +272,44 @@ def evaluate_candidate(candidate: Candidate, prompt: str, context: ContextModel,
         regression_risk=reg,
         utility=utility,
         confidence=confidence,
-        risk_tags=tags,
         rationale=rationale[:12],
+        risk_tags=tags,
     )
+    _log_evaluation(prompt, candidate, result)
+    return result
+
+def _log_evaluation(prompt: str, candidate, scores) -> str:
+    import json, time, uuid, os
+    from pathlib import Path
+
+    record = {
+        "id":          str(uuid.uuid4()),
+        "ts":          time.time(),
+        "prompt":      prompt[:200],
+        "utility":     round(scores.utility, 4),
+        "security":    round(scores.security, 4),
+        "confidence":  round(scores.confidence, 4),
+        "cat_risk":    round(scores.catastrophic_risk, 4),
+        "reg_risk":    round(scores.regression_risk, 4),
+        "risk_tags":   scores.risk_tags,
+        "rationale":   scores.rationale,
+        "human_label": None,
+    }
+
+    # Supabase (producción)
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
+    if url and key:
+        try:
+            from supabase import create_client
+            sb = create_client(url, key)
+            sb.table("devmind_events").insert(record).execute()
+        except Exception:
+            pass
+
+    # Fallback local (desarrollo)
+    path = Path(__file__).parent.parent / "data" / "events"
+    path.mkdir(parents=True, exist_ok=True)
+    (path / f"{record['id']}.json").write_text(json.dumps(record, indent=2))
+
+    return record["id"]
