@@ -629,7 +629,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
         dec = sf_result.get("decision", {})
         sf_section = f"""
 ### Safety Flow
-**Decision:** `{dec.get('action', 'N/A')}` � Candidate `{sel.get('candidate', 'N/A')}`
+**Decision:** `{dec.get('action', 'N/A')}` ï¿½ Candidate `{sel.get('candidate', 'N/A')}`
 **Risk-adjusted utility:** `{sel.get('risk_adjusted_utility', 0)}`
 **Security:** `{sel.get('security', 0)}`
 **Verified:** `{sel.get('verified', False)}`
@@ -637,7 +637,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
 """
     return f"""## {emoji} DevMind Risk Analysis
 
-**{triage}** � Risk Score `{score}/100` � **{level.upper()}**
+**{triage}** ï¿½ Risk Score `{score}/100` ï¿½ **{level.upper()}**
 {blocker_md}
 
 ### Risk Breakdown
@@ -655,7 +655,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
 **Review focus:** {s.get("review_focus", "N/A")}
 {sf_section}
 ---
-_Analyzed by DevMind � trace `{result.get("trace_id", "")}`_
+_Analyzed by DevMind ï¿½ trace `{result.get("trace_id", "")}`_
 """
 
 
