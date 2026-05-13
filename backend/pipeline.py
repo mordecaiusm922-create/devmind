@@ -770,7 +770,7 @@ class DefaultEvaluatorEngine:
             0.55 * confidence + 0.45 * (1.0 - uncertainty)
         )
 
-        return CandidateScore(
+        _score = CandidateScore(
             correctness=round(correctness, 4),
             correctness_uncertainty=round(min(0.25, 0.08 + uncertainty * 0.18), 4),
             security=round(security, 4),
@@ -787,6 +787,9 @@ class DefaultEvaluatorEngine:
             risk_tags=risk_tags,
             rationale=rationale,
         )
+
+        _log_pipeline_event(task.prompt, candidate, _score)
+        return _score
 
 
 class DefaultRepairerEngine:
@@ -1714,3 +1717,32 @@ if __name__ == "__main__":
     else:
         payload = json.loads(raw)
         print(json.dumps(run_pipeline_sync(payload), indent=2))
+
+def _log_pipeline_event(prompt: str, candidate, score) -> None:
+    import json, time, uuid, os
+    from pathlib import Path
+    record = {
+        "id":          str(uuid.uuid4()),
+        "ts":          time.time(),
+        "prompt":      prompt[:200],
+        "candidate_id": getattr(candidate, "id", None),
+        "utility":     score.utility,
+        "security":    score.security,
+        "confidence":  score.confidence,
+        "cat_risk":    score.catastrophic_risk,
+        "reg_risk":    score.regression_risk,
+        "risk_tags":   score.risk_tags,
+        "rationale":   score.rationale,
+        "human_label": None,
+    }
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
+    if url and key:
+        try:
+            from supabase import create_client
+            create_client(url, key).table("devmind_events").insert(record).execute()
+        except Exception:
+            pass
+    path = Path(__file__).parent / "data" / "events"
+    path.mkdir(parents=True, exist_ok=True)
+    (path / f"{record['id']}.json").write_text(json.dumps(record, indent=2))
