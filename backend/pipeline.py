@@ -1583,8 +1583,9 @@ class DevMindPipeline:
                 _bp = _groq.get("behavior_preservation", {})
                 _bp_score = _bp.get("score") if isinstance(_bp, dict) else None
                 _runtime_confidence = _groq.get("runtime_confidence")
-        except Exception:
-            pass
+        except Exception as e:
+            import logging as _lg
+            _lg.getLogger("devmind").error(f"supabase_log_error: {e}")
 
         # Groq behavior preservation para el mejor candidato
         _bp_score = None
@@ -1597,8 +1598,9 @@ class DevMindPipeline:
                 _bp = _groq.get("behavior_preservation", {})
                 _bp_score = _bp.get("score") if isinstance(_bp, dict) else None
                 _runtime_confidence = _groq.get("runtime_confidence")
-        except Exception:
-            pass
+        except Exception as e:
+            import logging as _lg
+            _lg.getLogger("devmind").error(f"supabase_log_error: {e}")
         worst_score = min(all_scores, key=lambda s: s.security if hasattr(s, "security") else s.get("security", 0))
         best_score = max(all_scores, key=lambda s: s.security if hasattr(s, "security") else s.get("security", 0))
         final_score = best_score
@@ -1741,8 +1743,9 @@ def _log_pipeline_event(prompt: str, candidate, score) -> None:
         try:
             from supabase import create_client
             create_client(url, key).table("devmind_events").insert(record).execute()
-        except Exception:
-            pass
+        except Exception as e:
+            import logging as _lg
+            _lg.getLogger("devmind").error(f"supabase_log_error: {e}")
     path = Path(__file__).parent / "data" / "events"
     path.mkdir(parents=True, exist_ok=True)
     (path / f"{record['id']}.json").write_text(json.dumps(record, indent=2))
