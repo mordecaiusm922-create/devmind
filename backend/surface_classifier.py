@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -61,16 +61,46 @@ def classify_change_surface(files: list[dict[str, Any]], diff: str = "") -> Chan
         negative.append("no_runtime_execution")
         risk_multiplier *= NEGATIVE_SIGNALS["no_runtime_execution"]
 
+    is_infra = any(
+        re.search(r"(k8s|kubernetes|helm|terraform|docker|deploy|pipeline)", 
+        f.get("filename",""), re.I) for f in files
+    )
+    is_auth_surface = bool(re.search(r"(auth|oauth|jwt|session|login|credential|permission|rbac)", diff, re.I))
+    is_dataflow = any(
+        re.search(r"(migrat|schema|sql|db|orm|model|database)", 
+        f.get("filename",""), re.I) for f in files
+    )
+    is_config = any(
+        re.search(r"(settings|config|\.env|secrets|credentials)", 
+        f.get("filename",""), re.I) for f in files
+    )
+    is_payments = bool(re.search(r"(payment|billing|checkout|stripe|invoice|charge)", diff, re.I))
+
     if is_docs:
         surface = "documentation"
     elif is_test:
         surface = "tests"
     elif is_ci:
         surface = "ci_config"
-    elif is_executable:
-        surface = "runtime_code"
-    else:
+    elif is_payments:
+        surface = "payments"
+        risk_multiplier = min(risk_multiplier, 1.5)
+    elif is_auth_surface:
+        surface = "auth"
+        risk_multiplier = min(risk_multiplier, 1.3)
+    elif is_infra:
+        surface = "infra"
+        risk_multiplier = min(risk_multiplier, 1.4)
+    elif is_dataflow:
+        surface = "dataflow"
+        risk_multiplier = min(risk_multiplier, 1.2)
+    elif is_config:
         surface = "config"
+        risk_multiplier = min(risk_multiplier, 1.1)
+    elif is_executable:
+        surface = "runtime"
+    else:
+        surface = "unknown"
 
     use_lightweight = risk_multiplier < 0.5
     disable_fix = not is_executable and not is_ci
