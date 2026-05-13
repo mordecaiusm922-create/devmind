@@ -1764,3 +1764,34 @@ if __name__ == "__main__":
     path.mkdir(parents=True, exist_ok=True)
     (path / f"{record['id']}.json").write_text(__import__('json').dumps(record, indent=2))
 
+
+def _log_pipeline_event(prompt: str, candidate, score) -> None:
+    import json, time, uuid, os
+    from pathlib import Path
+    record = {
+        "id":          str(uuid.uuid4()),
+        "ts":          time.time(),
+        "prompt":      prompt[:200],
+        "candidate_id": getattr(candidate, "id", None),
+        "utility":     score.utility,
+        "security":    score.security,
+        "confidence":  score.confidence,
+        "cat_risk":    score.catastrophic_risk,
+        "reg_risk":    score.regression_risk,
+        "risk_tags":   score.risk_tags,
+        "rationale":   score.rationale,
+        "human_label": None,
+    }
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
+    if url and key:
+        try:
+            from supabase import create_client
+            row = {k: (list(v) if isinstance(v, (list, tuple)) else v) for k, v in record.items()}
+            create_client(url, key).table("devmind_events").insert(row).execute()
+        except Exception as e:
+            import logging as _lg
+            _lg.getLogger("devmind").error(f"supabase_log_error: {e}")
+    path = Path(__file__).parent / "data" / "events"
+    path.mkdir(parents=True, exist_ok=True)
+    (path / f"{record['id']}.json").write_text(json.dumps(record, indent=2))
