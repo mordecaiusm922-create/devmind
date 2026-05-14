@@ -342,7 +342,7 @@ class PipelineResult:
 
                 "chosen_candidate": self.evaluation.chosen_candidate,
 
-                "scores": {cid: asdict(score) for cid, score in self.evaluation.scores.items()},
+                "scores": {cid: asdict(score) for cid, score in self.evaluation.scores.items() if score is not None},
 
                 "deltas": self.evaluation.deltas,
 
