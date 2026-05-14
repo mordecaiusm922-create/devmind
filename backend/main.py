@@ -1,4 +1,4 @@
-"""
+﻿"""
 main.py -- DevMind SaaS API
 
 FastAPI application focused on:
@@ -629,7 +629,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
         dec = sf_result.get("decision", {})
         sf_section = f"""
 ### Safety Flow
-**Decision:** `{dec.get('action', 'N/A')}` ï¿½ Candidate `{sel.get('candidate', 'N/A')}`
+**Decision:** `{dec.get('action', 'N/A')}` Ã¯Â¿Â½ Candidate `{sel.get('candidate', 'N/A')}`
 **Risk-adjusted utility:** `{sel.get('risk_adjusted_utility', 0)}`
 **Security:** `{sel.get('security', 0)}`
 **Verified:** `{sel.get('verified', False)}`
@@ -637,7 +637,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
 """
     return f"""## {emoji} DevMind Risk Analysis
 
-**{triage}** ï¿½ Risk Score `{score}/100` ï¿½ **{level.upper()}**
+**{triage}** Ã¯Â¿Â½ Risk Score `{score}/100` Ã¯Â¿Â½ **{level.upper()}**
 {blocker_md}
 
 ### Risk Breakdown
@@ -655,7 +655,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
 **Review focus:** {s.get("review_focus", "N/A")}
 {sf_section}
 ---
-_Analyzed by DevMind ï¿½ trace `{result.get("trace_id", "")}`_
+_Analyzed by DevMind Ã¯Â¿Â½ trace `{result.get("trace_id", "")}`_
 """
 
 
@@ -792,6 +792,45 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
 
     pr_data = _timed("get_pr_data", get_pr_data, repo, pr_number)
     _check_payload_limits(pr_data)
+
+    # =============================================================================
+    # Infrastructure Security Analysis
+    # =============================================================================
+
+    try:
+        infra_results = analyze_infra(pr_data.get("files", []))
+
+        infra_findings = [
+            {
+                "rule_id": f.rule_id,
+                "severity": f.severity,
+                "surface": f.surface,
+                "title": f.title,
+                "description": f.description,
+                "file": f.file,
+                "line": f.line,
+                "evidence": f.evidence,
+                "cwe": f.cwe,
+                "fix_hint": f.fix_hint,
+            }
+            for f in infra_results.findings
+        ]
+
+        infra_score = int(infra_results.risk_score)
+        infra_block_merge = bool(infra_results.block_merge)
+
+    except Exception as exc:
+        log.warning(
+            "infra_analysis_failed",
+            extra={
+                "exc": str(exc),
+                "trace_id": trace_id,
+            }
+        )
+
+        infra_findings = []
+        infra_score = 0
+        infra_block_merge = False
 
     # Surface classification - previene alucinaciones en docs/tests
     try:
@@ -1155,7 +1194,12 @@ def _build_unified_decision_v2(
     sf_risk = (safety_flow or {}).get("risk") or {}
     sf_score = max(_safety_flow_risk_score(selected, sf_decision), _as_int(sf_risk.get("score"), 0))
     severity_floor, severity_reason = _finding_severity_floor(vulns, ci_cd_risks, summary)
-    calibrated_score = max(legacy_score, sf_score, severity_floor)
+    calibrated_score = max(
+        legacy_score,
+        sf_score,
+        severity_floor,
+        infra_score,
+    )
 
     verified = bool(selected.get("verified", False))
     has_findings = bool(vulns or ci_cd_risks)
@@ -1165,7 +1209,7 @@ def _build_unified_decision_v2(
     calibrated_score = max(0, min(100, calibrated_score))
     action, reason = _unified_action(
         calibrated_score=calibrated_score,
-        legacy_merge_blocker=bool(summary.get("merge_blocker", False)),
+        legacy_merge_blocker=bool(summary.get("merge_blocker", False)) or infra_block_merge,
         severity_floor=severity_floor,
         severity_reason=severity_reason,
         safety_decision=str(sf_decision.get("action") or ""),
@@ -1201,6 +1245,11 @@ def _build_unified_decision_v2(
             },
             "calibration": "max(analyze_pr, safety_flow_expected_loss, severity_floor)",
             "safety_flow_calibration": sf_risk.get("calibration", {}),
+        },
+        "infrastructure_security": {
+            "score": infra_score,
+            "block_merge": infra_block_merge,
+            "findings": infra_findings,
         },
         "fix_candidates": _extract_fix_candidates(safety_flow),
         "triage": triage,
@@ -1805,4 +1854,11 @@ async def repair_endpoint(req: RepairRequest):
 @app.post("/verify")
 async def verify_endpoint(req: VerifyRequest):
     return verify_candidate(req)
+
+
+from infra_analyzer import analyze_infra
+
+
+
+
 
