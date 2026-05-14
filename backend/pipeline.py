@@ -1397,6 +1397,27 @@ class DevMindPipeline:
 
         return RepairResult(candidate=current, iterations=iterations, converged=converged, history=history)
 
+    def _detect_surface(self, task, candidate=None) -> str:
+        prompt = (task.prompt or "").lower() if task else ""
+        import re as _re
+        if _re.search(r"\b(sql injection|sqli|sql)\b", prompt):
+            return "runtime_code"
+        if _re.search(r"\b(secret|api_key|token|password|credential)\b", prompt):
+            return "runtime_code"
+        if _re.search(r"\b(auth|authentication|authorization|rbac)\b", prompt):
+            return "runtime_code"
+        if _re.search(r"\b(terraform|kubernetes|k8s|helm|docker)\b", prompt):
+            return "ci_config"
+        if _re.search(r"\b(readme|docs|documentation|changelog)\b", prompt):
+            return "documentation"
+        if _re.search(r"\b(test|spec|unittest)\b", prompt):
+            return "tests"
+        if candidate and hasattr(candidate, "diff"):
+            diff = candidate.diff or ""
+            if "%s" in diff or "parameterized" in diff:
+                return "runtime_code"
+        return "runtime_code"
+
     def _pick_best_candidate(self, candidates: List[Candidate], evaluation: EvaluationResult) -> Candidate:
         by_id = {candidate.id: candidate for candidate in candidates}
         if evaluation.chosen_candidate and evaluation.chosen_candidate in by_id:
