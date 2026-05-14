@@ -1,4 +1,4 @@
-"""
+﻿"""
 main.py -- DevMind SaaS API
 
 FastAPI application focused on:
@@ -54,6 +54,7 @@ from prob_engine import (
 from evaluate import evaluate_payload
 from safety_flow import SafetyFlowRequest, run_safety_flow
 from sandbox import run_sandbox
+from infra_analyzer import analyze_infra, InfraAnalysisResult
 from parser import parse_pr_file
 
 load_dotenv()
@@ -629,7 +630,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
         dec = sf_result.get("decision", {})
         sf_section = f"""
 ### Safety Flow
-**Decision:** `{dec.get('action', 'N/A')}` ï¿½ Candidate `{sel.get('candidate', 'N/A')}`
+**Decision:** `{dec.get('action', 'N/A')}` Ã¯Â¿Â½ Candidate `{sel.get('candidate', 'N/A')}`
 **Risk-adjusted utility:** `{sel.get('risk_adjusted_utility', 0)}`
 **Security:** `{sel.get('security', 0)}`
 **Verified:** `{sel.get('verified', False)}`
@@ -637,7 +638,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
 """
     return f"""## {emoji} DevMind Risk Analysis
 
-**{triage}** ï¿½ Risk Score `{score}/100` ï¿½ **{level.upper()}**
+**{triage}** Ã¯Â¿Â½ Risk Score `{score}/100` Ã¯Â¿Â½ **{level.upper()}**
 {blocker_md}
 
 ### Risk Breakdown
@@ -655,7 +656,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
 **Review focus:** {s.get("review_focus", "N/A")}
 {sf_section}
 ---
-_Analyzed by DevMind ï¿½ trace `{result.get("trace_id", "")}`_
+_Analyzed by DevMind Ã¯Â¿Â½ trace `{result.get("trace_id", "")}`_
 """
 
 
@@ -1870,6 +1871,7 @@ async def verify_endpoint(req: VerifyRequest):
 
 
 from infra_analyzer import analyze_infra
+
 
 
 
