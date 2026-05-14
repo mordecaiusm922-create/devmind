@@ -1677,6 +1677,21 @@ def task_from_json(data: Mapping[str, Any]) -> TaskInput:
     )
 
 
+    def _detect_surface(self, task, best_candidate) -> str:
+        try:
+            from surface_classifier import classify_change_surface
+            files = []
+            ctx = task.context or {}
+            if isinstance(ctx, dict):
+                files = ctx.get("files", [])
+                if files and isinstance(files[0], str):
+                    files = [{"filename": f} for f in files]
+            diff = best_candidate.diff if best_candidate else ""
+            result = classify_change_surface(files, diff)
+            return result.surface
+        except Exception:
+            return "unknown"
+
 async def run_pipeline_from_json(
     payload: Mapping[str, Any],
     pipeline: Optional[DevMindPipeline] = None,
@@ -1719,21 +1734,6 @@ if __name__ == "__main__":
     else:
         payload = json.loads(raw)
         print(json.dumps(run_pipeline_sync(payload), indent=2))
-
-    def _detect_surface(self, task, best_candidate) -> str:
-        try:
-            from surface_classifier import classify_change_surface
-            files = []
-            ctx = task.context or {}
-            if isinstance(ctx, dict):
-                files = ctx.get("files", [])
-                if files and isinstance(files[0], str):
-                    files = [{"filename": f} for f in files]
-            diff = best_candidate.diff if best_candidate else ""
-            result = classify_change_surface(files, diff)
-            return result.surface
-        except Exception:
-            return "unknown"
     import json, time, uuid, os
     from pathlib import Path
     record = {
