@@ -2198,7 +2198,8 @@ class DevMindPipeline:
 
             repair_result = await self._repair_loop(task, intent, evidence, best_candidate, evaluation)
 
-            best_candidate = repair_result.candidate
+            if repair_result is not None:
+                best_candidate = repair_result.candidate
 
             # Re-evaluate after repair
 
