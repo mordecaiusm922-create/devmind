@@ -2234,9 +2234,10 @@ class DevMindPipeline:
 
                 else:
 
-                    repair_result = await self._repair_loop(task, intent, evidence, repair_result.candidate, evaluation)
+                    repair_result = await self._repair_loop(task, intent, evidence, best_candidate if repair_result is None else repair_result.candidate, evaluation)
 
-                best_candidate = repair_result.candidate
+                if repair_result is not None:
+                    best_candidate = repair_result.candidate
 
                 candidates = [best_candidate] + [c for c in candidates if c.id != best_candidate.id]
 
@@ -2260,6 +2261,7 @@ class DevMindPipeline:
 
             and verification.verified
 
+            and repair_result is not None
             and best_candidate.id == repair_result.candidate.id
 
         ):
