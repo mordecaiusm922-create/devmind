@@ -863,7 +863,8 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     ev = agent_result.evaluation
 
     validated_summary = _validate_summary(summary).model_dump()
-    validated_summary = enforce_risk_floor(validated_summary, pre)
+    if pre is not None:
+        validated_summary = enforce_risk_floor(validated_summary, pre)
 
     permissions = validated_summary.get("permissions_analysis", {}) or {}
     vulns = validated_summary.get("vulnerabilities", []) or []
