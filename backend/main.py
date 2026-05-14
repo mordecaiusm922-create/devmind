@@ -1,4 +1,4 @@
-﻿"""
+"""
 main.py -- DevMind SaaS API
 
 FastAPI application focused on:
@@ -629,7 +629,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
         dec = sf_result.get("decision", {})
         sf_section = f"""
 ### Safety Flow
-**Decision:** `{dec.get('action', 'N/A')}` Ã¯Â¿Â½ Candidate `{sel.get('candidate', 'N/A')}`
+**Decision:** `{dec.get('action', 'N/A')}` ï¿½ Candidate `{sel.get('candidate', 'N/A')}`
 **Risk-adjusted utility:** `{sel.get('risk_adjusted_utility', 0)}`
 **Security:** `{sel.get('security', 0)}`
 **Verified:** `{sel.get('verified', False)}`
@@ -637,7 +637,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
 """
     return f"""## {emoji} DevMind Risk Analysis
 
-**{triage}** Ã¯Â¿Â½ Risk Score `{score}/100` Ã¯Â¿Â½ **{level.upper()}**
+**{triage}** ï¿½ Risk Score `{score}/100` ï¿½ **{level.upper()}**
 {blocker_md}
 
 ### Risk Breakdown
@@ -655,7 +655,7 @@ def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> 
 **Review focus:** {s.get("review_focus", "N/A")}
 {sf_section}
 ---
-_Analyzed by DevMind Ã¯Â¿Â½ trace `{result.get("trace_id", "")}`_
+_Analyzed by DevMind ï¿½ trace `{result.get("trace_id", "")}`_
 """
 
 
@@ -723,6 +723,10 @@ def _build_code_features(pr_data: dict[str, Any]) -> tuple[dict[str, Any], list[
 # 14. PIPELINE
 # =============================================================================
 
+
+infra_score = 0
+infra_block_merge = False
+infra_results = None
 
 async def _run_pipeline(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     cache_key = _build_cache_key(repo, pr_number)
@@ -816,8 +820,8 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
             for f in infra_results.findings
         ]
 
-        infra_score = int(infra_results.risk_score)
-        infra_block_merge = bool(infra_results.block_merge)
+        infra_score = int(getattr(infra_results, 'risk_score', 0))
+        infra_block_merge = bool(getattr(infra_results, 'block_merge', False))
 
     except Exception as exc:
         log.warning(
