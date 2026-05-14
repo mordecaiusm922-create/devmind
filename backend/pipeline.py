@@ -1,3 +1,27 @@
+﻿import json as _json, time as _time, uuid as _uuid
+from pathlib import Path as _Path
+
+def _log_pipeline_event(prompt: str, candidate, scores) -> None:
+    try:
+        log_dir = _Path("data/decisions")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        record = {
+            "id": str(_uuid.uuid4()),
+            "ts": _time.time(),
+            "prompt": str(prompt)[:200],
+            "surface": getattr(candidate, "surface", None),
+            "intent": getattr(candidate, "intent", None),
+            "utility": round(float(getattr(scores, "utility", 0)), 4),
+            "security": round(float(getattr(scores, "security", 0)), 4),
+            "correctness": round(float(getattr(scores, "correctness", 0)), 4),
+            "catastrophic_risk": round(float(getattr(scores, "catastrophic_risk", 0)), 4),
+            "human_override": None,
+        }
+        (_Path("data/decisions") / f"{record['id']}.json").write_text(
+            _json.dumps(record, indent=2)
+        )
+    except Exception:
+        pass
 # pipeline.py
 
 from __future__ import annotations
@@ -3545,6 +3569,7 @@ if __name__ == "__main__":
         payload = json.loads(raw)
 
         print(json.dumps(run_pipeline_sync(payload), indent=2))
+
 
 
 
