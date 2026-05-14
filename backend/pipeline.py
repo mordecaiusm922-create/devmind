@@ -2660,6 +2660,9 @@ class DevMindPipeline:
 
             original_score = await self.evaluator_engine.evaluate(task, intent, evidence, current)
 
+        if original_score is None:
+            return None
+
         previous_security = float(original_score.security)
 
         repair_budget = min(self.max_repair_iters, MAX_REPAIR_BUDGET)
