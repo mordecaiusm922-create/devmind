@@ -1,4 +1,4 @@
-# pipeline.py
+﻿# pipeline.py
 from __future__ import annotations
 
 import asyncio
@@ -1712,6 +1712,38 @@ def task_from_json(data: Mapping[str, Any]) -> TaskInput:
             return result.surface
         except Exception:
             return "unknown"
+
+
+def _persist_pipeline_result(result):
+    import os, time, json, uuid
+    from pathlib import Path
+
+    row = {
+        "id": str(uuid.uuid4()),
+        "ts": time.time(),
+        "run_id": result.run_id,
+        "prompt": (result.prompt or "")[:500],
+        "decision": result.decision.value,
+        "intent": result.intent.label,
+        "confidence": result.intent.confidence,
+        "security": result.summary.get("security"),
+        "security_delta": result.summary.get("security_delta"),
+        "duration_ms": result.duration_ms,
+    }
+
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
+
+    if url and key:
+        try:
+            from supabase import create_client
+            create_client(url, key).table("devmind_events").insert(row).execute()
+        except Exception as e:
+            print("supabase:", e)
+
+    path = Path(__file__).parent / "data" / "events"
+    path.mkdir(parents=True, exist_ok=True)
+    (path / f"{row['id']}.json").write_text(json.dumps(row, indent=2))
 
 async def run_pipeline_from_json(
     payload: Mapping[str, Any],
@@ -1720,6 +1752,12 @@ async def run_pipeline_from_json(
     pipeline = pipeline or DevMindPipeline()
     task = task_from_json(payload)
     result = await pipeline.run(task)
+
+    try:
+        _persist_pipeline_result(result)
+    except Exception as e:
+        print("persist error:", e)
+
     return result.to_dict()
 
 
@@ -1754,65 +1792,5 @@ if __name__ == "__main__":
         print(json.dumps(run_pipeline_sync(example), indent=2))
     else:
         payload = json.loads(raw)
-        print(json.dumps(run_pipeline_sync(payload), indent=2))
-    import json, time, uuid, os
-    from pathlib import Path
-    record = {
-        "id":          str(uuid.uuid4()),
-        "ts":          time.time(),
-        "prompt":      prompt[:200],
-        "candidate_id": getattr(candidate, "id", None),
-        "utility":     score.utility,
-        "security":    score.security,
-        "confidence":  score.confidence,
-        "cat_risk":    score.catastrophic_risk,
-        "reg_risk":    score.regression_risk,
-        "risk_tags":   score.risk_tags,
-        "rationale":   score.rationale,
-        "human_label": None,
-    }
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_SERVICE_KEY")
-    if url and key:
-        try:
-            from supabase import create_client
-            row = {k: (list(v) if isinstance(v, (list, tuple)) else v) for k, v in record.items()}
-            create_client(url, key).table("devmind_events").insert(row).execute()
-        except Exception as e:
-            import logging as _lg
-            _lg.getLogger("devmind").error(f"supabase_log_error: {e}")
-    path = Path(__file__).parent / "data" / "events"
-    path.mkdir(parents=True, exist_ok=True)
-    (path / f"{record['id']}.json").write_text(__import__('json').dumps(record, indent=2))
+        print(json.dumps(run_pipeline_sync(payload), indent=2))
 
-
-def _log_pipeline_event(prompt: str, candidate, score) -> None:
-    import json, time, uuid, os
-    from pathlib import Path
-    record = {
-        "id":          str(uuid.uuid4()),
-        "ts":          time.time(),
-        "prompt":      prompt[:200],
-        "candidate_id": getattr(candidate, "id", None),
-        "utility":     score.utility,
-        "security":    score.security,
-        "confidence":  score.confidence,
-        "cat_risk":    score.catastrophic_risk,
-        "reg_risk":    score.regression_risk,
-        "risk_tags":   score.risk_tags,
-        "rationale":   score.rationale,
-        "human_label": None,
-    }
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_SERVICE_KEY")
-    if url and key:
-        try:
-            from supabase import create_client
-            row = {k: (list(v) if isinstance(v, (list, tuple)) else v) for k, v in record.items()}
-            create_client(url, key).table("devmind_events").insert(row).execute()
-        except Exception as e:
-            import logging as _lg
-            _lg.getLogger("devmind").error(f"supabase_log_error: {e}")
-    path = Path(__file__).parent / "data" / "events"
-    path.mkdir(parents=True, exist_ok=True)
-    (path / f"{record['id']}.json").write_text(json.dumps(record, indent=2))
