@@ -1257,7 +1257,7 @@ def _build_unified_decision_v2(
         "infrastructure_security": {
             "score": infra_score,
             "block_merge": infra_block_merge,
-            "findings": infra_findings,
+            "findings": response.get("infrastructure_security", {}).get("findings", []),
         },
         "fix_candidates": _extract_fix_candidates(safety_flow),
         "triage": triage,
