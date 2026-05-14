@@ -781,6 +781,10 @@ async def _run_pipeline(repo: str, pr_number: int, trace_id: str) -> dict[str, A
 def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     _ctx.trace_id = trace_id
 
+    infra_score = 0
+    infra_block_merge = False
+    infra_findings = []
+
     def _timed(label: str, fn, *args, **kwargs):
         t0 = time.monotonic()
         result = fn(*args, **kwargs)
@@ -1624,6 +1628,10 @@ async def run_pipeline_endpoint(payload: dict):
 async def _observability(request: Request, call_next):
     trace_id = request.headers.get("x-trace-id") or str(uuid.uuid4())[:12]
     _ctx.trace_id = trace_id
+
+    infra_score = 0
+    infra_block_merge = False
+    infra_findings = []
     t0 = time.monotonic()
 
     response = await call_next(request)
@@ -1861,6 +1869,7 @@ async def verify_endpoint(req: VerifyRequest):
 
 
 from infra_analyzer import analyze_infra
+
 
 
 
