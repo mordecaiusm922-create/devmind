@@ -2192,7 +2192,9 @@ class DevMindPipeline:
 
         repair_result: Optional[RepairResult] = None
 
-        if evaluation.requires_repair or evaluation.decision in {Decision.REVISE, Decision.REJECT, Decision.NEEDS_REPAIR}:
+        if best_candidate is None or evaluation is None:
+            pass
+        elif evaluation.requires_repair or evaluation.decision in {Decision.REVISE, Decision.REJECT, Decision.NEEDS_REPAIR}:
 
             repair_result = await self._repair_loop(task, intent, evidence, best_candidate, evaluation)
 
