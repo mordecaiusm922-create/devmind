@@ -870,7 +870,7 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     vulns = validated_summary.get("vulnerabilities", []) or []
     ci_cd_risks = validated_summary.get("ci_cd_risks", []) or []
     risk_band = str(validated_summary.get("risk_note", {}).get("level", "low")).lower()
-    risk_floor = pre.risk_floor
+    risk_floor = pre.risk_floor if pre else "medium"
 
     merge_blocker, reason = decide_merge_blocker(
         risk_band=risk_band,
