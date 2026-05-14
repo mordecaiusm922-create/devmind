@@ -2896,20 +2896,16 @@ class DevMindPipeline:
 
             return None, None
 
-        best_id = max(scores.keys(), key=lambda cid: (
-
-            scores[cid].utility,
-
-            scores[cid].confidence,
-
-            scores[cid].security,
-
-            scores[cid].correctness,
-
-            -scores[cid].catastrophic_risk,
-
-            -scores[cid].regression_risk,
-
+        valid = {cid: s for cid, s in scores.items() if s is not None}
+        if not valid:
+            return None, None
+        best_id = max(valid.keys(), key=lambda cid: (
+            valid[cid].utility,
+            valid[cid].confidence,
+            valid[cid].security,
+            valid[cid].correctness,
+            -valid[cid].catastrophic_risk,
+            -valid[cid].regression_risk,
         ))
 
         return best_id, scores[best_id]
