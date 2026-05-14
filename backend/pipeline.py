@@ -1,6 +1,7 @@
 ﻿# pipeline.py
 
 from __future__ import annotations
+from infra_analyzer import analyze_infra
 
 
 
@@ -3495,6 +3496,9 @@ async def run_pipeline_from_json(
 ) -> Dict[str, Any]:
     pipeline = pipeline or DevMindPipeline()
     task = task_from_json(payload)
+    # Run infra analyzer on files
+    _infra_files = list(getattr(task, "files", []) or [])
+    _infra_result = analyze_infra(_infra_files) if _infra_files else None
     result = await pipeline.run(task)
 
     try:
@@ -3502,7 +3506,15 @@ async def run_pipeline_from_json(
     except Exception as e:
         print("persist error:", e)
 
-    return result.to_dict()
+    _rd = result.to_dict()
+    if _infra_result:
+        _rd["infrastructure_security"] = {
+            "score": _infra_result.risk_score,
+            "block_merge": _infra_result.block_merge,
+            "findings": [{"rule_id": f.rule_id, "severity": f.severity, "title": f.title, "surface": f.surface, "file": f.file, "line": f.line, "fix_hint": f.fix_hint} for f in _infra_result.findings],
+            "surfaces": _infra_result.surfaces_detected,
+        }
+    return _rd
 
 
 
