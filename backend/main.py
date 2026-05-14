@@ -1034,7 +1034,7 @@ def _build_response(
             },
         },
         "pre_analysis": {
-            "risk_floor": pre.risk_floor,
+            "risk_floor": pre.risk_floor if pre else "medium",
             "risk_tags": list(pre.risk_tags),
             "flagged_files": list(pre.flagged_files),
             "trivially_touched": list(pre.trivially_touched),
