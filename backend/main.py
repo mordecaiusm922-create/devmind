@@ -579,86 +579,91 @@ def _score_to_merge_state(level: str) -> str:
     return "failure" if level in ("critical", "high") else "success"
 
 
-def _build_pr_comment(result: dict[str, Any], sf_result: dict | None = None) -> str:
-    s = result.get("summary", {})
-    re_obj = result.get("risk_engine", {})
+def _build_pr_comment(result: dict, sf_result: dict | None = None) -> str:
+    from policy_engine import policy_decision, detect_surface
     unified_risk = result.get("risk", {})
     unified_decision = result.get("decision", {})
-    level = unified_risk.get("band", re_obj.get("band", "low"))
-    score = unified_risk.get("score", re_obj.get("score", 0))
-    top_factors = re_obj.get("top_factors", [])
+    s = result.get("summary", {})
+    score = unified_risk.get("score", 0)
+    level = unified_risk.get("band", "low").upper()
+    action = str(unified_decision.get("action", "REVIEW")).upper()
+    merge_block = action == "BLOCK" or bool(s.get("merge_blocker", False))
+    infra = result.get("infrastructure_security", {})
+    infra_score = infra.get("score", 0)
+    infra_findings = infra.get("findings", [])
+    
+    # Decision icon
+    icons = {"BLOCK": "BLOCK", "REVISE": "REVISE", "APPROVE": "APPROVE", "REVIEW": "REVIEW"}
+    icon = icons.get(action, "INFO")
+    
+    # Merge blocker line
+    blocker_line = ""
+    if merge_block:
+        reason = unified_decision.get("reason", s.get("merge_block_reason", "Risk threshold exceeded"))
+        blocker_line = f"\n> **Merge blocked:** {reason}\n"
+    
+    # Why chain
+    why_chain = result.get("why_chain", [])
+    why_md = " -> ".join(why_chain) if why_chain else "_not available_"
+    
+    # Surface
+    surface = result.get("surface", "runtime")
+    
+    # Infra findings
+    infra_md = ""
+    if infra_findings:
+        infra_md = "\n### Infrastructure Findings\n"
+        for f in infra_findings[:5]:
+            sev = str(f.get("severity","")).upper()
+            infra_md += f"- **[{sev}]** `{f.get('rule_id','')}` {f.get('title','')}\n"
+            if f.get("fix_hint"):
+                infra_md += f"  - Fix: {f.get('fix_hint')}\n"
+    
+    # Vulnerabilities
     vulns = s.get("vulnerabilities") or []
-    triage = result.get("triage", s.get("triage", "P3"))
-    merge_block = unified_decision.get("action") == "BLOCK" or s.get("merge_blocker", False)
-    merge_reason = unified_decision.get("reason") or s.get("merge_block_reason")
-    emoji = {"critical": "CRITICAL", "high": "HIGH", "medium": "MEDIUM", "low": "LOW", "minimal": "MINIMAL"}.get(
-        level,
-        "LOW",
-    )
-
-    vuln_lines = []
-    for v in vulns:
-        sev = str(v.get("severity", "unknown")).upper()
-        loc = v.get("location", "-")
-        desc = v.get("description", "")
-        fix = v.get("fix", "")
-        path = v.get("exploit_path", "")
-        block = f"**[{sev}]** `{loc}`\n{desc}\n"
-        if path:
-            block += f"**Exploit path:** {path}\n"
-        block += f"**Fix:** {fix}"
-        vuln_lines.append(block)
-
-    factors_md = "\n".join(f"- {f}" for f in top_factors) if top_factors else "- None detected"
-    vulns_md = "\n\n".join(vuln_lines) if vuln_lines else "_No vulnerabilities detected_"
-    blocker_md = f"Merge blocked. {merge_reason}" if merge_block else ""
-    breakdown = re_obj.get("breakdown", {})
-    scores_md = (
-        f"| Metric | Score |\n"
-        f"|--------|-------|\n"
-        f"| Risk Score | `{score}/100` |\n"
-        f"| Decision | `{unified_decision.get('action', 'N/A')}` |\n"
-        f"| Exploit probability | `{unified_risk.get('p_exploit', 0)}` |\n"
-        f"| Probability | `{breakdown.get('probability', 0)}` |\n"
-        f"| Impact | `{breakdown.get('impact', 0)}` |\n"
-        f"| Confidence | `{breakdown.get('confidence', 0)}` |"
-    )
-
-    sf_section = ""
+    vulns_md = "_No vulnerabilities detected_"
+    if vulns:
+        lines_v = []
+        for v in vulns[:3]:
+            sev = str(v.get("severity","")).upper()
+            loc = v.get("location","-")
+            desc = v.get("description","")
+            fix = v.get("fix","")
+            lines_v.append(f"**[{sev}]** `{loc}`\n{desc}\n**Fix:** {fix}")
+        vulns_md = "\n\n".join(lines_v)
+    
+    # Safety flow section
+    sf_md = ""
     if sf_result and sf_result.get("selected"):
         sel = sf_result["selected"]
         dec = sf_result.get("decision", {})
-        sf_section = f"""
-### Safety Flow
-**Decision:** `{dec.get('action', 'N/A')}` Ã¯Â¿Â½ Candidate `{sel.get('candidate', 'N/A')}`
-**Risk-adjusted utility:** `{sel.get('risk_adjusted_utility', 0)}`
-**Security:** `{sel.get('security', 0)}`
-**Verified:** `{sel.get('verified', False)}`
-**Rationale:** {', '.join(sel.get('rationale', [])[:3])}
-"""
-    return f"""## {emoji} DevMind Risk Analysis
+        sf_action = dec.get("action","N/A") if isinstance(dec, dict) else "N/A"
+        sf_md = f"""\n### Repair Candidates\n**Best candidate:** `{sel.get("candidate","N/A")}` | Action: `{sf_action}`\n**Risk-adjusted utility:** `{sel.get("risk_adjusted_utility",0)}` | Security: `{sel.get("security",0)}` | Verified: `{sel.get("verified",False)}`\n"""
+    
+    triage = result.get("triage", s.get("triage", "P3"))
+    trace = result.get("trace_id", "")[:12]
+    
+    comment = f"""## {icon} DevMind Analysis
 
-**{triage}** Ã¯Â¿Â½ Risk Score `{score}/100` Ã¯Â¿Â½ **{level.upper()}**
-{blocker_md}
+**{triage}** | Risk Score `{score}/100` | **{level}** | Surface: `{surface}`
+{blocker_line}
+### Decision Chain
+`{why_md}`
 
 ### Risk Breakdown
-{scores_md}
-
-### Top Risk Factors
-{factors_md}
-
+| Metric | Score |
+|--------|-------|
+| Risk Score | `{score}/100` |
+| Decision | `{action}` |
+| Infra Score | `{infra_score}/100` |
+{infra_md}
 ### Vulnerabilities
 {vulns_md}
-
-### Summary
-**What:** {s.get("what", "N/A")}
-**Impact:** {s.get("impact", "N/A")}
-**Review focus:** {s.get("review_focus", "N/A")}
-{sf_section}
+{sf_md}
 ---
-_Analyzed by DevMind Ã¯Â¿Â½ trace `{result.get("trace_id", "")}`_
+_Analyzed by DevMind v1.5.0_ | trace `{trace}`
 """
-
+    return comment
 
 def decide_merge_blocker(
     *,
