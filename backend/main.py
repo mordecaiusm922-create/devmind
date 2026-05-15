@@ -1607,6 +1607,47 @@ app.add_middleware(
 # =============================================================================
 # 17. MIDDLEWARE / ERROR HANDLERS
 
+
+@app.post("/review", dependencies=[Depends(_require_api_key)])
+async def review_endpoint(payload: dict):
+    from infra_analyzer import analyze_infra
+    from policy_engine import policy_decision
+    files = list(payload.get("files", []) or [])
+    prompt = str(payload.get("prompt", ""))
+    mode = str(payload.get("mode", "secure"))
+    infra = analyze_infra(files) if files else None
+    infra_score = infra.risk_score if infra else 0
+    infra_block = infra.block_merge if infra else False
+    infra_findings = [{"rule_id": f.rule_id, "severity": f.severity, "title": f.title, "surface": f.surface, "fix_hint": f.fix_hint} for f in infra.findings] if infra else []
+    intent_label = "general_fix"
+    intent_confidence = 0.0
+    safety_action = ""
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=30) as client:
+            sf = await client.post("https://devmind-2cej.onrender.com/safety-flow",
+                json={"prompt": prompt, "mode": mode, "files": files},
+                headers={"Content-Type": "application/json", "X-Api-Key": payload.get("_api_key", "")})
+            if sf.status_code == 200:
+                sd = sf.json()
+                intent_label = sd.get("representation", {}).get("intent", {}).get("label", "general_fix")
+                intent_confidence = sd.get("representation", {}).get("intent", {}).get("confidence", 0.0)
+                dec = sd.get("decision", {})
+                safety_action = dec.get("action", "").upper() if isinstance(dec, dict) else ""
+    except Exception:
+        pass
+    policy = policy_decision(prompt=prompt, files=files, mode=mode,
+        intent_label=intent_label, infra_block=infra_block,
+        infra_score=infra_score, safety_action=safety_action)
+    return {
+        "decision": policy["decision"],
+        "reason": policy["reason"],
+        "surface": policy["surface"],
+        "intent": {"label": intent_label, "confidence": intent_confidence},
+        "infrastructure_security": {"score": infra_score, "block_merge": infra_block, "findings": infra_findings},
+        "merge_blocker": policy["decision"] == "BLOCK",
+    }
+
 @app.post("/sandbox", dependencies=[Depends(_require_api_key)])
 async def sandbox_endpoint(payload: dict):
     from sandbox import sandbox_candidate
