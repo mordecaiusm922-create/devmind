@@ -1,0 +1,22 @@
+{
+  "id": "5bd34568-6cf1-4cfa-8ec5-38c98f11bcfa",
+  "ts": 1778631736.8946354,
+  "prompt": "fix sql injection vulnerability",
+  "utility": 0.6146,
+  "security": 0.88,
+  "confidence": 0.6382,
+  "cat_risk": 0.12,
+  "reg_risk": 0.48,
+  "risk_tags": [
+    "auth",
+    "auth_surface",
+    "db"
+  ],
+  "rationale": [
+    "small patch",
+    "mitigation terms present",
+    "security hygiene present",
+    "minimal change"
+  ],
+  "human_label": null
+}

