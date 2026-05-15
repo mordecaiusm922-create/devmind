@@ -13,6 +13,7 @@ BLOCK_KEYWORDS = [
 
 BLOCK_INTENTS = {"sql_injection_fix", "secret_fix", "hardcoded_secret_fix"}
 REVISE_INTENTS = {"secure_fix", "auth_fix"}
+AUTH_KEYWORDS = ["oauth", "oauth2", "jwt", "authentication", "authorization", "login flow", "sso", "saml"]
 TRIVIAL_SURFACES = {"documentation", "comment_only", "frontend_only", "test_only", "dependency_only"}
 SENSITIVE_DOMAINS = ["payment", "billing", "auth", "credential", "token", "oauth"]
 LOGGING_KEYWORDS = ["logging", "log.", "logger", "print(", "console.log"]
@@ -71,6 +72,10 @@ def policy_decision(prompt: str, files: list, mode: str, intent_label: str,
     # 4. Block intents
     if intent_label in BLOCK_INTENTS:
         return {"decision": "BLOCK", "reason": f"block_intent:{intent_label}", "surface": surface}
+
+    # 4b. Auth changes = REVISE
+    if any(kw in full_text for kw in AUTH_KEYWORDS) and surface == "runtime":
+        return {"decision": "REVISE", "reason": "auth_change", "surface": surface}
 
     # 5. Runtime bugfix
     if any(kw in prompt.lower() for kw in BUGFIX_KEYWORDS) and surface == "runtime":
