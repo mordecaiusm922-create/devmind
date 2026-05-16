@@ -971,6 +971,30 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
             elif _new_score >= 20: _risk_obj["band"] = "low"
             else: _risk_obj["band"] = "minimal"
     _metric("analysis_done")
+    # Policy engine - agrega why_chain y surface al response
+    try:
+        from policy_engine import policy_decision, detect_surface
+        _files = pr_data.get('files', []) or []
+        _prompt = pr_data.get('title', '') + ' ' + pr_data.get('body', '')
+        _mode = 'secure'
+        _intent = response.get('intent', {}).get('label', 'general_fix') if isinstance(response.get('intent'), dict) else 'general_fix'
+        _safety_action = ''
+        _sf = response.get('safety_flow', {})
+        if isinstance(_sf, dict):
+            _sd = _sf.get('decision', {})
+            _safety_action = _sd.get('action', '').upper() if isinstance(_sd, dict) else ''
+        _policy = policy_decision(
+            prompt=_prompt, files=_files, mode=_mode,
+            intent_label=_intent, infra_block=infra_block_merge,
+            infra_score=infra_score, safety_action=_safety_action
+        )
+        response['why_chain'] = _policy.get('why_chain', [])
+        response['surface'] = _policy.get('surface', 'runtime')
+        response['policy_decision'] = _policy.get('decision', '')
+        response['policy_reason'] = _policy.get('reason', '')
+    except Exception as _pe:
+        log.warning('policy_engine_failed', extra={'exc': str(_pe)})
+
     return response
 
 
