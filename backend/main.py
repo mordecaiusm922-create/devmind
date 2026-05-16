@@ -586,7 +586,9 @@ def _build_pr_comment(result: dict, sf_result: dict | None = None) -> str:
     s = result.get("summary", {})
     score = unified_risk.get("score", 0)
     level = unified_risk.get("band", "low").upper()
-    action = str(unified_decision.get("action", "REVIEW")).upper()
+    # Usar policy_decision si existe, sino fallback al pipeline
+    policy_action = result.get("policy_decision", "")
+    action = policy_action.upper() if policy_action else str(unified_decision.get("action", "REVIEW")).upper()
     merge_block = action == "BLOCK" or bool(s.get("merge_blocker", False))
     infra = result.get("infrastructure_security", {})
     infra_score = infra.get("score", 0)
