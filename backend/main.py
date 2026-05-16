@@ -1675,6 +1675,7 @@ async def review_endpoint(payload: dict):
         "intent": {"label": intent_label, "confidence": intent_confidence},
         "infrastructure_security": {"score": infra_score, "block_merge": infra_block, "findings": infra_findings},
         "merge_blocker": policy["decision"] == "BLOCK",
+        "why_chain": policy.get("why_chain", []),
     }
 
 @app.post("/sandbox", dependencies=[Depends(_require_api_key)])
