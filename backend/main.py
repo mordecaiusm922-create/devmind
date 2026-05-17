@@ -1311,7 +1311,7 @@ def _build_unified_decision_v2(
             "score": infra_score,
             "block_merge": infra_block_merge,
             "findings": response.get("infrastructure_security", {}).get("findings", []),
-            "cve_findings": cve_findings,
+            "cve_findings": response.get("infrastructure_security", {}).get("cve_findings", []),
         },
         "fix_candidates": _extract_fix_candidates(safety_flow),
         "triage": triage,
