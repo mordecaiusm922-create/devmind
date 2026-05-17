@@ -55,6 +55,7 @@ from evaluate import evaluate_payload
 from safety_flow import SafetyFlowRequest, run_safety_flow
 from sandbox import run_sandbox
 from infra_analyzer import analyze_infra, InfraAnalysisResult
+from cve_checker import check_cves
 from parser import parse_pr_file
 
 load_dotenv()
@@ -848,6 +849,25 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         infra_score = 0
         infra_block_merge = False
 
+    # CVE Analysis
+    cve_result = None
+    cve_findings = []
+    try:
+        cve_result = check_cves(pr_data.get('files', []))
+        cve_findings = [{
+            'package': f.package,
+            'version': f.version,
+            'cve_id': f.cve_id,
+            'severity': f.severity,
+            'description': f.description,
+            'fix_version': f.fix_version,
+        } for f in cve_result.findings]
+        if cve_result.block_merge:
+            infra_block_merge = True
+    except Exception as exc:
+        log.warning('cve_check_failed', extra={'exc': str(exc)})
+
+
     # Surface classification - previene alucinaciones en docs/tests
     try:
         from surface_classifier import classify_change_surface
@@ -1291,6 +1311,7 @@ def _build_unified_decision_v2(
             "score": infra_score,
             "block_merge": infra_block_merge,
             "findings": response.get("infrastructure_security", {}).get("findings", []),
+            "cve_findings": cve_findings,
         },
         "fix_candidates": _extract_fix_candidates(safety_flow),
         "triage": triage,
