@@ -1693,6 +1693,12 @@ async def review_endpoint(payload: dict):
     infra_score = infra.risk_score if infra else 0
     infra_block = infra.block_merge if infra else False
     infra_findings = [{"rule_id": f.rule_id, "severity": f.severity, "title": f.title, "surface": f.surface, "fix_hint": f.fix_hint} for f in infra.findings] if infra else []
+    from cve_checker import check_cves
+    cve_result = check_cves(files) if files else None
+    cve_findings = [{"package": f.package, "version": f.version, "cve_id": f.cve_id, "severity": f.severity, "description": f.description, "fix_version": f.fix_version} for f in cve_result.findings] if cve_result else []
+    if cve_result and cve_result.block_merge:
+        infra_block = True
+        infra_score = max(infra_score, 70)
     intent_label = "general_fix"
     intent_confidence = 0.0
     safety_action = ""
@@ -1721,6 +1727,7 @@ async def review_endpoint(payload: dict):
         "infrastructure_security": {"score": infra_score, "block_merge": infra_block, "findings": infra_findings},
         "merge_blocker": policy["decision"] == "BLOCK",
         "why_chain": policy.get("why_chain", []),
+        "cve_findings": cve_findings,
     }
 
 @app.post("/sandbox", dependencies=[Depends(_require_api_key)])
