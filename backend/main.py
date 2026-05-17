@@ -954,6 +954,7 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
             pr_data["_surface"] = _surface_ctx.surface
             pr_data["_negative_signals"] = _surface_ctx.negative_signals
 
+    pr_data["_cve_findings"] = cve_findings
     response = _build_response(
         repo=repo,
         risk_signals=risk_signals,
@@ -982,6 +983,9 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
             elif _new_score >= 20: _risk_obj["band"] = "low"
             else: _risk_obj["band"] = "minimal"
     safety_flow = _run_pr_safety_flow(repo, pr_number, pr_data, response, trace_id)
+    # Inyectar cve_findings en response antes de attach
+    if isinstance(response.get("infrastructure_security"), dict):
+        response["infrastructure_security"]["cve_findings"] = cve_findings
     _attach_unified_decision_v2(response, safety_flow)
     # Aplica surface multiplier DESPUES de attach (evita sobreescritura)
     if _surface_ctx is not None and _surface_ctx.risk_multiplier < 1.0:
