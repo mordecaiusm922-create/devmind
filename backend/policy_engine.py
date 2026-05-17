@@ -24,7 +24,10 @@ def detect_surface(prompt: str, files: list) -> str:
     filenames = [f.get("filename", "").lower() for f in files]
     extensions = [fn.rsplit(".", 1)[-1] if "." in fn else "" for fn in filenames]
 
-    if filenames and all(ext in {"md", "txt", "rst"} or "readme" in fn or "license" in fn
+    if filenames and all("requirements" in fn or fn in {"package.json", "package-lock.json", "yarn.lock", "pipfile", "poetry.lock"} or (ext in {"txt", "toml", "lock"} and "require" in fn)
+                         for fn, ext in zip(filenames, extensions) if fn):
+        return "dependency_only"
+    if filenames and all((ext in {"md", "rst"} or "readme" in fn or "license" in fn) and "requirements" not in fn
                          for fn, ext in zip(filenames, extensions) if fn):
         return "documentation"
     if filenames and all(ext == "css" or "style" in fn

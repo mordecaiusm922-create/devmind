@@ -643,6 +643,23 @@ def _build_pr_comment(result: dict, sf_result: dict | None = None) -> str:
         sf_action = dec.get("action","N/A") if isinstance(dec, dict) else "N/A"
         sf_md = f"""\n### Repair Candidates\n**Best candidate:** `{sel.get("candidate","N/A")}` | Action: `{sf_action}`\n**Risk-adjusted utility:** `{sel.get("risk_adjusted_utility",0)}` | Security: `{sel.get("security",0)}` | Verified: `{sel.get("verified",False)}`\n"""
     
+    # CVE findings
+    cve_findings = result.get("infrastructure_security", {}).get("cve_findings", [])
+    cve_md = ""
+    if cve_findings:
+        cve_md = "\n### Dependency Vulnerabilities (CVE)\n"
+        for c in cve_findings[:5]:
+            sev = str(c.get("severity","")).upper()
+            pkg = c.get("package","")
+            ver = c.get("version","")
+            cve_id = c.get("cve_id","")
+            desc = c.get("description","")[:80]
+            fix = c.get("fix_version","")
+            cve_md += f"- **[{sev}]** `{pkg}=={ver}` {cve_id}\n"
+            cve_md += f"  {desc}\n"
+            if fix:
+                cve_md += f"  **Fix:** upgrade to `{fix}`\n"
+
     triage = result.get("triage", s.get("triage", "P3"))
     trace = result.get("trace_id", "")[:12]
     
@@ -662,6 +679,7 @@ def _build_pr_comment(result: dict, sf_result: dict | None = None) -> str:
 {infra_md}
 ### Vulnerabilities
 {vulns_md}
+{cve_md}
 {sf_md}
 ---
 _Analyzed by DevMind v1.5.0_ | trace `{trace}`
