@@ -1699,6 +1699,12 @@ async def review_endpoint(payload: dict):
     if cve_result and cve_result.block_merge:
         infra_block = True
         infra_score = max(infra_score, 70)
+    from ast_analyzer import analyze_ast
+    ast_result = analyze_ast(files) if files else None
+    ast_findings = [{"rule_id": f.rule_id, "severity": f.severity, "title": f.title, "description": f.description, "file": f.file, "line": f.line, "evidence": f.evidence, "fix_hint": f.fix_hint} for f in ast_result.findings] if ast_result else []
+    if ast_result and ast_result.block_merge:
+        infra_block = True
+        infra_score = max(infra_score, ast_result.risk_score)
     intent_label = "general_fix"
     intent_confidence = 0.0
     safety_action = ""
@@ -1728,6 +1734,7 @@ async def review_endpoint(payload: dict):
         "merge_blocker": policy["decision"] == "BLOCK",
         "why_chain": policy.get("why_chain", []),
         "cve_findings": cve_findings,
+        "ast_findings": ast_findings,
     }
 
 @app.post("/sandbox", dependencies=[Depends(_require_api_key)])
