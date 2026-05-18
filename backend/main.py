@@ -660,6 +660,23 @@ def _build_pr_comment(result: dict, sf_result: dict | None = None) -> str:
             if fix:
                 cve_md += f"  **Fix:** upgrade to `{fix}`\n"
 
+    # AST findings
+    ast_findings = result.get("ast_findings", [])
+    ast_md = ""
+    if ast_findings:
+        ast_md = "\n### Code Analysis (AST)\n"
+        for a in ast_findings[:5]:
+            sev = str(a.get("severity","")).upper()
+            rule = a.get("rule_id","")
+            title = a.get("title","")
+            evidence = a.get("evidence","")[:60]
+            fix = a.get("fix_hint","")[:80]
+            ast_md += "- **[" + sev + "]** `" + rule + "` " + title + "\n"
+            if evidence:
+                ast_md += "  `" + evidence + "`\n"
+            if fix:
+                ast_md += "  Fix: " + fix + "\n"
+
     triage = result.get("triage", s.get("triage", "P3"))
     trace = result.get("trace_id", "")[:12]
     
@@ -680,6 +697,7 @@ def _build_pr_comment(result: dict, sf_result: dict | None = None) -> str:
 ### Vulnerabilities
 {vulns_md}
 {cve_md}
+{ast_md}
 {sf_md}
 ---
 _Analyzed by DevMind v1.5.0_ | trace `{trace}`
