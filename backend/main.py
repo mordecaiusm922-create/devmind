@@ -1,4 +1,4 @@
-﻿"""
+"""
 main.py -- DevMind SaaS API
 
 FastAPI application focused on:
@@ -590,7 +590,8 @@ def _build_pr_comment(result: dict, sf_result: dict | None = None) -> str:
     # Usar policy_decision si existe, sino fallback al pipeline
     policy_action = result.get("policy_decision", "")
     action = policy_action.upper() if policy_action else str(unified_decision.get("action", "REVIEW")).upper()
-    merge_block = action == "BLOCK" or bool(s.get("merge_blocker", False))
+    infra_block = bool((result.get("infrastructure_security") or {}).get("block_merge", False))
+    merge_block = action == "BLOCK" or (bool(s.get("merge_blocker", False)) and action != "APPROVE") or infra_block
     infra = result.get("infrastructure_security", {})
     infra_score = infra.get("score", 0)
     infra_findings = infra.get("findings", [])

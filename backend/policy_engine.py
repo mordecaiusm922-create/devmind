@@ -1,4 +1,4 @@
-﻿HARDBLOCK_PATTERNS = [
+HARDBLOCK_PATTERNS = [
     "db credentials", "db_password", "db_pass", "secret exposure",
     "private key", "aws_secret_access_key", "token leak", "api_key ="
 ]
@@ -40,7 +40,7 @@ def detect_surface(prompt: str, files: list) -> str:
         return "dependency_only"
     if any(kw in prompt.lower() for kw in ["comment", "typo", "rename", "refactor"]):
         content = " ".join(f.get("content", "") for f in files)
-        if len(content) < 200:
+        if len(content) < 200 and not any(ext in {"py","js","ts","go","rb","java"} for ext in extensions):
             return "comment_only"
     return "runtime"
 
