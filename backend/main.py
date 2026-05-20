@@ -1034,6 +1034,18 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
             elif _new_score >= 20: _risk_obj["band"] = "low"
             else: _risk_obj["band"] = "minimal"
     _metric("analysis_done")
+    # AST Analysis en pipeline
+    try:
+        from ast_analyzer import analyze_ast
+        _ast_result = analyze_ast(pr_data.get("files", []))
+        if _ast_result and _ast_result.block_merge:
+            infra_block_merge = True
+            infra_score = max(infra_score, _ast_result.risk_score)
+        response["ast_findings"] = [{"rule_id": f.rule_id, "severity": f.severity, "title": f.title, "description": f.description, "file": f.file, "line": f.line, "evidence": f.evidence, "fix_hint": f.fix_hint} for f in _ast_result.findings] if _ast_result else []
+    except Exception as _ae:
+        log.warning("ast_analysis_failed", extra={"exc": str(_ae)})
+        response["ast_findings"] = []
+
     # Policy engine - agrega why_chain y surface al response
     try:
         from policy_engine import policy_decision, detect_surface
