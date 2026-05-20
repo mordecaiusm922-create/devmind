@@ -160,7 +160,11 @@ def analyze_ast(files: list[dict]) -> ASTAnalysisResult:
 
     for f in files:
         filename = f.get("filename", "") or f.get("path", "")
-        content = f.get("content", "") or f.get("patch", "") or ""
+        content = f.get("content", "") or ""
+        if not content:
+            patch = f.get("patch", "") or ""
+            # Extraer solo lineas agregadas del patch
+            content = "\n".join(l[1:] for l in patch.splitlines() if l.startswith("+") and not l.startswith("+++ "))
         if not content or not filename:
             continue
 
