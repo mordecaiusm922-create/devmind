@@ -1042,6 +1042,8 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
             infra_block_merge = True
             infra_score = max(infra_score, _ast_result.risk_score)
         response["ast_findings"] = [{"rule_id": f.rule_id, "severity": f.severity, "title": f.title, "description": f.description, "file": f.file, "line": f.line, "evidence": f.evidence, "fix_hint": f.fix_hint} for f in _ast_result.findings] if _ast_result else []
+        if _ast_result and _ast_result.has_taint_flow:
+            response["_ast_taint_detected"] = True
     except Exception as _ae:
         log.warning("ast_analysis_failed", extra={"exc": str(_ae)})
         response["ast_findings"] = []
@@ -1058,10 +1060,11 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         if isinstance(_sf, dict):
             _sd = _sf.get('decision', {})
             _safety_action = _sd.get('action', '').upper() if isinstance(_sd, dict) else ''
+        _ast_taint = response.get("_ast_taint_detected", False)
         _policy = policy_decision(
             prompt=_prompt, files=_files, mode=_mode,
-            intent_label=_intent, infra_block=infra_block_merge,
-            infra_score=infra_score, safety_action=_safety_action
+            intent_label=_intent, infra_block=infra_block_merge or _ast_taint,
+            infra_score=max(infra_score, 90) if _ast_taint else infra_score, safety_action=_safety_action
         )
         response['why_chain'] = _policy.get('why_chain', [])
         response['surface'] = _policy.get('surface', 'runtime')
