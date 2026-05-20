@@ -1,4 +1,4 @@
-﻿# pipeline.py
+# pipeline.py
 
 from __future__ import annotations
 from infra_analyzer import analyze_infra
@@ -1574,9 +1574,9 @@ class DefaultEvaluatorEngine:
             risk_tags=risk_tags,
 
             rationale=rationale,
-
         )
-
+        _log_pipeline_event(task.prompt, candidate, _score)
+        return _score
 
 
 def _log_pipeline_event(prompt: str, candidate, scores) -> None:
