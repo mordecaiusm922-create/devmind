@@ -589,7 +589,13 @@ def _build_pr_comment(result: dict, sf_result: dict | None = None) -> str:
     level = unified_risk.get("band", "low").upper()
     # Usar policy_decision si existe, sino fallback al pipeline
     policy_action = result.get("policy_decision", "")
-    action = policy_action.upper() if policy_action else str(unified_decision.get("action", "REVIEW")).upper()
+    ast_taint = result.get("_ast_taint_detected", False)
+    if ast_taint or result.get("infrastructure_security", {}).get("block_merge"):
+        action = "BLOCK"
+    elif policy_action:
+        action = policy_action.upper()
+    else:
+        action = str(unified_decision.get("action", "REVIEW")).upper()
     infra_block = bool((result.get("infrastructure_security") or {}).get("block_merge", False))
     merge_block = action == "BLOCK" or (bool(s.get("merge_blocker", False)) and action != "APPROVE") or infra_block
     infra = result.get("infrastructure_security", {})
