@@ -702,7 +702,7 @@ def _build_pr_comment(result: dict, sf_result: dict | None = None) -> str:
 ### Risk Breakdown
 | Metric | Score |
 |--------|-------|
-| Risk Score | `{score}/100` |
+| Risk Score | `{display_score}/100` |
 | Decision | `{action}` |
 | Infra Score | `{infra_score}/100` |
 {infra_md}
