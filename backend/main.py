@@ -1330,7 +1330,8 @@ def _build_unified_decision_v2(
         calibrated_score = max(0, calibrated_score - 8)
 
     calibrated_score = max(0, min(100, calibrated_score))
-    action, reason = _unified_action(
+    from decision_resolver import resolve_decision
+    _resolved = resolve_decision(
         calibrated_score=calibrated_score,
         legacy_merge_blocker=bool(summary.get("merge_blocker", False)) or infra_block_merge,
         severity_floor=severity_floor,
@@ -1338,7 +1339,20 @@ def _build_unified_decision_v2(
         safety_decision=str(sf_decision.get("action") or ""),
         selected=selected,
         has_findings=has_findings,
+        ast_taint_detected=bool(response.get("_ast_taint_detected", False)),
+        ast_findings=response.get("ast_findings", []),
+        cve_block_merge=bool(response.get("infrastructure_security", {}).get("cve_findings") and
+            any(f.get("severity") == "critical" for f in response.get("infrastructure_security", {}).get("cve_findings", []))),
+        cve_findings=response.get("infrastructure_security", {}).get("cve_findings", []),
+        infra_block_merge=infra_block_merge,
+        infra_score=infra_score,
+        infra_findings=response.get("infrastructure_security", {}).get("findings", []),
+        policy_decision=response.get("policy_decision", ""),
+        policy_reason=response.get("policy_reason", ""),
+        policy_why_chain=response.get("why_chain", []),
     )
+    action = _resolved.action
+    reason = _resolved.reason
     triage = _triage_for_unified_decision(action, calibrated_score, severity_floor)
     confidence = _unified_confidence(response, safety_flow, calibrated_score)
     p_exploit = _calibrated_exploit_probability(
@@ -1356,9 +1370,12 @@ def _build_unified_decision_v2(
             "confidence": confidence,
             "reason": reason,
             "merge_blocker": action == "BLOCK" or bool(summary.get("merge_blocker", False)),
+            "blocking_findings": _resolved.blocking_findings,
+            "why_chain": _resolved.why_chain,
         },
         "risk": {
             "score": calibrated_score,
+            "policy_score": _resolved.policy_score,
             "band": _band_for_score(calibrated_score),
             "p_exploit": p_exploit,
             "source_scores": {
