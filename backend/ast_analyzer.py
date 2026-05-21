@@ -209,6 +209,15 @@ def analyze_ast(files: list[dict]) -> ASTAnalysisResult:
     has_crypto = any(f.rule_id == "AST002" for f in all_findings)
     block = any(f.severity == "critical" for f in all_findings)
 
+    seen = set()
+    unique_findings = []
+    for f in all_findings:
+        key = (f.rule_id, f.evidence[:50].strip())
+        if key not in seen:
+            seen.add(key)
+            unique_findings.append(f)
+    all_findings = unique_findings[:8]
+
     return ASTAnalysisResult(
         findings=all_findings,
         risk_score=score,
