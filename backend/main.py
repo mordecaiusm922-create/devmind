@@ -586,7 +586,9 @@ def _build_pr_comment(result: dict, sf_result: dict | None = None) -> str:
     unified_decision = result.get("decision", {})
     s = result.get("summary", {})
     score = unified_risk.get("score", 0)
-    level = unified_risk.get("band", "low").upper()
+    policy_score = unified_risk.get("policy_score", score)
+    display_score = policy_score if action == "BLOCK" and policy_score > score else score
+    level = _band_for_score(display_score).upper() if action == "BLOCK" else unified_risk.get("band", "low").upper()
     # Usar policy_decision si existe, sino fallback al pipeline
     policy_action = result.get("policy_decision", "")
     ast_taint = result.get("_ast_taint_detected", False)
@@ -689,7 +691,7 @@ def _build_pr_comment(result: dict, sf_result: dict | None = None) -> str:
     
     comment = f"""## {icon} DevMind Analysis
 
-**{triage}** | Risk Score `{score}/100` | **{level}** | Surface: `{surface}`
+**{triage}** | Risk Score `{display_score}/100` | **{level}** | Surface: `{surface}`
 {blocker_line}
 ### Decision Chain
 `{why_md}`
