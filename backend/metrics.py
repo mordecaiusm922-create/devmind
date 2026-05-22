@@ -132,5 +132,3 @@ def get_metrics(repo: str = None) -> dict:
     except Exception as e:
         print(f"metrics_get_failed: {e}")
         return {}
-'@ | Out-File metrics.py -Encoding UTF8
-echo "OK - metrics.py creado"
