@@ -448,7 +448,7 @@ class PermissionAnalysis(BaseModel):
 
 
 class Vulnerability(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     type: str
     severity: str
     location: str
@@ -1916,6 +1916,30 @@ async def _observability(request: Request, call_next):
         },
     )
     response.headers["X-Trace-Id"] = trace_id
+    # Guardar decision en Supabase para metricas
+    try:
+        from metrics import record_decision
+        _dec = response.get("decision", {})
+        _risk = response.get("risk", {})
+        record_decision(
+            repo=repo,
+            pr_number=pr_number,
+            trace_id=trace_id,
+            action=str(_dec.get("action", "UNKNOWN")),
+            reason=str(_dec.get("reason", "")),
+            risk_score=int(_risk.get("score", 0)),
+            policy_score=int(_risk.get("policy_score", 0)),
+            surface=str(response.get("surface", "runtime")),
+            intent=str(response.get("intent", {}).get("label", "")) if isinstance(response.get("intent"), dict) else "",
+            blocking_findings=list(_dec.get("blocking_findings", [])),
+            ast_findings_count=len(response.get("ast_findings", [])),
+            cve_findings_count=len(response.get("infrastructure_security", {}).get("cve_findings", [])),
+            infra_findings_count=len(response.get("infrastructure_security", {}).get("findings", [])),
+            why_chain=list(_dec.get("why_chain", [])),
+        )
+    except Exception as _me:
+        log.warning("metrics_record_failed", extra={"exc": str(_me)})
+
     return response
 
 
