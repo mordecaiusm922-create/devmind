@@ -653,7 +653,18 @@ def _build_pr_comment(result: dict, sf_result: dict | None = None) -> str:
         sel = sf_result["selected"]
         dec = sf_result.get("decision", {})
         sf_action = dec.get("action","N/A") if isinstance(dec, dict) else "N/A"
-        sf_md = f"""\n### Repair Candidates\n**Best candidate:** `{sel.get("candidate","N/A")}` | Action: `{sf_action}`\n**Risk-adjusted utility:** `{sel.get("risk_adjusted_utility",0)}` | Security: `{sel.get("security",0)}` | Verified: `{sel.get("verified",False)}`\n"""
+        # Ajustar security score basado en findings criticos (multiplicative risk)
+        raw_security = float(sel.get("security", 0) or 0)
+        ast_f = result.get("ast_findings", [])
+        has_taint = any(f.get("rule_id","").startswith("TAINT") for f in ast_f)
+        has_cmd = any(f.get("rule_id") == "TAINT002" for f in ast_f)
+        critical_count = sum(1 for f in ast_f if f.get("severity") == "critical")
+        calibrated_security = raw_security
+        if has_taint: calibrated_security *= 0.15
+        if has_cmd: calibrated_security *= 0.2
+        if critical_count >= 2: calibrated_security = min(calibrated_security, 0.1)
+        calibrated_security = round(calibrated_security, 3)
+        sf_md = f"""\n### Repair Candidates\n**Best candidate:** `{sel.get("candidate","N/A")}` | Action: `{sf_action}`\n**Risk-adjusted utility:** `{sel.get("risk_adjusted_utility",0)}` | Security: `{calibrated_security}` *(calibrated)* | Verified: `{sel.get("verified",False)}`\n"""
     
     # CVE findings
     cve_findings = result.get("infrastructure_security", {}).get("cve_findings", [])
