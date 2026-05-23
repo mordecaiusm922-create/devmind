@@ -1,4 +1,4 @@
-"""
+﻿"""
 main.py -- DevMind SaaS API
 
 FastAPI application focused on:
@@ -1092,6 +1092,13 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         response['surface'] = _policy.get('surface', 'runtime')
         response['policy_decision'] = _policy.get('decision', '')
         response['policy_reason'] = _policy.get('reason', '')
+        # Sincroniza risk score con policy engine
+        _policy_band = _policy.get('band', '')
+        _policy_risk = _policy.get('risk_score', 0)
+        if _policy_risk > 0 and isinstance(response.get('risk'), dict):
+            response['risk']['score'] = max(response['risk'].get('score', 0), _policy_risk)
+            if _policy_band:
+                response['risk']['band'] = _policy_band
     except Exception as _pe:
         log.warning('policy_engine_failed', extra={'exc': str(_pe)})
 
