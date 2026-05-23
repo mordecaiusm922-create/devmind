@@ -41,6 +41,15 @@ def resolve_decision(
     blocking_findings = []
     why_chain = list(policy_why_chain) if policy_why_chain else []
     
+
+    # Calibrar score catastrófico (critical findings destruyen el score)
+    critical_finding = any(
+        f.get("severity") == "critical" or f.get("rule_id", "").startswith("TAINT")
+        for f in ast_findings + infra_findings + cve_findings
+    )
+    if critical_finding:
+        policy_score = min(policy_score, 20)
+        risk_score = max(risk_score, 90)
     # ── CAPA 1: Triggers determinísticos (siempre BLOCK) ──────────────
     
     if ast_taint_detected:
