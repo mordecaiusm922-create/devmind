@@ -1027,6 +1027,19 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     # Inyectar cve_findings en response antes de attach
     if isinstance(response.get("infrastructure_security"), dict):
         response["infrastructure_security"]["cve_findings"] = cve_findings
+    # Pre-compute policy override ANTES del unified decision
+    try:
+        from policy_engine import policy_decision as _pd_early
+        _files_early = pr_data.get('files', []) or []
+        _prompt_early = pr_data.get('title', '') + ' ' + pr_data.get('body', '')
+        _intent_early = response.get('intent', {}).get('label', 'general_fix') if isinstance(response.get('intent'), dict) else 'general_fix'
+        _ast_taint_early = response.get('_ast_taint_detected', False)
+        _pe = _pd_early(prompt=_prompt_early, files=_files_early, mode='secure',
+            intent_label=_intent_early, infra_block=infra_block_merge or _ast_taint_early,
+            infra_score=max(infra_score, 90) if _ast_taint_early else infra_score, safety_action='')
+        response['_policy_risk_override'] = {'score': int(_pe.get('risk_score', 0) or 0), 'band': _pe.get('band', '')}
+    except Exception:
+        pass
     _attach_unified_decision_v2(response, safety_flow)
     # Aplica surface multiplier DESPUES de attach (evita sobreescritura)
     if _surface_ctx is not None and _surface_ctx.risk_multiplier < 1.0:
