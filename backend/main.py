@@ -1246,12 +1246,12 @@ def _build_response(
         "pre_analysis": {
             "risk_floor": pre.risk_floor if pre else "medium",
             "risk_tags": list(pre.risk_tags) if pre is not None else [],
-            "flagged_files": list(pre.flagged_files),
-            "trivially_touched": list(pre.trivially_touched),
-            "files_with_diff": pre.files_with_diff,
-            "files_skipped_budget": pre.files_skipped_budget,
-            "files_skipped_noise": pre.files_skipped_noise,
-            "total_diff_chars": pre.total_diff_chars,
+            "flagged_files": (list(pre.flagged_files) if pre is not None else []),
+            "trivially_touched": (list(pre.trivially_touched) if pre is not None else []),
+            "files_with_diff": (pre.files_with_diff if pre is not None else 0),
+            "files_skipped_budget": (pre.files_skipped_budget if pre is not None else 0),
+            "files_skipped_noise": (pre.files_skipped_noise if pre is not None else 0),
+            "total_diff_chars": (pre.total_diff_chars if pre is not None else 0),
         },
         "code_features": features,
         "parsed_functions": parsed_fns[:10],
@@ -2184,6 +2184,7 @@ async def verify_endpoint(req: VerifyRequest):
 
 
 from infra_analyzer import analyze_infra
+
 
 
 
