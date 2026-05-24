@@ -1419,6 +1419,7 @@ def _build_unified_decision_v2(
     sf_score = max(_safety_flow_risk_score(selected, sf_decision), _as_int(sf_risk.get("score"), 0))
     severity_floor, severity_reason = _finding_severity_floor(vulns, ci_cd_risks, summary)
     _policy_risk_override = int((response.get('_policy_risk_override') or {}).get('score', 0) or 0)
+    import logging as _dbg; _dbg.getLogger('devmind').warning(f'CALIBRATION_INPUTS legacy={legacy_score} sf={sf_score} sev={severity_floor} infra={infra_score}')
     calibrated_score = max(
         legacy_score,
         sf_score,
