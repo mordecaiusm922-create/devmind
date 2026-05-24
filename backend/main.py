@@ -1414,6 +1414,10 @@ def _build_unified_decision_v2(
     if verified and not has_findings and sf_decision.get("action") == "approve":
         calibrated_score = max(0, calibrated_score - 8)
 
+    # Policy engine override - prioridad sobre calibrated_score
+    _pr_override = int((response.get('_policy_risk_override') or {}).get('score', 0) or 0)
+    if _pr_override > calibrated_score:
+        calibrated_score = _pr_override
     calibrated_score = max(0, min(100, calibrated_score))
     from decision_resolver import resolve_decision
     _resolved = resolve_decision(
