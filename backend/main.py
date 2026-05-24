@@ -2038,6 +2038,30 @@ if CFG.is_dev:
 _HANDLED_ACTIONS = frozenset({"opened", "synchronize", "reopened"})
 
 
+def _handle_push_event(push_data: dict, installation_id: int, trace_id: str) -> None:
+    repo = push_data.get('repo', '')
+    commit_sha = push_data.get('commit_sha', '')
+    files = push_data.get('files', [])
+    pusher = push_data.get('pusher', 'unknown')
+    messages = push_data.get('commit_messages', [])
+    prompt = f'Direct push to main by {pusher}: {chr(44).join(messages[:3])}'
+    log.info('push_analysis_start', extra={'repo': repo, 'sha': commit_sha, 'trace_id': trace_id})
+    try:
+        token = get_installation_token(installation_id)
+        from policy_engine import policy_decision
+        _policy = policy_decision(prompt=prompt, files=files, mode='secure',
+            intent_label='general_fix', infra_block=False, infra_score=0, safety_action='')
+        action = _policy.get('decision', 'REVIEW')
+        risk_score = int(_policy.get('risk_score', 50) or 50)
+        status = 'success' if action == 'APPROVE' else 'failure'
+        description = f'DevMind: {action} | Risk {risk_score}/100'
+        post_commit_status(token=token, repo=repo, sha=commit_sha,
+            state=status, description=description,
+            context='DevMind Risk Engine', target_url='https://devmind-2cej.onrender.com')
+        log.info('push_analysis_done', extra={'repo': repo, 'action': action, 'risk': risk_score, 'trace_id': trace_id})
+    except Exception as exc:
+        log.warning('push_analysis_failed', extra={'exc': str(exc), 'trace_id': trace_id})
+
 @app.post("/webhook/github", status_code=202)
 async def github_webhook(
     request: Request,
@@ -2053,7 +2077,48 @@ async def github_webhook(
     if not verify_webhook_signature(body, x_hub_signature_256 or ""):
         raise _err(401, ErrorCode.INVALID_WEBHOOK_SIG, "Signature mismatch.")
 
-    if x_github_event != "pull_request":
+    if x_github_event == 'push':
+        try:
+            payload: dict[str, Any] = json.loads(body)
+        except json.JSONDecodeError:
+            raise _err(400, ErrorCode.INVALID_PAYLOAD, 'Body is not valid JSON.')
+        ref = payload.get('ref', '')
+        if ref not in ('refs/heads/main', 'refs/heads/master'):
+            return {'accepted': False, 'reason': f'push to {ref} ignored'}
+        repo = payload.get('repository', {}).get('full_name', '')
+        commits = payload.get('commits', [])
+        pusher = payload.get('pusher', {}).get('name', 'unknown')
+        installation_id = payload.get('installation', {}).get('id')
+        if not repo or not commits or not installation_id:
+            return {'accepted': False, 'reason': 'missing repo, commits or installation_id'}
+        delivery_id = x_github_delivery or str(uuid.uuid4())
+        trace_id = delivery_id[:12]
+        if processed_deliveries.contains(delivery_id):
+            return {'accepted': True, 'deduped': True, 'trace_id': trace_id}
+        processed_deliveries.add(delivery_id)
+        log.info('push_webhook_received', extra={'repo': repo, 'ref': ref, 'commits': len(commits), 'pusher': pusher, 'trace_id': trace_id})
+        commit_sha = commits[-1].get('id', '') if commits else ''
+        added_files = [f for c in commits for f in c.get('added', [])]
+        modified_files = [f for c in commits for f in c.get('modified', [])]
+        removed_files = [f for c in commits for f in c.get('removed', [])]
+        all_files = list(set(added_files + modified_files))
+        push_data = {
+            'repo': repo,
+            'ref': ref,
+            'commit_sha': commit_sha,
+            'pusher': pusher,
+            'files': [{'filename': f} for f in all_files],
+            'added': added_files,
+            'modified': modified_files,
+            'removed': removed_files,
+            'commit_messages': [c.get('message', '') for c in commits],
+        }
+        if job_queue is None:
+            return {'accepted': False, 'reason': 'queue_not_initialized'}
+        job_queue.enqueue(_handle_push_event, push_data, installation_id, trace_id)
+        return {'accepted': True, 'trace_id': trace_id, 'event': 'push', 'files': len(all_files)}
+    if x_github_event != 'pull_request':
+        return {'accepted': False, 'reason': f'event {x_github_event!r} not handled'}
         return {"accepted": False, "reason": f"event '{x_github_event}' not handled"}
 
     try:
