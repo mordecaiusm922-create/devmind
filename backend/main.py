@@ -1013,7 +1013,7 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         _m = _surface_ctx.risk_multiplier
         if "risk" in response and isinstance(response["risk"], dict):
             _orig = response["risk"].get("score", 0)
-            _new_score = _orig if response.get('_ast_taint_detected') or infra_block_merge else max(0, round(_orig * _m))
+            _new_score = _orig if (response.get('_ast_taint_detected') or infra_block_merge or _orig >= 80) else max(0, round(_orig * _m))
             _risk_obj["score"] = _new_score
             _risk_obj["surface"] = _surface_ctx.surface
             _risk_obj["surface_multiplier"] = _m
