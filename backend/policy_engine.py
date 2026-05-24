@@ -54,50 +54,50 @@ def policy_decision(prompt: str, files: list, mode: str, intent_label: str,
     # 0. Hardblock deterministico
     if any(p in full_text for p in HARDBLOCK_PATTERNS):
         chain += ["credential_exposure_detected", "hardblock_pattern_matched", "deployment_policy_block"]
-        return {"decision": "BLOCK", "reason": "hardblock_pattern", "surface": surface, "why_chain": chain}
+        return {"decision": "BLOCK", "reason": "hardblock_pattern", "surface": surface, "why_chain": chain, "risk_score": 95, "band": "critical"}
 
     # 0b. Logging en dominio sensible
     if any(kw in prompt.lower() for kw in LOGGING_KEYWORDS):
         if any(d in prompt.lower() for d in SENSITIVE_DOMAINS):
             chain += ["logging_detected", "sensitive_domain_matched", "compliance_surface_risk"]
-            return {"decision": "REVISE", "reason": "logging_sensitive_domain", "surface": surface, "why_chain": chain}
+            return {"decision": "REVISE", "reason": "logging_sensitive_domain", "surface": surface, "why_chain": chain, "risk_score": 55, "band": "medium"}
 
     # 1. Infra
     if infra_block or infra_score >= 35:
         chain += [f"infra_score:{infra_score}", "critical_infra_finding", "deployment_policy_block"]
-        return {"decision": "BLOCK", "reason": "infra_critical_finding", "surface": surface, "why_chain": chain}
+        return {"decision": "BLOCK", "reason": "infra_critical_finding", "surface": surface, "why_chain": chain, "risk_score": 90, "band": "critical"}
 
     # 2. Trivial surface
     if surface in TRIVIAL_SURFACES:
         if not any(kw in full_text for kw in BLOCK_KEYWORDS):
             chain += ["no_runtime_execution", "no_security_signals", "auto_approve"]
-            return {"decision": "APPROVE", "reason": "trivial_surface", "surface": surface, "why_chain": chain}
+            return {"decision": "APPROVE", "reason": "trivial_surface", "surface": surface, "why_chain": chain, "risk_score": 5, "band": "minimal"}
 
     # 3. Block keywords
     if any(kw in full_text for kw in BLOCK_KEYWORDS):
         matched = [kw for kw in BLOCK_KEYWORDS if kw in full_text]
         chain += [f"block_keyword:{matched[0]}", "security_pattern_matched", "deployment_policy_block"]
-        return {"decision": "BLOCK", "reason": "block_keyword", "surface": surface, "why_chain": chain}
+        return {"decision": "BLOCK", "reason": "block_keyword", "surface": surface, "why_chain": chain, "risk_score": 85, "band": "critical"}
 
     # 4. Block intents
     if intent_label in BLOCK_INTENTS:
         chain += [f"high_risk_intent:{intent_label}", "intent_policy_block"]
-        return {"decision": "BLOCK", "reason": f"block_intent:{intent_label}", "surface": surface, "why_chain": chain}
+        return {"decision": "BLOCK", "reason": f"block_intent:{intent_label}", "surface": surface, "why_chain": chain, "risk_score": 85, "band": "critical"}
 
     # 4b. Auth changes = REVISE
     if any(kw in full_text for kw in AUTH_KEYWORDS) and surface == "runtime":
         chain += ["auth_surface_detected", "trust_boundary_change", "requires_security_review"]
-        return {"decision": "REVISE", "reason": "auth_change", "surface": surface, "why_chain": chain}
+        return {"decision": "REVISE", "reason": "auth_change", "surface": surface, "why_chain": chain, "risk_score": 60, "band": "high"}
 
     # 5. Runtime bugfix
     if any(kw in prompt.lower() for kw in BUGFIX_KEYWORDS) and surface == "runtime":
         chain += ["runtime_bugfix_detected", "regression_risk_elevated", "requires_verification"]
-        return {"decision": "REVISE", "reason": "runtime_bugfix", "surface": surface, "why_chain": chain}
+        return {"decision": "REVISE", "reason": "runtime_bugfix", "surface": surface, "why_chain": chain, "risk_score": 45, "band": "medium"}
 
     # 6. Balanced = APPROVE
     if mode == "balanced":
         chain += ["no_risk_signals_detected", "balanced_mode_policy", "auto_approve"]
-        return {"decision": "APPROVE", "reason": "balanced_mode_no_risk", "surface": surface, "why_chain": chain}
+        return {"decision": "APPROVE", "reason": "balanced_mode_no_risk", "surface": surface, "why_chain": chain, "risk_score": 10, "band": "low"}
 
     # 7. Revise intents
     if intent_label in REVISE_INTENTS:
