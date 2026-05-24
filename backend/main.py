@@ -1027,6 +1027,11 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     # Inyectar cve_findings en response antes de attach
     if isinstance(response.get("infrastructure_security"), dict):
         response["infrastructure_security"]["cve_findings"] = cve_findings
+    # FUERZA infra_score si AST detecto taint - debe ir antes de attach
+    if response.get('_ast_taint_detected'):
+        infra_score = max(infra_score, 90)
+        infra_block_merge = True
+        response['_policy_risk_override'] = {'score': 90, 'band': 'critical'}
     _attach_unified_decision_v2(response, safety_flow)
     # Aplica surface multiplier DESPUES de attach (evita sobreescritura)
     if _surface_ctx is not None and _surface_ctx.risk_multiplier < 1.0:
