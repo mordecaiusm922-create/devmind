@@ -1050,7 +1050,7 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
                     _risk_obj = None
         if isinstance(_risk_obj, dict):
             _orig = _risk_obj.get("score", 0)
-            _new_score = max(0, round(_orig * _m))
+            _new_score = _orig if _orig >= 80 else max(0, round(_orig * _m))
             _risk_obj["score"] = _new_score
             _risk_obj["surface"] = _surface_ctx.surface
             _risk_obj["surface_multiplier"] = _m
