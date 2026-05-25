@@ -2082,7 +2082,7 @@ def _handle_push_event(push_data: dict, installation_id: int, trace_id: str) -> 
         try:
             from cve_checker import check_cves
             _cve = check_cves(enriched_files)
-            if _cve and _cve.get("block_merge"):
+            if _cve and (getattr(_cve, "block_merge", False) or (isinstance(_cve, dict) and _cve.get("block_merge"))):
                 infra_block = True
                 infra_score = max(infra_score, 90)
         except Exception as _ce:
