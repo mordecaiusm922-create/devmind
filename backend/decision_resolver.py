@@ -90,7 +90,7 @@ def resolve_decision(
             why_chain=why_chain + ["critical_cve_detected", "deployment_policy_block"]
         )
 
-    if infra_block_merge or infra_score >= 70:
+    if infra_block_merge or infra_score >= 80:
         critical_infra = [f for f in infra_findings if f.get("severity") == "critical"]
         blocking_findings.append("critical_infra_findings")
         return ResolvedDecision(
@@ -103,7 +103,7 @@ def resolve_decision(
             why_chain=why_chain + ["infra_critical_finding", "deployment_policy_block"]
         )
 
-    if legacy_merge_blocker or severity_floor >= 80 or calibrated_score >= 85:
+    if legacy_merge_blocker or severity_floor >= 80 or calibrated_score >= 92:
         blocking_findings.append("risk_threshold_exceeded")
         return ResolvedDecision(
             action="BLOCK",
@@ -188,7 +188,7 @@ def resolve_decision(
             why_chain=why_chain + ["policy_engine_revise"]
         )
 
-    if has_findings or calibrated_score >= 40:
+    if has_findings or calibrated_score >= 55:
         return ResolvedDecision(
             action="REVIEW",
             reason="Security findings or elevated risk require review.",
