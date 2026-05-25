@@ -2057,7 +2057,7 @@ def _handle_push_event(push_data: dict, installation_id: int, trace_id: str) -> 
         risk_score = int(_policy.get('risk_score', 50) or 50)
         status = 'success' if action == 'APPROVE' else 'failure'
         description = f'DevMind: {action} | Risk {risk_score}/100'
-        post_commit_status(token=token, repo=repo, sha=commit_sha,
+        post_commit_status(repo, commit_sha, token,
             state=status, description=description,
             context='DevMind Risk Engine', target_url='https://devmind-2cej.onrender.com')
         log.info('push_analysis_done', extra={'repo': repo, 'action': action, 'risk': risk_score, 'trace_id': trace_id})
