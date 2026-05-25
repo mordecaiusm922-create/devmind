@@ -2050,17 +2050,57 @@ def _handle_push_event(push_data: dict, installation_id: int, trace_id: str) -> 
     log.info('push_analysis_start', extra={'repo': repo, 'sha': commit_sha, 'trace_id': trace_id})
     try:
         token = get_installation_token(installation_id)
+        enriched_files = []
+        for f in files[:10]:
+            fname = f.get("filename", "")
+            try:
+                file_resp = httpx.get(
+                    f"https://api.github.com/repos/{repo}/contents/{fname}",
+                    headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"},
+                    params={"ref": commit_sha}, timeout=5,
+                )
+                if file_resp.status_code == 200:
+                    import base64
+                    fc = base64.b64decode(file_resp.json().get("content", "")).decode("utf-8", errors="ignore")
+                    enriched_files.append({**f, "content": fc[:3000]})
+                else:
+                    enriched_files.append(f)
+            except Exception:
+                enriched_files.append(f)
+        infra_block = False
+        infra_score = 0
+        ast_findings = []
+        try:
+            from ast_analyzer import analyze_ast
+            _ast = analyze_ast(enriched_files)
+            if _ast and _ast.block_merge:
+                infra_block = True
+                infra_score = max(infra_score, _ast.risk_score)
+            ast_findings = [{"rule_id": f.rule_id, "severity": f.severity} for f in _ast.findings] if _ast else []
+        except Exception as _ae:
+            log.warning("push_ast_failed", extra={"exc": str(_ae), "trace_id": trace_id})
+        try:
+            from cve_checker import check_cves
+            _cve = check_cves(enriched_files)
+            if _cve and _cve.get("block_merge"):
+                infra_block = True
+                infra_score = max(infra_score, 90)
+        except Exception as _ce:
+            log.warning("push_cve_failed", extra={"exc": str(_ce), "trace_id": trace_id})
         from policy_engine import policy_decision
-        _policy = policy_decision(prompt=prompt, files=files, mode='secure',
-            intent_label='general_fix', infra_block=False, infra_score=0, safety_action='')
-        action = _policy.get('decision', 'REVIEW')
-        risk_score = int(_policy.get('risk_score', 50) or 50)
-        status = 'success' if action == 'APPROVE' else 'failure'
-        description = f'DevMind: {action} | Risk {risk_score}/100'
+        _policy = policy_decision(prompt=prompt, files=enriched_files, mode="secure",
+            intent_label="general_fix", infra_block=infra_block, infra_score=infra_score, safety_action="")
+        action = _policy.get("decision", "REVIEW")
+        risk_score = int(_policy.get("risk_score", 50) or 50)
+        if infra_block:
+            action = "BLOCK"
+            risk_score = max(risk_score, 90)
+        status = "success" if action == "APPROVE" else "failure"
+        description = f"DevMind: {action} | Risk {risk_score}/100"
         post_commit_status(repo, commit_sha, token, status, description)
-        log.info('push_analysis_done', extra={'repo': repo, 'action': action, 'risk': risk_score, 'trace_id': trace_id})
+        log.info("push_analysis_done", extra={"repo": repo, "action": action, "risk": risk_score, "ast": len(ast_findings), "trace_id": trace_id})
     except Exception as exc:
-        log.warning('push_analysis_failed', extra={'exc': str(exc), 'trace_id': trace_id})
+        log.warning("push_analysis_failed", extra={"exc": str(exc), "trace_id": trace_id})
 
 @app.post("/webhook/github", status_code=202)
 async def github_webhook(
