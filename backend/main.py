@@ -1931,6 +1931,8 @@ async def _observability(request: Request, call_next):
     t0 = time.monotonic()
 
     response = await call_next(request)
+    if not hasattr(response, "get"):
+        return response
 
     elapsed = round((time.monotonic() - t0) * 1000)
     log.info(
@@ -2115,7 +2117,7 @@ async def github_webhook(
         }
         if job_queue is None:
             return {'accepted': False, 'reason': 'queue_not_initialized'}
-        job_queue.enqueue(_handle_push_event, push_data, installation_id, trace_id)
+        job_queue.put_nowait((_handle_push_event, push_data, installation_id, trace_id))
         return {'accepted': True, 'trace_id': trace_id, 'event': 'push', 'files': len(all_files)}
     if x_github_event != 'pull_request':
         return {'accepted': False, 'reason': f'event {x_github_event!r} not handled'}
