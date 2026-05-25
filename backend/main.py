@@ -1436,6 +1436,36 @@ def _build_unified_decision_v2(
     _pr_override = int((response.get('_policy_risk_override') or {}).get('score', 0) or 0)
     if _pr_override > calibrated_score:
         calibrated_score = _pr_override
+    # Surface classifier - reduce false positives para docs/changelog
+    try:
+        from surface_classifier import classify_change_surface
+        _title = response.get("title", "") or ""
+        _files = response.get("files", []) or []
+        _surf = classify_change_surface(files=_files, diff="", prompt=_title)
+        if _surf.risk_multiplier <= 0.30 and not response.get("_ast_taint_detected") and _policy_risk_override < 80:
+            calibrated_score = int(calibrated_score * _surf.risk_multiplier)
+    except Exception:
+        pass
+        # Surface classifier - reduce false positives para docs/changelog
+    try:
+        from surface_classifier import classify_change_surface
+        _title = response.get("title", "") or ""
+        _files = response.get("files", []) or []
+        _surf = classify_change_surface(files=_files, diff="", prompt=_title)
+        if _surf.risk_multiplier <= 0.30 and not response.get("_ast_taint_detected") and _policy_risk_override < 80:
+            calibrated_score = int(calibrated_score * _surf.risk_multiplier)
+    except Exception:
+        pass
+    # Surface classifier - reduce false positives para docs/changelog
+    try:
+        from surface_classifier import classify_change_surface
+        _title = response.get('title', '') or ''
+        _files = response.get('files', []) or []
+        _surf = classify_change_surface(files=_files, diff='', prompt=_title)
+        if _surf.risk_multiplier <= 0.30 and not response.get('_ast_taint_detected') and _policy_risk_override < 80:
+            calibrated_score = int(calibrated_score * _surf.risk_multiplier)
+    except Exception:
+        pass
     calibrated_score = max(0, min(100, calibrated_score))
     from decision_resolver import resolve_decision
     _resolved = resolve_decision(
