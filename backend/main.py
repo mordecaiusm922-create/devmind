@@ -2117,7 +2117,7 @@ async def github_webhook(
         }
         if job_queue is None:
             return {'accepted': False, 'reason': 'queue_not_initialized'}
-        job_queue.put_nowait((_handle_push_event, push_data, installation_id, trace_id))
+        import threading; threading.Thread(target=_handle_push_event, args=(push_data, installation_id, trace_id), daemon=True).start()
         return {'accepted': True, 'trace_id': trace_id, 'event': 'push', 'files': len(all_files)}
     if x_github_event != 'pull_request':
         return {'accepted': False, 'reason': f'event {x_github_event!r} not handled'}
