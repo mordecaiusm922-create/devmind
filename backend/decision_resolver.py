@@ -36,6 +36,7 @@ def resolve_decision(
     policy_decision: str = "",
     policy_reason: str = "",
     policy_why_chain: list[str] = [],
+    pr_files: list = [],
 ) -> ResolvedDecision:
 
     blocking_findings = []
@@ -210,6 +211,9 @@ def resolve_decision(
         }
         _paths = [str(f.get('file', '') or f.get('filename', '')) for f in ast_findings]
         _paths += [str(f) for f in infra_findings if isinstance(f, str)]
+        # Fallback: usar pr_files si no hay findings
+        if not _paths:
+            _paths = [str(f) if isinstance(f, str) else str(f.get('filename', '') or f.get('path', '')) for f in pr_files]
         if _paths:
             _weights = []
             for _p in _paths:

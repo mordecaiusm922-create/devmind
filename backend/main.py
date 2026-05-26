@@ -1487,6 +1487,7 @@ def _build_unified_decision_v2(
         policy_decision=response.get("policy_decision", ""),
         policy_reason=response.get("policy_reason", ""),
         policy_why_chain=response.get("why_chain", []),
+        pr_files=response.get("files", []) or [],
     )
     action = _resolved.action
     reason = _resolved.reason
