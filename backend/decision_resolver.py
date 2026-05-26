@@ -199,6 +199,29 @@ def resolve_decision(
             why_chain=why_chain + ["elevated_risk", "review_required"]
         )
 
+    # ── CAPA 3.5: Context-aware score reduction ─────────────────────────
+    # Si no hay evidencia real, reducir score por contexto del archivo
+    if not ast_taint_detected and not cve_block_merge and not infra_block_merge:
+        _CONTEXT_WEIGHTS = {
+            "tests/": 0.15, "test_": 0.15, "_test.py": 0.15,
+            "migrations/": 0.20, "docs/": 0.10, "scripts/": 0.30,
+            ".md": 0.10, ".rst": 0.10, ".txt": 0.10, ".adoc": 0.10,
+            "admin/": 0.70, "changelog": 0.10, "release": 0.20,
+        }
+        _paths = [str(f.get('file', '') or f.get('filename', '')) for f in ast_findings]
+        _paths += [str(f) for f in infra_findings if isinstance(f, str)]
+        if _paths:
+            _weights = []
+            for _p in _paths:
+                _w = 1.0
+                for _pat, _wval in _CONTEXT_WEIGHTS.items():
+                    if _pat in _p.lower():
+                        _w = min(_w, _wval)
+                _weights.append(_w)
+            _max_weight = max(_weights) if _weights else 1.0
+            if _max_weight < 0.5:
+                calibrated_score = int(calibrated_score * _max_weight)
+
     # ── CAPA 4: ALLOW ─────────────────────────────────────────────────
 
     return ResolvedDecision(
