@@ -1419,6 +1419,14 @@ def _build_unified_decision_v2(
     sf_score = max(_safety_flow_risk_score(selected, sf_decision), _as_int(sf_risk.get("score"), 0))
     severity_floor, severity_reason = _finding_severity_floor(vulns, ci_cd_risks, summary)
     _policy_risk_override = int((response.get('_policy_risk_override') or {}).get('score', 0) or 0)
+    infra_security = response.get("infrastructure_security", {}) or {}
+    cve_findings = infra_security.get("cve_findings", []) or []
+    ast_taint_detected = bool(response.get("_ast_taint_detected", False))
+    cve_block_merge = any(
+        str(f.get("severity", "")).lower() == "critical"
+        for f in cve_findings
+        if isinstance(f, dict)
+    )
     calibrated_score = max(
         legacy_score,
         sf_score,
@@ -1439,33 +1447,46 @@ def _build_unified_decision_v2(
     # Surface classifier - reduce false positives para docs/changelog
     try:
         from surface_classifier import classify_change_surface
-        _title = response.get("title", "") or ""
-        _files = response.get("files", []) or []
-        _surf = classify_change_surface(files=_files, diff="", prompt=_title)
-        if _surf.risk_multiplier <= 0.30 and not response.get("_ast_taint_detected") and _policy_risk_override < 80:
+        _raw_files = response.get("files", []) or (response.get("pre_analysis") or {}).get("trivially_touched", []) or []
+        _files = [
+            f if isinstance(f, dict) else {"filename": str(f)}
+            for f in _raw_files
+        ]
+        _surf = classify_change_surface(files=_files, diff="") if _files else None
+        if (
+            _surf is not None
+            and _surf.risk_multiplier <= 0.30
+            and not ast_taint_detected
+            and not cve_block_merge
+            and not infra_block_merge
+            and _policy_risk_override < 80
+        ):
             calibrated_score = int(calibrated_score * _surf.risk_multiplier)
     except Exception:
         pass
-        # Surface classifier - reduce false positives para docs/changelog
-    try:
-        from surface_classifier import classify_change_surface
-        _title = response.get("title", "") or ""
-        _files = response.get("files", []) or []
-        _surf = classify_change_surface(files=_files, diff="", prompt=_title)
-        if _surf.risk_multiplier <= 0.30 and not response.get("_ast_taint_detected") and _policy_risk_override < 80:
-            calibrated_score = int(calibrated_score * _surf.risk_multiplier)
-    except Exception:
-        pass
-    # Surface classifier - reduce false positives para docs/changelog
-    try:
-        from surface_classifier import classify_change_surface
-        _title = response.get('title', '') or ''
-        _files = response.get('files', []) or []
-        _surf = classify_change_surface(files=_files, diff='', prompt=_title)
-        if _surf.risk_multiplier <= 0.30 and not response.get('_ast_taint_detected') and _policy_risk_override < 80:
-            calibrated_score = int(calibrated_score * _surf.risk_multiplier)
-    except Exception:
-        pass
+
+    risk_note = summary.get("risk_note") or {}
+    risk_note_level = str(
+        risk_note.get("level", "") if isinstance(risk_note, dict) else risk_note
+    ).lower()
+    pre_analysis = response.get("pre_analysis") or {}
+    risk_floor = str(
+        pre_analysis.get("risk_floor", "") if isinstance(pre_analysis, dict) else ""
+    ).lower()
+    policy_decision = str(response.get("policy_decision") or "").upper()
+    if (
+        risk_note_level == "low"
+        and risk_floor == "low"
+        and not vulns
+        and not ci_cd_risks
+        and not ast_taint_detected
+        and not cve_block_merge
+        and not infra_block_merge
+        and policy_decision not in {"BLOCK", "REVISE"}
+        and _policy_risk_override < 55
+    ):
+        calibrated_score = min(calibrated_score, 40)
+
     calibrated_score = max(0, min(100, calibrated_score))
     from decision_resolver import resolve_decision
     _resolved = resolve_decision(
@@ -1476,14 +1497,13 @@ def _build_unified_decision_v2(
         safety_decision=str(sf_decision.get("action") or ""),
         selected=selected,
         has_findings=has_findings,
-        ast_taint_detected=bool(response.get("_ast_taint_detected", False)),
+        ast_taint_detected=ast_taint_detected,
         ast_findings=response.get("ast_findings", []),
-        cve_block_merge=bool(response.get("infrastructure_security", {}).get("cve_findings") and
-            any(f.get("severity") == "critical" for f in response.get("infrastructure_security", {}).get("cve_findings", []))),
-        cve_findings=response.get("infrastructure_security", {}).get("cve_findings", []),
+        cve_block_merge=cve_block_merge,
+        cve_findings=cve_findings,
         infra_block_merge=infra_block_merge,
         infra_score=infra_score,
-        infra_findings=response.get("infrastructure_security", {}).get("findings", []),
+        infra_findings=infra_security.get("findings", []),
         policy_decision=response.get("policy_decision", ""),
         policy_reason=response.get("policy_reason", ""),
         policy_why_chain=response.get("why_chain", []),

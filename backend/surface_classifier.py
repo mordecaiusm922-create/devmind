@@ -32,13 +32,15 @@ class ChangeContext:
     negative_signals: list[str]
 
 def classify_change_surface(files: list[dict[str, Any]], diff: str = "") -> ChangeContext:
+    files = [f for f in files if isinstance(f, dict)]
+    has_files = bool(files)
     extensions = set()
     for f in files:
         name = f.get("filename", "") or f.get("path", "")
         ext = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
         extensions.add(ext)
 
-    is_docs = all(e in DOC_TYPES for e in extensions if e)
+    is_docs = has_files and all(e in DOC_TYPES for e in extensions if e)
     is_test = any(TEST_PATTERNS.search(f.get("filename", "")) for f in files)
     is_ci = any(CI_PATTERNS.search(f.get("filename", "")) for f in files)
     is_executable = any(e in EXECUTABLE_TYPES for e in extensions if e)
@@ -57,7 +59,7 @@ def classify_change_surface(files: list[dict[str, Any]], diff: str = "") -> Chan
         negative.append("test_only_change")
         risk_multiplier *= NEGATIVE_SIGNALS["test_only_change"]
 
-    if not is_executable and not is_ci:
+    if has_files and not is_executable and not is_ci:
         negative.append("no_runtime_execution")
         risk_multiplier *= NEGATIVE_SIGNALS["no_runtime_execution"]
 
