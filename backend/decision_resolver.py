@@ -226,6 +226,20 @@ def resolve_decision(
             if _max_weight < 0.5:
                 calibrated_score = int(calibrated_score * _max_weight)
 
+    # Auto-approve: LLM dice low risk, sin evidencia real
+    if (not ast_taint_detected and not cve_block_merge and not infra_block_merge
+            and not has_findings and not any_violations
+            and calibrated_score < 55 and not legacy_merge_blocker):
+        return ResolvedDecision(
+            action='ALLOW',
+            reason='No security findings, low risk floor, and no blocking signals.',
+            confidence='high',
+            blocking_findings=[],
+            risk_score=calibrated_score,
+            policy_score=calibrated_score,
+            why_chain=why_chain + ['no_blocking_signals', 'auto_approve']
+        )
+
     # ── CAPA 4: ALLOW ─────────────────────────────────────────────────
 
     return ResolvedDecision(
