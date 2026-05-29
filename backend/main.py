@@ -1,4 +1,4 @@
-﻿"""
+"""
 main.py -- DevMind SaaS API
 
 FastAPI application focused on:
@@ -1041,14 +1041,14 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         _ast_taint = response.get("_ast_taint_detected", False)
         _infra_block = any("critical_infra" in w or "infra_score" in w for w in _why)
         _has_critical = bool(response.get("risk", {}).get("score", 0) >= 80 and _infra_block)
+        log.info("policy_override_debug", extra={"why": _why, "dec": response.get("decision", {}).get("action")})
         if (
             "auto_approve" in _why
-            and _pol_dec == "APPROVE"
             and not _ast_taint
             and not _has_critical
         ):
             response["decision"] = {
-                "action": "APPROVE",
+                "action": "ALLOW",
                 "reason": "Policy engine auto-approved: trivial surface with no security signals.",
                 "confidence": 0.9,
                 "merge_blocker": False,
