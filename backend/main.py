@@ -1035,7 +1035,7 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     _attach_unified_decision_v2(response, safety_flow)
     # Policy engine override - si auto_approve y no hay findings criticos
     try:
-        _why = response.get("why_chain", [])
+        _why = response.get("decision", {}).get("why_chain", []) or response.get("why_chain", [])
         _pol_dec = response.get("policy_decision", "")
         _pol_risk = response.get("_policy_risk_override", {})
         _ast_taint = response.get("_ast_taint_detected", False)
