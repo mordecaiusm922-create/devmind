@@ -1143,6 +1143,29 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     except Exception as _pe:
         log.warning('policy_engine_failed', extra={'exc': str(_pe)})
 
+    # Policy override POST policy_engine (why_chain ya disponible)
+    try:
+        _why2 = response.get("why_chain", [])
+        _ast2 = response.get("_ast_taint_detected", False)
+        _inf2 = any("critical_infra" in w or "infra_score" in w for w in _why2)
+        _crit2 = bool(response.get("risk", {}).get("score", 0) >= 80 and _inf2)
+        log.info("policy_override2_debug", extra={"why2": _why2, "dec": response.get("decision", {}).get("action")})
+        if "auto_approve" in _why2 and not _ast2 and not _crit2:
+            response["decision"] = {
+                "action": "ALLOW",
+                "reason": "Policy engine auto-approved: trivial surface with no security signals.",
+                "confidence": 0.9,
+                "merge_blocker": False,
+                "blocking_findings": [],
+                "why_chain": _why2 + ["policy_auto_approve"],
+            }
+            _pol_risk2 = response.get("_policy_risk_override", {})
+            if "risk" in response and isinstance(response["risk"], dict):
+                response["risk"]["score"] = _pol_risk2.get("score", 5)
+                response["risk"]["band"] = _pol_risk2.get("band", "minimal")
+    except Exception as _oe2:
+        log.warning("policy_override2_failed", extra={"exc": str(_oe2)})
+
     # Guardar decision en Supabase para metricas
     try:
         from metrics import record_decision
