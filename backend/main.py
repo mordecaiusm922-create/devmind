@@ -1033,6 +1033,32 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         infra_block_merge = True
         response['_policy_risk_override'] = {'score': 90, 'band': 'critical'}
     _attach_unified_decision_v2(response, safety_flow)
+    # Policy engine override - si auto_approve y no hay findings criticos
+    try:
+        _why = response.get("why_chain", [])
+        _pol_dec = response.get("policy_decision", "")
+        _pol_risk = response.get("_policy_risk_override", {})
+        _ast_taint = response.get("_ast_taint_detected", False)
+        _infra_block = any("critical_infra" in w or "infra_score" in w for w in _why)
+        _has_critical = bool(response.get("risk", {}).get("score", 0) >= 80 and _infra_block)
+        if (
+            "auto_approve" in _why
+            and _pol_dec == "APPROVE"
+            and not _ast_taint
+            and not _has_critical
+        ):
+            response["decision"] = {
+                "action": "APPROVE",
+                "reason": "Policy engine auto-approved: trivial surface with no security signals.",
+                "confidence": 0.9,
+                "merge_blocker": False,
+                "blocking_findings": [],
+            }
+            if "risk" in response and isinstance(response["risk"], dict):
+                response["risk"]["score"] = _pol_risk.get("score", 5)
+                response["risk"]["band"] = _pol_risk.get("band", "minimal")
+    except Exception as _oe:
+        log.warning("policy_override_failed", extra={"exc": str(_oe)})
     # Aplica surface multiplier DESPUES de attach (evita sobreescritura)
     if _surface_ctx is not None and _surface_ctx.risk_multiplier < 1.0:
         _m = _surface_ctx.risk_multiplier
