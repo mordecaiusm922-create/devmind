@@ -154,6 +154,18 @@ def resolve_decision(
             why_chain=why_chain + ['policy_auto_approve']
         )
 
+    # Policy engine dice auto_approve -> respetar sin importar safety_flow
+    if "auto_approve" in why_chain and not ast_taint_detected and not cve_block_merge and not infra_block_merge:
+        return ResolvedDecision(
+            action="ALLOW",
+            reason="Policy engine auto-approved: trivial surface with no security signals.",
+            confidence="high",
+            blocking_findings=[],
+            risk_score=calibrated_score,
+            policy_score=calibrated_score,
+            why_chain=why_chain + ["policy_auto_approve"]
+        )
+
     # ── CAPA 3: REVIEW conditions ─────────────────────────────────────
 
     if safety_decision in {"revise", "needs_verification"} and not (calibrated_score < 30 and not has_findings and not ast_taint_detected and not cve_block_merge and not infra_block_merge):
