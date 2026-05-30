@@ -25,13 +25,14 @@ def _parse_deps(files: list[dict]) -> dict[str, str]:
     packages = {}
     for f in files:
         fname = f.get("filename", "").lower()
-        content = f.get("content", "") or f.get("patch", "") or ""
+        content = f.get("content", "") or f.get("patch", "") or f.get("diff", "") or f.get("raw_patch", "") or ""
         if "requirements" in fname and fname.endswith(".txt"):
             for line in content.splitlines():
-                line = line.strip()
-                if "==" in line and not line.startswith("#"):
+                line = line.strip().lstrip("+-")
+                if "==" in line and not line.startswith("#") and not line.startswith("@"):
                     pkg, ver = line.split("==", 1)
-                    packages[pkg.strip().lower()] = ver.strip()
+                    ver = ver.split()[0].strip()
+                    packages[pkg.strip().lower()] = ver
         elif fname == "package.json":
             try:
                 data = json.loads(content)
