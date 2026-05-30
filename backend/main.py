@@ -1150,7 +1150,10 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         _inf2 = any("critical_infra" in w or "infra_score" in w for w in _why2)
         _crit2 = bool(response.get("risk", {}).get("score", 0) >= 80 and _inf2)
         log.info("policy_override2_debug", extra={"why2": _why2, "dec": response.get("decision", {}).get("action")})
-        if "auto_approve" in _why2 and not _ast2 and not _crit2:
+        _vulns2 = response.get("summary", {}).get("vulnerabilities") or []
+        _cve2 = (response.get("infrastructure_security") or {}).get("cve_findings") or []
+        _has_real_findings = bool(_vulns2 or _cve2)
+        if "auto_approve" in _why2 and not _ast2 and not _crit2 and not _has_real_findings:
             response["decision"] = {
                 "action": "ALLOW",
                 "reason": "Policy engine auto-approved: trivial surface with no security signals.",
