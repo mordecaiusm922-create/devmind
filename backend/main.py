@@ -1724,6 +1724,8 @@ def _unified_action(
     if has_findings or calibrated_score >= 40:
         return "REVIEW", "Security findings or calibrated risk require review."
 
+    if safety_decision in {"needs_verification", "revise"}:
+        return "REVIEW", "Safety-flow requires verification before this change can be trusted."
     return "ALLOW", "No blocking findings and the selected candidate passed verification."
 
 
