@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
@@ -168,7 +168,7 @@ def resolve_decision(
 
     # ── CAPA 3: REVIEW conditions ─────────────────────────────────────
 
-    if safety_decision in {"revise", "needs_verification"} and not (calibrated_score < 30 and not has_findings and not ast_taint_detected and not cve_block_merge and not infra_block_merge):
+    if safety_decision in {"revise", "needs_verification"} and not (calibrated_score < 15 and not has_findings and not ast_taint_detected and not cve_block_merge and not infra_block_merge):
         return ResolvedDecision(
             action="REVIEW",
             reason="Safety-flow requires verification before this change can be trusted.",
