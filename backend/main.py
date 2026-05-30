@@ -1153,7 +1153,12 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         _vulns2 = response.get("summary", {}).get("vulnerabilities") or []
         _cve2 = (response.get("infrastructure_security") or {}).get("cve_findings") or []
         _has_real_findings = bool(_vulns2 or _cve2)
-        if "auto_approve" in _why2 and not _ast2 and not _crit2 and not _has_real_findings:
+        _sf_action2 = (response.get("safety_flow") or {}).get("decision", {}).get("action", "").lower()
+        _risk_floor2 = (response.get("pre_analysis") or {}).get("risk_floor", "").lower()
+        _flagged2 = (response.get("pre_analysis") or {}).get("flagged_files") or []
+        _low_risk2 = _risk_floor2 == "low" and not _flagged2 and not _has_real_findings and not _ast2 and not _crit2
+        _can_approve = ("auto_approve" in _why2 or _low_risk2) and _sf_action2 != "reject"
+        if _can_approve and not _has_real_findings and not _ast2 and not _crit2:
             response["decision"] = {
                 "action": "ALLOW",
                 "reason": "Policy engine auto-approved: trivial surface with no security signals.",
