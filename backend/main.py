@@ -1551,6 +1551,14 @@ def _build_unified_decision_v2(
     ):
         calibrated_score = min(calibrated_score, 40)
 
+    # Cap global: risk_floor=low + sin findings = score max 50
+    _pre2 = response.get("pre_analysis") or {}
+    if (str(_pre2.get("risk_floor","")).lower() == "low"
+            and not _pre2.get("flagged_files")
+            and not (vulns or ci_cd_risks)
+            and not ast_taint_detected
+            and not cve_block_merge):
+        calibrated_score = min(calibrated_score, 50)
     calibrated_score = max(0, min(100, calibrated_score))
     from decision_resolver import resolve_decision
     _resolved = resolve_decision(
