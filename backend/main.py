@@ -1023,6 +1023,12 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
             elif _new_score >= 40: _risk_obj["band"] = "medium"
             elif _new_score >= 20: _risk_obj["band"] = "low"
             else: _risk_obj["band"] = "minimal"
+    # Override risk_floor: sin risk_tags ni flagged_files no puede ser medium
+    _pre_obj = response.get('pre_analysis') or {}
+    if (not _pre_obj.get('risk_tags') and not _pre_obj.get('flagged_files')
+            and not validated_summary.get('vulnerabilities')
+            and not validated_summary.get('ci_cd_risks')):
+        response['pre_analysis']['risk_floor'] = 'low'
     safety_flow = _run_pr_safety_flow(repo, pr_number, pr_data, response, trace_id)
     # Inyectar cve_findings en response antes de attach
     if isinstance(response.get("infrastructure_security"), dict):
