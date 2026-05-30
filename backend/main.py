@@ -1474,6 +1474,10 @@ def _build_unified_decision_v2(
     sf_decision = (safety_flow or {}).get("decision") or {}
     sf_risk = (safety_flow or {}).get("risk") or {}
     sf_score = max(_safety_flow_risk_score(selected, sf_decision), _as_int(sf_risk.get("score"), 0))
+    _risk_reason = str((summary.get("risk_note") or {}).get("reason", "")).lower()
+    _is_fallback = "fallback" in _risk_reason or "pipeline error" in _risk_reason or "internal" in _risk_reason
+    if _is_fallback:
+        sf_score = min(sf_score, legacy_score + 10)
     severity_floor, severity_reason = _finding_severity_floor(vulns, ci_cd_risks, summary)
     _policy_risk_override = int((response.get('_policy_risk_override') or {}).get('score', 0) or 0)
     infra_security = response.get("infrastructure_security", {}) or {}
