@@ -168,7 +168,7 @@ def resolve_decision(
 
     # ── CAPA 3: REVIEW conditions ─────────────────────────────────────
 
-    if safety_decision in {"revise", "needs_verification"} and not (calibrated_score < 15 and not has_findings and not ast_taint_detected and not cve_block_merge and not infra_block_merge):
+    if safety_decision in {"revise", "needs_verification"}:
         return ResolvedDecision(
             action="REVIEW",
             reason="Safety-flow requires verification before this change can be trusted.",
