@@ -1157,7 +1157,8 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         _risk_floor2 = (response.get("pre_analysis") or {}).get("risk_floor", "").lower()
         _flagged2 = (response.get("pre_analysis") or {}).get("flagged_files") or []
         _low_risk2 = _risk_floor2 == "low" and not _flagged2 and not _has_real_findings and not _ast2 and not _crit2
-        _can_approve = ("auto_approve" in _why2 or _low_risk2) and _sf_action2 != "reject"
+        _has_verification_required = "verification_required" in _why2 and not _low_risk2
+        _can_approve = ("auto_approve" in _why2 or _low_risk2) and _sf_action2 != "reject" and not _has_verification_required
         if _can_approve and not _has_real_findings and not _ast2 and not _crit2:
             response["decision"] = {
                 "action": "ALLOW",
