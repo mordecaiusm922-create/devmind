@@ -168,7 +168,9 @@ def resolve_decision(
 
     # ── CAPA 3: REVIEW conditions ─────────────────────────────────────
 
-    if safety_decision in {"revise", "needs_verification"}:
+    _trivial_surface = any(s in str(pr_files) for s in ["changelog", ".md", ".txt", "docs/", "test_", "migrations/"]) if pr_files else False
+    _is_trivial = _trivial_surface and calibrated_score < 20 and not has_findings and not ast_taint_detected
+    if safety_decision in {"revise", "needs_verification"} and not _is_trivial:
         return ResolvedDecision(
             action="REVIEW",
             reason="Safety-flow requires verification before this change can be trusted.",
