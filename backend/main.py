@@ -790,6 +790,17 @@ def pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     agent_result = timed("agent_run", analysis_agent.run, pr_data)
     summary = normalize_summary(agent_result.summary)
     pre = agent_result.pre_analysis
+    if pre is None:
+        class _Pre:
+            risk_floor = 'low'
+            risk_tags = frozenset()
+            flagged_files = frozenset()
+            trivially_touched = frozenset()
+            files_with_diff = 0
+            files_skipped_budget = 0
+            files_skipped_noise = 0
+            total_diff_chars = 0
+        pre = _Pre()
     ev = agent_result.evaluation
 
     validated_summary = validate_summary(summary).model_dump()
