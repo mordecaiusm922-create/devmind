@@ -842,13 +842,11 @@ def pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
 
     attack_chain_score, attack_chain_path = detect_attack_chain(pr_data, response.get("summary", {}), safety_flow)
 
-    merge_blocker, merge_reason = decide_merge_blocker(
-        risk_band=risk_band,
-        risk_floor=risk_floor,
-        vulnerabilities=vulns,
-        permissions=permissions,
-        ci_cd_risks=ci_cd_risks,
-        attack_chain_score=attack_chain_score,
+    merge_blocker = attack_chain_score >= 70 or bool(vulns) or bool(ci_cd_risks)
+    merge_reason = (
+        "Exploit chain detected." if attack_chain_score >= 70
+        else "Security findings require review." if (vulns or ci_cd_risks)
+        else "No blocking conditions met."
     )
 
     policy_dec = decide_policy(ev, selected=(safety_flow or {}).get("selected"), mode="secure")
