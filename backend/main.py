@@ -1,4 +1,4 @@
-﻿"""
+"""
 main.py -- DevMind SaaS API (Mitnick-style defensive rewrite v2)
 
 Focus:
@@ -793,6 +793,9 @@ def pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     ev = agent_result.evaluation
 
     validated_summary = validate_summary(summary).model_dump()
+    if pre is None:
+        from agent import PreAnalysis
+        pre = PreAnalysis(risk_floor="low", risk_tags=frozenset(), flagged_files=frozenset(), trivially_touched=frozenset(), files_with_diff=0, files_skipped_budget=0, files_skipped_noise=0, total_diff_chars=0)
     validated_summary = enforce_risk_floor(validated_summary, pre)
 
     permissions = validated_summary.get("permissions_analysis", {}) or {}
