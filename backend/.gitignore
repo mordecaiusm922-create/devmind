@@ -1,0 +1,31 @@
+﻿# Debug/fix scripts
+fix_*.py
+check_*.py
+debug_*.py
+find_*.py
+test_*.py
+add_*.py
+integrate_*.py
+update_*.py
+save_*.py
+clean_*.py
+expose_*.py
+insert_*.py
+analyze_*.py
+bump_*.py
+restore_*.py
+simulate_*.py
+benchmark_review*.py
+
+# Environments
+venv/
+venv_linux/
+.env
+*.env
+
+# Data
+data/decisions/
+scripts/
+
+# Misc
+t-webhook

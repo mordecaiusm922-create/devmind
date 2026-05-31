@@ -2,7 +2,7 @@
   {
     "prompt": "fix sql injection",
     "expected": "BLOCK",
-    "got": "ERROR",
+    "got": "APPROVE",
     "match": false
   },
   {
@@ -14,7 +14,7 @@
   {
     "prompt": "fix hardcoded secret",
     "expected": "BLOCK",
-    "got": "ERROR",
+    "got": "APPROVE",
     "match": false
   },
   {
