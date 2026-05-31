@@ -185,7 +185,7 @@ def detect_surface(prompt: str, files: list[dict[str, Any]]) -> str:
         if not any(ext in {"py", "js", "ts", "go", "rb", "java", "cpp", "cs", "rs", "php"} for ext in ext_counts):
             return "comment_only"
 
-    if any(k in prompt_l for k in {"terraform", "kubernetes", "docker", "iam", "s3", "rds", "security group", "infra"}):
+    if any(k in prompt_l for k in {"terraform", "kubernetes", "docker", " iam ", "" s3"", "rds", "security group"}) or re.search(r"\binfra\b", prompt_l):
         return "infra"
 
     if any(k in prompt_l for k in {"sql", "query", "database", "migration", "schema", "postgres", "mysql", "sqlite"}):
@@ -319,10 +319,13 @@ def policy_decision(
         chain += [f"block_intent:{intent_label}", "intent_policy_block"]
         return _decision("BLOCK", f"block_intent:{intent_label}", surface, chain, max(risk_score, 85), "critical")
 
-    # 3. Safety flow says verify/repair? Then don't auto-approve.
-    if safety_action in {"NEEDS_VERIFICATION", "NEEDS_REPAIR"}:
-        chain += [f"safety_flow_action:{safety_action}", "verification_required"]
-        return _decision("REVISE", f"safety_flow:{safety_action}", surface, chain, max(risk_score, 58), _band_from_score(max(risk_score, 58)))
+    # 3. Trivial surfaces: approve before safety_flow can override
+    if trivial:
+        if not keyword_matches and not signals:
+            chain += ["trivial_surface", "no_security_signals", "auto_approve"]
+            return _decision("APPROVE", "trivial_surface", surface, chain, 5, "minimal")
+        chain += ["trivial_surface_but_risk_signals_present"]
+        return _decision("REVISE", "trivial_surface_with_risk", surface, chain, max(risk_score, 25), _band_from_score(max(risk_score, 25)))
 
     # 4. Sensitive logging is never auto-approved in sensitive domains
     if _contains_any(prompt_l, LOGGING_KEYWORDS):
@@ -330,13 +333,10 @@ def policy_decision(
             chain += ["logging_detected", "sensitive_domain_matched", "compliance_surface_risk"]
             return _decision("REVISE", "logging_sensitive_domain", surface, chain, max(risk_score, 55), "medium")
 
-    # 5. Trivial surfaces can auto-approve only if they stay clean
-    if trivial:
-        if not keyword_matches and not signals:
-            chain += ["trivial_surface", "no_security_signals", "auto_approve"]
-            return _decision("APPROVE", "trivial_surface", surface, chain, 5, "minimal")
-        chain += ["trivial_surface_but_risk_signals_present"]
-        return _decision("REVISE", "trivial_surface_with_risk", surface, chain, max(risk_score, 25), _band_from_score(max(risk_score, 25)))
+    # 5. Safety flow says verify/repair on non-trivial surfaces
+    if safety_action in {"NEEDS_VERIFICATION", "NEEDS_REPAIR"}:
+        chain += [f"safety_flow_action:{safety_action}", "verification_required"]
+        return _decision("REVISE", f"safety_flow:{safety_action}", surface, chain, max(risk_score, 58), _band_from_score(max(risk_score, 58)))
 
     # 6. Strong keyword gate, but avoid false positives with trivial text
     if keyword_matches:
