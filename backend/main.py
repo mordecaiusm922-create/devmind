@@ -854,7 +854,7 @@ def pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     policy_str = _POLICY_MAP.get(policy_dec.action.value.upper(), "")
 
     resolved = resolve_decision(
-        calibrated_score=attack_chain_score,
+        calibrated_score=min(attack_chain_score, 30) if not merge_blocker else attack_chain_score,
         legacy_merge_blocker=merge_blocker,
         severity_floor=0,
         severity_reason=merge_reason,
