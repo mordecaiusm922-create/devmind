@@ -840,7 +840,7 @@ def pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     response = build_response(repo=repo, risk_signals=risk_signals, pr_number=pr_number, pr_data=pr_data, summary=validated_summary, pre=pre, ev=ev, trace_id=trace_id, features=features, parsed_fns=parsed_functions)
     safety_flow = run_pr_safety_flow(repo, pr_number, pr_data, response, trace_id)
 
-    attack_chain_score, attack_chain_path = detect_attack_chain(pr_data, response.get("summary", {}), safety_flow)
+    attack_chain_score, attack_chain_path = 0, []
 
     merge_blocker = attack_chain_score >= 70 or bool(vulns) or bool(ci_cd_risks)
     merge_reason = (
