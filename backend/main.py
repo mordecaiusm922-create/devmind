@@ -864,7 +864,7 @@ def pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         policy_decision=policy_str.upper() if policy_str else ("BLOCK" if policy_dec.action.value.upper() in ("REJECT",) else "REVIEW" if policy_dec.action.value.upper() in ("NEEDS_REPAIR", "NEEDS_VERIFICATION", "REVISE", "REVIEW") else ""),
         policy_reason=policy_dec.reason,
         policy_why_chain=list(policy_dec.reasons or []),
-        pr_files=pr_data.get("files", []),
+        pr_files=[{"filename": f.get("filename", "")} for f in pr_data.get("files", []) if f.get("filename")],
     )
 
     response["attack_chain"] = {"score": attack_chain_score, "path": attack_chain_path, "merge_blocker": resolved.action == "BLOCK", "reason": resolved.reason}
