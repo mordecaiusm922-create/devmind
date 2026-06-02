@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 from typing import Any
@@ -88,7 +88,42 @@ _COMPILED_CRITICAL_RULES = [
 _SEVERITY_RISK = {"critical": 0.90, "high": 0.76, "medium": 0.56, "low": 0.32}
 
 
+
+_MANIFEST_RE = re.compile(
+    r"(pyproject\.toml|requirements[^/]*\.txt|package\.json|package-lock\.json|"
+    r"go\.mod|go\.sum|Cargo\.toml|Cargo\.lock|Gemfile|Gemfile\.lock|"
+    r"CHANGES\.md|CHANGELOG\.md|HISTORY\.rst|setup\.cfg)$",
+    re.I,
+)
+
+
+def _manifest_fast_path(req: SafetyFlowRequest) -> dict[str, Any]:
+    decision = {"action": "approve", "reason": "Manifest-only change — no executable surface.", "merge_blocker": False}
+    risk = {"score": 8, "band": "minimal", "triage": "P3", "p_exploit": 0.08, "source_scores": {}}
+    return {
+        "flow": ["observe", "fast_path"],
+        "generated": False, "repair_attempted": False, "repair_converged": True,
+        "repair_iterations": [], "representation": {
+            "risk_surface": [], "critical_findings": [],
+            "blast_radius": {"score": 0.0, "level": "low", "reasons": [], "file_count": 0,
+                "total_churn": 0, "max_candidate_churn": 0,
+                "graph": {"score": 0, "node_count": 0, "edge_count": 0, "high_risk_node_count": 0}},
+        },
+        "properties": [], "candidates": [], "evaluation": {"scores": {}},
+        "verification": {}, "runtime_evidence": {}, "ranking": [],
+        "selected": None, "decision": decision,
+        "deployment_policy": {"action": "ALLOW"},
+        "risk": risk, "operational_metrics": {}, "prior": {}, "recorded": None,
+    }
+
 def run_safety_flow(req: SafetyFlowRequest) -> dict[str, Any]:
+    # Fast path: manifest-only changes skip fix generation entirely
+    if not req.candidates and req.files and all(
+        _MANIFEST_RE.search(str(f.get("filename", "")))
+        for f in req.files if f.get("filename")
+    ):
+        return _manifest_fast_path(req)
+
     candidates = [_candidate_to_dict(c, i) for i, c in enumerate(req.candidates)]
     prior_data: dict[str, Any] = {}
     if req.repo:
@@ -1455,8 +1490,8 @@ def _safety_flow_risk(
         score = max(score, 90)
     elif decision.get("merge_blocker"):
         score = max(score, 80)
-    elif action in {"revise", "needs_verification"}:
-        score = max(score, 45)
+    elif action in {"revise", "needs_verification"} and score > 0:
+        score = max(score, 20)
 
     score = max(0, min(100, score))
     if score >= 85:
