@@ -838,7 +838,13 @@ def pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     risk_signals = compute_risk_score(pre, summary, ev_obj, pr_data) if pre and ev_obj else None
 
     response = build_response(repo=repo, risk_signals=risk_signals, pr_number=pr_number, pr_data=pr_data, summary=validated_summary, pre=pre, ev=ev, trace_id=trace_id, features=features, parsed_fns=parsed_functions)
-    safety_flow = run_pr_safety_flow(repo, pr_number, pr_data, response, trace_id)
+    _trivial = not pre.flagged_files and not vulns and not ci_cd_risks
+    _surface = str(response.get('surface', '') or '').lower()
+    _trivial_surface = any(s in _surface for s in ('documentation','dependency_only','test_only'))
+    if _trivial and _trivial_surface:
+        safety_flow = None
+    else:
+        safety_flow = run_pr_safety_flow(repo, pr_number, pr_data, response, trace_id)
 
     attack_chain_score, attack_chain_path = 0, []
 
