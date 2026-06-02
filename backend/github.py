@@ -60,7 +60,9 @@ def get_pr_data(repo: str, pr_number: int) -> dict:
     # ── 2. Per-file diffs (richer than the single diff endpoint) ──────────────
     files_url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/files"
     files_resp = requests.get(files_url, headers=HEADERS, params={"per_page": 100})
-    raw_files = files_resp.json() if files_resp.status_code == 200 else []
+    if files_resp.status_code != 200:
+        raise Exception(f"GitHub Files API error {files_resp.status_code}: {files_resp.text}")
+    raw_files = files_resp.json()
 
     processed_files = _process_files(raw_files)
 
