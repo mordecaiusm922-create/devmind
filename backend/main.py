@@ -1484,7 +1484,7 @@ async def github_webhook(
     return {"accepted": True, "repo": repo, "pr": pr_number, "action": action, "trace_id": trace_id}
 
 
-@app.post("/evaluate")
+@app.post("/evaluate", dependencies=[Depends(require_api_key)])
 async def evaluate_endpoint(req: EvaluateRequest):
     return evaluate_payload(req.model_dump())
 
@@ -1517,21 +1517,21 @@ async def outcome_endpoint(req: OutcomeRequest):
     return record_outcome(req.repo, pr_number=req.pr_number, outcome=req.outcome, text=req.text, metadata=req.metadata)
 
 
-@app.post("/generate")
+@app.post("/generate", dependencies=[Depends(require_api_key)])
 async def generate_endpoint(req: GenerateRequest):
     return generate_request(req)
 
 
-@app.post("/repair")
+@app.post("/repair", dependencies=[Depends(require_api_key)])
 async def repair_endpoint(req: RepairRequest):
     return repair_request(req)
 
 
-@app.post("/verify")
+@app.post("/verify", dependencies=[Depends(require_api_key)])
 async def verify_endpoint(req: VerifyRequest):
     return verify_candidate(req)
 
 
-@app.post("/sandbox")
+@app.post("/sandbox", dependencies=[Depends(require_api_key)])
 async def sandbox_endpoint(req: SandboxRequest):
     return run_sandbox(req.candidate, req.context)
