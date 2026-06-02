@@ -1,4 +1,4 @@
-"""
+﻿"""
 main.py -- DevMind SaaS API (Mitnick-style defensive rewrite v2)
 
 Focus:
@@ -844,7 +844,9 @@ def pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     if _trivial and _trivial_surface:
         safety_flow = None
     else:
-        safety_flow = run_pr_safety_flow(repo, pr_number, pr_data, response, trace_id)
+        # Circuit Breaker: Evitar safety_flow si el riesgo es bajo
+        if risk_floor != 'low' or has_findings:
+            safety_flow = run_pr_safety_flow(repo, pr_number, pr_data, response, trace_id)
 
     attack_chain_score, attack_chain_path = 0, []
 
