@@ -1005,7 +1005,7 @@ def _risk_surface(prompt: str, context: dict[str, Any], files: list[dict[str, An
 
     rules: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("secrets", ("secret_key", "api_key", "private_key", "credential", ".env", "client_secret", "sendgrid", "twilio", "aws_secret", "db_password")),
-        ("auth", ("auth", "authorization", "permission", "rbac", "jwt", "oauth", "session", "is_admin", "ownership", "cors", "mfa")),
+        ("auth", ("authorization", "rbac", "jwt", "oauth", "is_admin", "ownership", "cors", "mfa", "login_required", "permission_denied")),
         ("data", ("sql", "query", "database", "migration", "schema", "cursor.execute", "postgres", "mysql", "pii", "pagination", "soft delete")),
         ("ci_cd", (".github/workflows", "pull_request_target", "workflow_run", "github_token", "actions/", "artifact", "curl | bash", "supply chain")),
         ("infra", ("terraform", "kubernetes", "k8s", "helm", "docker", "render.yaml", "iam", "deploy", "s3", "rds", "security group", "0.0.0.0/0")),
