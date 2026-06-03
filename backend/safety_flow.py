@@ -256,17 +256,17 @@ def _infer_properties(
     representation: dict[str, Any],
 ) -> list[str]:
     props = list(dict.fromkeys(explicit))
-    text = f"{prompt} {context}".lower()
+    props = list(dict.fromkeys(explicit))
+    # Solo usar surface detectada del diff, no escanear prompt/context libremente
     surface = set(representation.get("risk_surface", []))
     findings = representation.get("critical_findings", []) or []
 
-    if any(k in text for k in ("secret", "token", "api_key", "password")) or "secrets" in surface:
+    if "secrets" in surface:
         props.extend(["no_hardcoded_secret", "secret_from_environment", "fail_fast"])
-    if any(k in text for k in ("sql", "query", "injection", "cursor.execute")) or "data" in surface:
+    if "data" in surface:
         props.extend(["no_raw_sql", "parameterized_sql", "validate_email_present"])
-    if any(k in text for k in ("auth", "authorization", "permission", "rbac", "is_admin")) or "auth" in surface:
+    if "auth" in surface:
         props.extend(["auth_guard_present", "no_auth_guard_removal", "fail_closed"])
-    if "ci_cd" in surface:
         props.extend(["no_untrusted_secret_access"])
     if "infra" in surface:
         props.extend(["explicit_rollback_path"])
