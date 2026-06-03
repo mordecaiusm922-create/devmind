@@ -842,12 +842,10 @@ def pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
     _trivial = not pre.flagged_files and not vulns and not ci_cd_risks
     _surface = str(response.get('surface', '') or '').lower()
     _trivial_surface = any(s in _surface for s in ('documentation','dependency_only','test_only'))
-    if _trivial and _trivial_surface:
-        safety_flow = None
+    if _trivial_surface:
+        safety_flow = None  # docs/manifest/tests no necesitan safety_flow
     else:
-        # Circuit Breaker: Evitar safety_flow si el riesgo es bajo
-        if risk_floor != 'low' or bool(vulns or ci_cd_risks):
-            safety_flow = run_pr_safety_flow(repo, pr_number, pr_data, response, trace_id)
+        safety_flow = run_pr_safety_flow(repo, pr_number, pr_data, response, trace_id)
 
     attack_chain_score, attack_chain_path = 0, []
 
