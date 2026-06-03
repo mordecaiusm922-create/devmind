@@ -996,12 +996,12 @@ def _detect_critical_findings(
 def _risk_surface(prompt: str, context: dict[str, Any], files: list[dict[str, Any]]) -> list[str]:
     text = " ".join(
         [
-            prompt,
-            str(context),
             " ".join(str(f.get("filename", "")) for f in files),
             " ".join(str(f.get("diff", "")) for f in files),
         ]
     ).lower()
+
+
 
     rules: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("secrets", ("secret", "token", "api_key", "password", "private_key", "credential", ".env", "client_secret", "sendgrid", "twilio")),
