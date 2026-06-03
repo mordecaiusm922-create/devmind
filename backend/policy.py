@@ -608,7 +608,7 @@ def decide_policy(
     if fixable:
         return PolicyDecision(
             action=Action.NEEDS_REPAIR,
-            merge_blocker=sensitive_mode or not repair_converged,
+            merge_blocker=(sensitive_mode and critical_violations) or not repair_converged,
             reason="Candidate is not strong enough; repair is required.",
             reasons=auto_failures if auto_failures else ["needs_more_evidence_or_stronger_semantics"],
             candidate=candidate_id,
