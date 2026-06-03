@@ -1490,7 +1490,11 @@ def _safety_flow_risk(
         score = max(score, 90)
     elif decision.get("merge_blocker"):
         score = max(score, 80)
-    elif action in {"revise", "needs_verification"} and score > 0:
+    elif action in {"revise", "needs_verification"}:
+        _has_real_findings = bool(representation.get("critical_findings"))
+        _blast = float((representation.get("blast_radius") or {}).get("score") or 0.0)
+        if _has_real_findings or _blast >= 0.35:
+            score = max(score, 20)
         score = max(score, 20)
 
     score = max(0, min(100, score))
