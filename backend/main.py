@@ -1082,6 +1082,9 @@ def build_unified_decision(response: dict[str, Any], safety_flow: dict[str, Any]
         calibrated_score = max(0, calibrated_score - 8)
 
     calibrated_score = max(0, min(100, calibrated_score))
+    # Floor: ALLOW nunca debe ser 0 - indica falta de analisis
+    if calibrated_score == 0:
+        calibrated_score = 5
     action, reason = unified_action(calibrated_score=calibrated_score, legacy_merge_blocker=bool(summary.get("merge_blocker", False)), severity_floor=severity_floor, severity_reason=severity_reason, safety_decision=str(sf_decision.get("action") or ""), selected=selected, has_findings=has_findings, attack_chain_score=attack_chain_score, attack_chain_reason=attack_chain_reason)
     triage = triage_for_unified_decision(action, calibrated_score, severity_floor)
     confidence = unified_confidence(response, safety_flow, calibrated_score)
