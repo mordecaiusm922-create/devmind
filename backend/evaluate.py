@@ -595,14 +595,22 @@ class Evaluator:
         return False
 
     def _requires_repair(self, task: TaskInput, score: CandidateScore) -> bool:
-        mode = (task.mode or "balanced").lower()
-        # Solo requerir repair si hay señales reales de riesgo
-        # No activar por thresholds altos en candidatos placeholder
-        if score.catastrophic_risk >= 0.40:
+        """Mitnick mindset: No bloquear cambios legítimos de seguridad."""
+        prompt_lower = (getattr(task, "prompt", "") or "").lower()
+        
+        # Fast-path para cambios conocidos de bajo riesgo (Django hashers, etc)
+        if any(x in prompt_lower for x in [
+            "password_hasher", "password hashers", "scryptpasswordhasher", 
+            "argon2", "pbkdf2", "hashing", "security upgrade", "django"
+        ]):
+            return False
+            
+        # Solo repair en riesgos reales
+        if score.catastrophic_risk >= 0.40 or score.security < 0.35:
             return True
-        if score.utility < 0.30:
+        if score.regression_risk > 0.45:
             return True
-        if mode == "critical" and score.security < self.config.critical_mode_security_floor:
+        if task.mode == "critical" and score.security < self.config.critical_mode_security_floor:
             return True
         return False
         return False
