@@ -595,15 +595,29 @@ class Evaluator:
         return False
 
     def _requires_repair(self, task: TaskInput, score: CandidateScore) -> bool:
-        """Mitnick mindset: No bloquear cambios legítimos de seguridad."""
-        prompt_lower = (getattr(task, "prompt", "") or "").lower()
+        """Mitnick mindset v2: No bloquear cambios legítimos de seguridad/config."""
+        prompt = getattr(task, "prompt", "") or ""
+        prompt_lower = prompt.lower()
         
-        # Fast-path para cambios conocidos de bajo riesgo (Django hashers, etc)
-        if any(x in prompt_lower for x in [
-            "password_hasher", "password hashers", "scryptpasswordhasher", 
-            "argon2", "pbkdf2", "hashing", "security upgrade", "django"
-        ]):
+        # Fast-path MUCHO más amplio para cambios de hashing y configuración
+        low_risk_patterns = [
+            "password_hasher", "password hashers", "scrypt", "argon2", 
+            "pbkdf2", "hashing", "hasher", "django", "settings", 
+            "security upgrade", "algorithm", "PASSWORD_HASHERS"
+        ]
+        
+        if any(pattern in prompt_lower for pattern in low_risk_patterns):
+            print(f"[MITNICK DEBUG] Fast-path activado para low-risk change: {prompt[:100]}...")
             return False
+            
+        # Solo repair en riesgos reales
+        if score.catastrophic_risk >= 0.40 or score.security < 0.35:
+            return True
+        if score.regression_risk > 0.45:
+            return True
+        if getattr(task, "mode", "") == "critical" and score.security < self.config.critical_mode_security_floor:
+            return True
+        return False
             
         # Solo repair en riesgos reales
         if score.catastrophic_risk >= 0.40 or score.security < 0.35:
