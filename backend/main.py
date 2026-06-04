@@ -1155,7 +1155,7 @@ def unified_action(*, calibrated_score: int, legacy_merge_blocker: bool, severit
         return "BLOCK", "Safety-flow rejected the best candidate."
     if legacy_merge_blocker or severity_floor >= 80 or calibrated_score >= 85:
         return "BLOCK", severity_reason or "Risk floor exceeded."
-    if safety_decision in {"revise", "needs_verification"} and calibrated_score >= 25:
+    if safety_decision in {"revise", "needs_verification", "needs_repair"} and calibrated_score >= 30:
         return "REVIEW", "Safety-flow requires verification before this change can be trusted."
     if selected.get("violations"):
         return "REVIEW", "Safety-flow found unresolved verification violations."
