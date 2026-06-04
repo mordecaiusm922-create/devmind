@@ -596,16 +596,15 @@ class Evaluator:
 
     def _requires_repair(self, task: TaskInput, score: CandidateScore) -> bool:
         mode = (task.mode or "balanced").lower()
-        if score.utility < self.config.approval_threshold:
+        # Solo requerir repair si hay señales reales de riesgo
+        # No activar por thresholds altos en candidatos placeholder
+        if score.catastrophic_risk >= 0.40:
             return True
-        if score.correctness < 0.80:
-            return True
-        if score.security < 0.82:
-            return True
-        if score.regression_risk > 0.30:
+        if score.utility < 0.30:
             return True
         if mode == "critical" and score.security < self.config.critical_mode_security_floor:
             return True
+        return False
         return False
 
     def _decision_from_score(
