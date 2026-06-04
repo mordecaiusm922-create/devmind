@@ -40,6 +40,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agent import AgentConfig, DevMindAgent
 from calibration import expected_calibration_error
+
+from reasoner import RiskReasoner
+reasoner = RiskReasoner()
+
 from evaluator import compute_risk_score, enforce_risk_floor
 from evaluate import evaluate_payload
 from feature_extractor import extract_features
@@ -855,6 +859,28 @@ def pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         else "Security findings require review." if (vulns or ci_cd_risks)
         else "No blocking conditions met."
     )
+
+
+    # === RISKREASONER CENTRAL (Nuevo cerebro) ===
+    full_diff = "
+".join([f.get("patch", "") or "" for f in pr_data.get("files", [])])
+    context = {
+        "repo": repo,
+        "pr_number": pr_number,
+        "summary": summary,
+        "pre_analysis": pre,
+        "risk_signals": risk_signals
+    }
+    
+    decision = await reasoner.analyze_pr(pr_data, full_diff, context)
+    
+    # Mapear al formato actual
+    action = decision.action.lower()
+    score = decision.score
+    triage = decision.triage
+    reason = decision.reason
+    merge_blocker = decision.merge_blocker
+    why_chain = decision.why_chain
 
     policy_dec = decide_policy(ev, selected=(safety_flow or {}).get("selected"), mode="secure")
     _POLICY_MAP = {"APPROVE": "approve", "REJECT": "reject", "REVIEW": "review", "REVISE": "revise", "NEEDS_VERIFICATION": "needs_verification", "NEEDS_REPAIR": "revise", "ABSTAIN": ""}
