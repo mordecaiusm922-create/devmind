@@ -591,7 +591,7 @@ def resolve_decision(
             why_chain=why_chain + ["policy_engine_block"],
         )
 
-    if policy_decision == "REVISE":
+    if policy_decision == "REVISE" and (has_findings or calibrated_score >= 30 or ast_taint_detected):
         return ResolvedDecision(
             action="REVIEW",
             reason=f"Policy engine: {policy_reason}",
