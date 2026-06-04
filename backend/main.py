@@ -862,7 +862,7 @@ def pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
 
 
     # === RISKREASONER CENTRAL (Nuevo cerebro) ===
-    full_diff = "
+    full_diff = "\n".join([f.get("patch", "") or "" for f in pr_data.get("files", [])])
 ".join([f.get("patch", "") or "" for f in pr_data.get("files", [])])
     context = {
         "repo": repo,
