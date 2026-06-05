@@ -2441,5 +2441,4 @@ from infra_analyzer import analyze_infra
 
 
 
- #   H o t f i x   f o r   d e p l o y m e n t  
- 
+# Hotfix for deployment
