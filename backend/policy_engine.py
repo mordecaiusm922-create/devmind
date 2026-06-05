@@ -185,7 +185,7 @@ def detect_surface(prompt: str, files: list[dict[str, Any]]) -> str:
         if not any(ext in {"py", "js", "ts", "go", "rb", "java", "cpp", "cs", "rs", "php"} for ext in ext_counts):
             return "comment_only"
 
-    if any(k in prompt_l for k in {"terraform", "kubernetes", "docker", " iam ", "" s3"", "rds", "security group"}) or re.search(r"\binfra\b", prompt_l):
+    if any(k in prompt_l for k in {"terraform", "kubernetes", "docker", "iam", "s3", "rds", "security group"}) or re.search(r"\binfra\b", prompt_l):
         return "infra"
 
     if any(k in prompt_l for k in {"sql", "query", "database", "migration", "schema", "postgres", "mysql", "sqlite"}):
