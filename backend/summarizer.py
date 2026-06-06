@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -13,8 +13,8 @@ from evaluator import enforce_risk_floor, evaluate, pre_analyse
 load_dotenv()
 
 client = OpenAI(
-    api_key=os.getenv("GROQ_API_KEY"),
-    base_url="https://api.groq.com/openai/v1",
+    api_key=os.getenv("SILICONFLOW_API_KEY"),
+    base_url="https://api.siliconflow.cn/v1",
 )
 
 MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
