@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 import re
@@ -591,7 +591,12 @@ def resolve_decision(
             why_chain=why_chain + ["policy_engine_block"],
         )
 
-    if policy_decision == "REVISE" and (has_findings or calibrated_score >= 30 or ast_taint_detected):
+    if policy_decision == "REVISE" and (
+        has_findings
+        or calibrated_score >= 30
+        or ast_taint_detected
+        or "verification_required" in why_chain  # safety_flow NEEDS_REPAIR/NEEDS_VERIFICATION
+    ):
         return ResolvedDecision(
             action="REVIEW",
             reason=f"Policy engine: {policy_reason}",
@@ -618,7 +623,14 @@ def resolve_decision(
     # ------------------------------------------------------------------
 
     trivial_surface = _is_trivial_surface(pr_files)
-    is_trivial = trivial_surface and calibrated_score < 20 and not has_findings and not ast_taint_detected
+    _needs_verification = "verification_required" in why_chain
+    is_trivial = (
+        trivial_surface
+        and calibrated_score < 20
+        and not has_findings
+        and not ast_taint_detected
+        and not _needs_verification  # bloquea bypass por NEEDS_REPAIR
+    )
 
     if safety_decision in {"revise", "needs_verification"} and not is_trivial:
         return ResolvedDecision(

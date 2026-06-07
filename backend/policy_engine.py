@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 from dataclasses import dataclass
@@ -6,7 +6,7 @@ from typing import Any, Iterable
 
 
 # -----------------------------
-# Config / taxonomía de riesgo
+# Config / taxonomÃ­a de riesgo
 # -----------------------------
 
 DECISIONS = {"APPROVE", "REVISE", "BLOCK"}
@@ -319,14 +319,6 @@ def policy_decision(
         chain += [f"block_intent:{intent_label}", "intent_policy_block"]
         return _decision("BLOCK", f"block_intent:{intent_label}", surface, chain, max(risk_score, 85), "critical")
 
-    # 3. Trivial surfaces: approve before safety_flow can override
-    if trivial:
-        if not keyword_matches and not signals:
-            chain += ["trivial_surface", "no_security_signals", "auto_approve"]
-            return _decision("APPROVE", "trivial_surface", surface, chain, 5, "minimal")
-        chain += ["trivial_surface_but_risk_signals_present"]
-        return _decision("REVISE", "trivial_surface_with_risk", surface, chain, max(risk_score, 25), _band_from_score(max(risk_score, 25)))
-
     # 4. Sensitive logging is never auto-approved in sensitive domains
     if _contains_any(prompt_l, LOGGING_KEYWORDS):
         if any(d in prompt_l for d in SENSITIVE_DOMAINS):
@@ -336,8 +328,22 @@ def policy_decision(
     # 5. Safety flow says verify/repair on non-trivial surfaces
     if safety_action in {"NEEDS_VERIFICATION", "NEEDS_REPAIR"}:
         chain += [f"safety_flow_action:{safety_action}", "verification_required"]
-        return _decision("REVISE", f"safety_flow:{safety_action}", surface, chain, max(risk_score, 58), _band_from_score(max(risk_score, 58)))
+        return _decision(
+            "REVISE",
+            f"safety_flow:{safety_action}",
+            surface,
+            chain,
+            max(risk_score, 58),
+            _band_from_score(max(risk_score, 25)),
+        )
 
+    # 3. Trivial surfaces: approve before lower gates can override
+    if trivial:
+        if not keyword_matches and not signals:
+            chain += ["trivial_surface", "no_security_signals", "auto_approve"]
+            return _decision("APPROVE", "trivial_surface", surface, chain, 5, "minimal")
+        chain += ["trivial_surface_but_risk_signals_present"]
+        return _decision("REVISE", "trivial_surface_with_risk", surface, chain, max(risk_score, 25), _band_from_score(max(risk_score, 25)))
     # 6. Strong keyword gate, but avoid false positives with trivial text
     if keyword_matches:
         chain += [f"block_keyword:{keyword_matches[0]}", "security_pattern_matched"]
@@ -348,7 +354,6 @@ def policy_decision(
         if surface in {"runtime", "data", "infra"}:
             chain += ["auth_surface_detected", "trust_boundary_change", "requires_security_review"]
             return _decision("REVISE", "auth_change", surface, chain, max(risk_score, 60), "high")
-
     # 8. Runtime bugfixes should be reviewed if they touch behavior
     if any(k in prompt_l for k in BUGFIX_KEYWORDS) and surface == "runtime":
         chain += ["runtime_bugfix_detected", "regression_risk_elevated"]
@@ -403,3 +408,13 @@ def policy_audit(prompt: str, files: list[dict[str, Any]], intent_label: str = "
         "risk_score": score,
         "band": _band_from_score(score),
     }
+
+
+
+
+
+
+
+
+
+
