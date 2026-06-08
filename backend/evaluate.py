@@ -607,7 +607,7 @@ class Evaluator:
         ]
         
         if any(pattern in prompt_lower for pattern in low_risk_patterns):
-            print(f"[MITNICK DEBUG] Fast-path activado para low-risk change: {prompt[:100]}...")
+            pass  # Print eliminado
             # return False  # FIX: Delegar al decision_resolver
             
         # Solo repair en riesgos reales
