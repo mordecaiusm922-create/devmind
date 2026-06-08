@@ -1167,7 +1167,7 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         _low_risk2 = _risk_floor2 == "low" and not _flagged2 and not _has_real_findings and not _ast2 and not _crit2
         _has_verification_required = "verification_required" in _why2
         _can_approve = ("auto_approve" in _why2 or _low_risk2) and _sf_action2 != "reject" and not _has_verification_required
-        if _can_approve and not _has_real_findings and not _ast2 and not _crit2 and locals().get('_policy', {}).get('decision', '').upper() not in ('REVIEW', 'REVISE', 'REJECT'):
+        if _can_approve and not _has_real_findings and not _ast2 and not _crit2 and response.get('decision', {}).get('action', '').upper() != 'REVIEW':
             response["decision"] = {
                 "action": "ALLOW",
                 "reason": "Policy engine auto-approved: trivial surface with no security signals.",
