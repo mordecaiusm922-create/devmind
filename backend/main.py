@@ -1053,6 +1053,7 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
             "auto_approve" in _why
             and not _ast_taint
             and not _has_critical
+            and str(_pol_dec).upper() not in ('REVIEW', 'REVISE', 'REJECT', 'NEEDS_VERIFICATION')
         ):
             response["decision"] = {
                 "action": "ALLOW",
