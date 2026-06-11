@@ -36,3 +36,7 @@ fix_*.py
 patch*.py
 debug_*.py
 
+
+.env.old
+data/audit/*.jsonl
+legacy/
