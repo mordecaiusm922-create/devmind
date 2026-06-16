@@ -37,7 +37,7 @@ from core.types import (
 from engines.policy_engine import evaluate_action
 from engines.audit_engine import AuditEngine
 from engines.infra_engine import evaluate_change
-from devmind.engines.release_gate import evaluate_release
+from engines.release_gate import evaluate_release
 
 
 # =============================================================================
