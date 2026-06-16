@@ -47,6 +47,10 @@ class ActionSurface(str, Enum):
     MEMORY      = "memory"
     CODE        = "code"
     SECRETS     = "secrets"
+    INFRASTRUCTURE = "infrastructure"
+    KUBERNETES     = "kubernetes"
+    RELEASE         = "release"
+    IDENTITY         = "identity"
     UNKNOWN     = "unknown"
 
 
@@ -62,6 +66,28 @@ class SessionState(str, Enum):
     RESTRICTED = "restricted"
     SUSPENDED  = "suspended"
     CLOSED     = "closed"
+
+
+class BlastRadius(str, Enum):
+    PROCESS = "process"   # contained to a single process/container
+    SERVICE = "service"   # affects one service
+    CLUSTER = "cluster"   # affects a cluster / multiple services
+    ACCOUNT = "account"   # affects a cloud account
+    ORG     = "org"       # affects the entire organization
+
+
+class ChangeType(str, Enum):
+    TERRAFORM_PLAN     = "terraform_plan"
+    TERRAFORM_APPLY    = "terraform_apply"
+    K8S_MANIFEST       = "k8s_manifest"
+    HELM_RELEASE       = "helm_release"
+    CI_PIPELINE        = "ci_pipeline"
+    RELEASE_PUBLISH    = "release_publish"
+    RELEASE_PROMOTE    = "release_promote"
+    IAM_CHANGE         = "iam_change"
+    SECRET_ROTATION    = "secret_rotation"
+    CONFIG_CHANGE      = "config_change"
+    SCHEMA_MIGRATION   = "schema_migration"
 
 
 # =============================================================================
@@ -103,6 +129,49 @@ class AgentAction:
     payload:    str                   # the raw action content
     timestamp:  datetime
     context:    ActionContext = field(default_factory=ActionContext)
+
+
+# =============================================================================
+# ChangeImpact / AgentChange — unit of governance for structural changes
+# =============================================================================
+
+@dataclass
+class ChangeImpact:
+    """Declared or estimated impact of an AgentChange before evaluation."""
+    blast_radius:               BlastRadius = BlastRadius.PROCESS
+    affects_production:         bool = False
+    resources_changed:          int = 0
+    secrets_touched:            bool = False
+    network_exposed:            bool = False
+    privilege_escalation:       bool = False
+    estimated_downtime_minutes: int = 0
+    rollback_available:         bool = True
+
+
+@dataclass
+class AgentChange:
+    """
+    The atomic unit of governance for structural/infrastructure changes.
+
+    Unlike AgentAction (a tool call), AgentChange represents a CHANGE EVENT
+    with a blast radius: a terraform apply, a k8s manifest application, a
+    helm release, or a software release/promotion.
+
+    The sandbox routes AgentChange through infra_engine.evaluate_change()
+    or release_gate.evaluate_release() depending on change_type/surface —
+    never through policy_engine.evaluate_action().
+    """
+    action_id:    str
+    session_id:   str
+    agent:        str
+    change_type:  ChangeType
+    surface:      ActionSurface
+    payload:      str
+    timestamp:    datetime
+    impact:       ChangeImpact = field(default_factory=ChangeImpact)
+    context:      ActionContext = field(default_factory=ActionContext)
+    diff_summary: str | None = None
+    artifact_ref: str | None = None
 
 
 # =============================================================================
@@ -148,6 +217,12 @@ class SessionRiskProfile:
     peak_score:         int = 0
     risk_trend:         RiskTrend = RiskTrend.STABLE
     surfaces_touched:   list[str] = field(default_factory=list)
+    infra_changes:      int = 0
+    k8s_changes:        int = 0
+    releases_attempted: int = 0
+    releases_blocked:   int = 0
+    secrets_accessed:   int = 0
+    production_changes: int = 0
 
 
 @dataclass
@@ -219,7 +294,6 @@ class AgentIdentity:
     """
     agent:        str           # model/tool identifier
     model:        str | None    # underlying model if applicable
-    session_id:   str
     user:         str | None
     organization: str | None
     version:      str | None = None

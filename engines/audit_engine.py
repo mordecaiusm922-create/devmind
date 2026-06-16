@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from core.types import AgentAction, GovernanceDecision
+from core.types import AgentAction, AgentChange, ChangeType, GovernanceDecision
 
 
 # =============================================================================
@@ -98,6 +98,58 @@ class AuditEngine:
             latency_ms=decision.latency_ms,
             environment=action.context.environment,
             user=action.context.user,
+            organization=organization,
+        )
+        self._write(rec)
+        return rec
+
+    def record_change(
+        self,
+        change: AgentChange,
+        decision: GovernanceDecision,
+        organization: str | None = None,
+    ) -> AuditRecord:
+        """
+        Audit entry point for AgentChange events (infrastructure / release).
+
+        Mirrors record() but maps AgentChange's fields onto AuditRecord:
+            - tool      -> change category ("infrastructure" | "release")
+            - operation -> change.change_type.value
+
+        AgentChange has no `tool`/`operation` because those are AgentAction
+        concepts (tool calls). The mapping below derives the closest
+        equivalent without forcing AgentChange to carry fields it doesn't
+        conceptually own.
+        """
+        import hashlib
+        import uuid
+
+        _RELEASE_TYPES = (ChangeType.RELEASE_PUBLISH, ChangeType.RELEASE_PROMOTE)
+        tool_category = "release" if change.change_type in _RELEASE_TYPES else "infrastructure"
+
+        payload_hash = hashlib.sha256(
+            change.payload.encode("utf-8", errors="replace")
+        ).hexdigest()
+
+        rec = AuditRecord(
+            record_id=str(uuid.uuid4()),
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            action_id=change.action_id,
+            session_id=change.session_id,
+            agent=change.agent,
+            tool=tool_category,
+            operation=change.change_type.value,
+            payload_hash=payload_hash,
+            surface=decision.surface.value,
+            decision=decision.decision.value,
+            risk_score=decision.risk_score,
+            band=decision.band.value,
+            reason=decision.reason,
+            why_chain=decision.why_chain,
+            signals=decision.signals,
+            latency_ms=decision.latency_ms,
+            environment=change.context.environment,
+            user=change.context.user,
             organization=organization,
         )
         self._write(rec)

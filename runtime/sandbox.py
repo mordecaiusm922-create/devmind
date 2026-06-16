@@ -23,8 +23,12 @@ from typing import Any
 
 from core.types import (
     AgentAction,
+    AgentChange,
     ActionContext,
+    ActionSurface,
     AgentSession,
+    ChangeImpact,
+    ChangeType,
     Decision,
     GovernanceDecision,
     PolicyRule,
@@ -32,6 +36,8 @@ from core.types import (
 )
 from engines.policy_engine import evaluate_action
 from engines.audit_engine import AuditEngine
+from engines.infra_engine import evaluate_change
+from devmind.engines.release_gate import evaluate_release
 
 
 # =============================================================================
@@ -64,7 +70,7 @@ class DevMindSandbox:
         self._sessions: dict[str, AgentSession] = {}
 
     # -------------------------------------------------------------------------
-    # Primary entry point
+    # Primary entry point — AgentAction (tool calls)
     # -------------------------------------------------------------------------
 
     def intercept(
@@ -119,6 +125,120 @@ class DevMindSandbox:
         return decision
 
     # -------------------------------------------------------------------------
+    # AgentChange entry points — infrastructure & release governance
+    # -------------------------------------------------------------------------
+
+    def intercept_change(
+        self,
+        *,
+        agent: str,
+        change_type: ChangeType,
+        surface: ActionSurface,
+        payload: str,
+        session_id: str | None = None,
+        user: str | None = None,
+        environment: str | None = None,
+        impact: ChangeImpact | None = None,
+        diff_summary: str | None = None,
+        artifact_ref: str | None = None,
+        extra_context: dict[str, Any] | None = None,
+    ) -> GovernanceDecision:
+        """
+        Intercept a structural infrastructure change (Terraform / K8s / Helm)
+        and return a governance decision via infra_engine.evaluate_change().
+
+        Use this for ChangeType.TERRAFORM_*, K8S_MANIFEST, HELM_RELEASE,
+        IAM_CHANGE, SECRET_ROTATION, CONFIG_CHANGE, SCHEMA_MIGRATION.
+
+        For RELEASE_PUBLISH / RELEASE_PROMOTE, use intercept_release() instead
+        — it requires session history for the 70/30 audit weighting.
+        """
+        sid = session_id or str(uuid.uuid4())
+
+        change_impact = impact or ChangeImpact()
+        if change_impact.affects_production is False and environment == "production":
+            change_impact.affects_production = True
+
+        change = AgentChange(
+            action_id=str(uuid.uuid4()),
+            session_id=sid,
+            agent=agent,
+            change_type=change_type,
+            surface=surface,
+            payload=payload,
+            timestamp=datetime.now(timezone.utc),
+            impact=change_impact,
+            context=ActionContext(
+                user=user,
+                environment=environment,
+                extra=extra_context or {},
+            ),
+            diff_summary=diff_summary,
+            artifact_ref=artifact_ref,
+        )
+
+        session = self._get_or_create_session(sid, agent, user)
+        decision = evaluate_change(change)
+
+        self.audit.record_change(change, decision, organization=self.org_id)
+        self._update_session_for_change(session, change, decision)
+
+        return decision
+
+    def intercept_release(
+        self,
+        *,
+        agent: str,
+        version: str,
+        artifact: str,
+        session_id: str,
+        user: str | None = None,
+        environment: str | None = None,
+        change_type: ChangeType = ChangeType.RELEASE_PUBLISH,
+        impact: ChangeImpact | None = None,
+        diff_summary: str | None = None,
+        extra_context: dict[str, Any] | None = None,
+    ) -> GovernanceDecision:
+        """
+        Intercept a release publish/promote and return a governance decision
+        via release_gate.evaluate_release().
+
+        session_id is REQUIRED (not optional) — the release gate's 70% weight
+        comes from this session's accumulated risk profile. A release without
+        session history is evaluated as if the session were clean, which
+        defeats the purpose of this gate.
+        """
+        change_impact = impact or ChangeImpact()
+        if change_impact.affects_production is False and environment == "production":
+            change_impact.affects_production = True
+
+        change = AgentChange(
+            action_id=str(uuid.uuid4()),
+            session_id=session_id,
+            agent=agent,
+            change_type=change_type,
+            surface=ActionSurface.DEPLOYMENT,
+            payload=artifact,
+            timestamp=datetime.now(timezone.utc),
+            impact=change_impact,
+            context=ActionContext(
+                user=user,
+                environment=environment,
+                extra=extra_context or {},
+            ),
+            diff_summary=diff_summary,
+            artifact_ref=version,
+        )
+
+        session = self._get_or_create_session(session_id, agent, user)
+        decision = evaluate_release(change, session=session)
+
+        self.audit.record_change(change, decision, organization=self.org_id)
+        self._update_session_for_change(session, change, decision)
+
+        return decision
+
+    # -------------------------------------------------------------------------
     # Session management
     # -------------------------------------------------------------------------
 
@@ -169,6 +289,70 @@ class DevMindSandbox:
             rp.surfaces_touched.append(s)
 
         # Risk trend
+        if rp.policy_violations >= 5 or rp.peak_score >= 90:
+            rp.risk_trend = RiskTrend.CRITICAL
+            session.state = SessionState.RESTRICTED
+        elif rp.policy_violations >= 3 or rp.cumulative_score >= 60:
+            rp.risk_trend = RiskTrend.RISING
+        elif rp.cumulative_score < 20:
+            rp.risk_trend = RiskTrend.DECLINING
+        else:
+            rp.risk_trend = RiskTrend.STABLE
+
+    def _update_session_for_change(
+        self,
+        session: AgentSession,
+        change: AgentChange,
+        decision: GovernanceDecision,
+    ) -> None:
+        """
+        Mirrors _update_session() for AgentChange events. Updates the same
+        SessionRiskProfile so that intercept() and intercept_change()/
+        intercept_release() contribute to one coherent session history —
+        this is what release_gate's session audit reads from.
+        """
+        from core.types import RiskTrend
+
+        rp = session.risk_profile
+        rp.total_actions += 1
+        session.actions.append(change.action_id)
+
+        if decision.decision == Decision.BLOCK:
+            rp.blocked_actions += 1
+            rp.policy_violations += 1
+        elif decision.decision == Decision.REVIEW:
+            rp.reviewed_actions += 1
+        elif decision.decision == Decision.ESCALATE:
+            rp.escalated_actions += 1
+            rp.policy_violations += 1
+
+        n = rp.total_actions
+        rp.cumulative_score = ((rp.cumulative_score * (n - 1)) + decision.risk_score) / n
+        rp.peak_score = max(rp.peak_score, decision.risk_score)
+
+        s = decision.surface.value
+        if s not in rp.surfaces_touched:
+            rp.surfaces_touched.append(s)
+
+        # Change-specific counters on SessionRiskProfile
+        if change.change_type in (
+            ChangeType.TERRAFORM_PLAN,
+            ChangeType.TERRAFORM_APPLY,
+            ChangeType.IAM_CHANGE,
+        ):
+            rp.infra_changes += 1
+        elif change.change_type in (ChangeType.K8S_MANIFEST, ChangeType.HELM_RELEASE):
+            rp.k8s_changes += 1
+        elif change.change_type in (ChangeType.RELEASE_PUBLISH, ChangeType.RELEASE_PROMOTE):
+            rp.releases_attempted += 1
+            if decision.decision == Decision.BLOCK:
+                rp.releases_blocked += 1
+        elif change.change_type == ChangeType.SECRET_ROTATION:
+            rp.secrets_accessed += 1
+
+        if change.impact.affects_production:
+            rp.production_changes += 1
+
         if rp.policy_violations >= 5 or rp.peak_score >= 90:
             rp.risk_trend = RiskTrend.CRITICAL
             session.state = SessionState.RESTRICTED
