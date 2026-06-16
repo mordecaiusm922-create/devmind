@@ -3,8 +3,15 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-EXECUTABLE_TYPES = {".py", ".js", ".ts", ".go", ".rb", ".java", ".c", ".cpp", ".sh", ".yml", ".yaml", ".toml", ".cfg", ".ini", ".env"}
+EXECUTABLE_TYPES = {".py", ".js", ".ts", ".go", ".rb", ".java", ".c", ".cpp", ".sh", ".yml", ".yaml"}
 DOC_TYPES = {".txt", ".md", ".rst", ".adoc"}
+MANIFEST_RE = re.compile(
+    r"(pyproject\.toml|requirements[^/]*\.txt|package\.json|package-lock\.json|"
+    r"go\.mod|go\.sum|Cargo\.toml|Cargo\.lock|Gemfile|Gemfile\.lock|"
+    r"pom\.xml|build\.gradle|poetry\.lock|setup\.cfg|"
+    r"CHANGES\.md|CHANGELOG\.md|HISTORY\.rst)$",
+    re.I,
+)
 TEST_PATTERNS = re.compile(r"(test_|_test\.|spec\.|\.spec\.|/tests/|/test/)", re.I)
 CI_PATTERNS = re.compile(r"(\.github/|\.gitlab-ci|jenkinsfile|\.circleci|\.travis)", re.I)
 
@@ -40,6 +47,7 @@ def classify_change_surface(files: list[dict[str, Any]], diff: str = "") -> Chan
         ext = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
         extensions.add(ext)
 
+    is_manifest = has_files and all(MANIFEST_RE.search(f.get('filename','') or '') for f in files)
     is_docs = has_files and all(e in DOC_TYPES for e in extensions if e)
     is_test = any(TEST_PATTERNS.search(f.get("filename", "")) for f in files)
     is_ci = any(CI_PATTERNS.search(f.get("filename", "")) for f in files)
@@ -50,6 +58,10 @@ def classify_change_surface(files: list[dict[str, Any]], diff: str = "") -> Chan
 
     negative = []
     risk_multiplier = 1.0
+
+    if is_manifest and not touches_secrets and not touches_auth:
+        negative.append("manifest_only_change")
+        risk_multiplier *= 0.10
 
     if is_docs and not touches_secrets and not touches_auth:
         negative.append("docs_only_change")
@@ -78,7 +90,9 @@ def classify_change_surface(files: list[dict[str, Any]], diff: str = "") -> Chan
     )
     is_payments = bool(re.search(r"(payment|billing|checkout|stripe|invoice|charge)", diff, re.I))
 
-    if is_docs:
+    if is_manifest and not touches_secrets and not touches_auth:
+        surface = "manifest"
+    elif is_docs:
         surface = "documentation"
     elif is_test:
         surface = "tests"
