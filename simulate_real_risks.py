@@ -18,7 +18,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runtime.sandbox import DevMindSandbox
-from core.types import PolicyRule, Decision
+from core.types import (
+    PolicyRule, Decision,
+    ActionSurface, ChangeImpact, ChangeType,
+)
 
 # =============================================================================
 # Colores para consola Windows
@@ -306,6 +309,63 @@ SCENARIOS = [
         "environment": "production",
         "expected": "BLOCK",
     },
+    # -------------------------------------------------------------------------
+    # INFRAESTRUCTURA — AgentChange (Terraform / Kubernetes / Helm)
+    # -------------------------------------------------------------------------
+    {
+        "type": "change",
+        "sector": "Infraestructura",
+        "name": "Terraform con IAM wildcard en producción",
+        "description": "Agente aplica plan Terraform que otorga Action=* Resource=* en prod",
+        "agent": "infra-agent",
+        "change_type": "TERRAFORM_APPLY",
+        "surface": "INFRASTRUCTURE",
+        "payload": "resource aws_iam_policy bad {\n  Action = \"*\"\n  Resource = \"*\"\n}",
+        "environment": "production",
+        "affects_production": True,
+        "expected": "BLOCK",
+    },
+    {
+        "type": "change",
+        "sector": "Infraestructura",
+        "name": "K8s manifest con contenedor privilegiado en prod",
+        "description": "Agente aplica manifest con privileged: true en cluster de producción",
+        "agent": "k8s-agent",
+        "change_type": "K8S_MANIFEST",
+        "surface": "KUBERNETES",
+        "payload": "spec:\n  containers:\n  - name: app\n    securityContext:\n      privileged: true",
+        "environment": "production",
+        "affects_production": True,
+        "expected": "BLOCK",
+    },
+    {
+        "type": "change",
+        "sector": "Infraestructura",
+        "name": "Helm upgrade seguro en staging",
+        "description": "Agente actualiza chart de app en staging sin señales de riesgo",
+        "agent": "helm-agent",
+        "change_type": "HELM_RELEASE",
+        "surface": "KUBERNETES",
+        "payload": "image:\n  tag: v2.1.0\nreplicas: 3",
+        "environment": "staging",
+        "affects_production": False,
+        "expected": "ALLOW",
+    },
+    # -------------------------------------------------------------------------
+    # RELEASE GATE
+    # -------------------------------------------------------------------------
+    {
+        "type": "release",
+        "sector": "SaaS B2B",
+        "name": "Release con credencial hardcodeada en artifact",
+        "description": "Agente publica release cuyo artifact contiene un AWS key",
+        "agent": "release-agent",
+        "version": "v3.1.0",
+        "payload": "Release notes: improvements.\nConfig: AKIAIOSFODNN7EXAMPLE",
+        "environment": "production",
+        "affects_production": True,
+        "expected": "BLOCK",
+    },
 ]
 
 # =============================================================================
@@ -367,14 +427,36 @@ def run_simulation():
             print(f"  {C.DIM}{'─'*60}{C.RESET}")
 
         sid = str(uuid.uuid4())
-        decision = sandbox.intercept(
-            agent=s["agent"],
-            tool=s["tool"],
-            operation=s["operation"],
-            payload=s["payload"],
-            session_id=sid,
-            environment=s["environment"],
-        )
+        s_type = s.get("type", "action")
+
+        if s_type == "change":
+            decision = sandbox.intercept_change(
+                agent=s["agent"],
+                change_type=ChangeType[s["change_type"]],
+                surface=ActionSurface[s["surface"]],
+                payload=s["payload"],
+                session_id=sid,
+                environment=s["environment"],
+                impact=ChangeImpact(affects_production=s.get("affects_production", False)),
+            )
+        elif s_type == "release":
+            decision = sandbox.intercept_release(
+                agent=s["agent"],
+                version=s.get("version", "v0.0.0"),
+                artifact=s["payload"],
+                session_id=sid,
+                environment=s["environment"],
+                impact=ChangeImpact(affects_production=s.get("affects_production", False)),
+            )
+        else:
+            decision = sandbox.intercept(
+                agent=s["agent"],
+                tool=s["tool"],
+                operation=s["operation"],
+                payload=s["payload"],
+                session_id=sid,
+                environment=s["environment"],
+            )
 
         d = decision.decision.value
         expected = s["expected"]
