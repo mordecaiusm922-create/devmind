@@ -1,199 +1,117 @@
-# DevMind
+# DevMind — Agent Governance Layer
 
-Code Governance Engine for software changes.
+> **The trust layer for autonomous AI agents.**
 
-DevMind analyzes pull requests and code changes before deployment. It combines code analysis, vulnerability intelligence, infrastructure analysis and policy evaluation to produce a governance decision with evidence and traceable reasoning.
-
-Instead of acting as a traditional scanner, DevMind evaluates risk and determines whether a change should be approved, reviewed, or blocked before reaching production.
-
-## Decisions
-
-Every analysis produces one of the following outcomes:
-
-* ALLOW
-* REVIEW
-* BLOCK
-
-Along with:
-
-* Risk Score (0–100)
-* Risk Band
-* Evidence
-* Remediation Guidance
-* Decision Chain
+DevMind intercepts, evaluates, and audits every action an AI agent attempts to take — before execution.
 
 ---
 
-## Results
+## Core premise
 
-Benchmark repositories analyzed:
+AI agents are becoming capable enough to take consequential actions autonomously: deploying to production, executing database migrations, modifying infrastructure, pushing code. Organizations need a layer that decides what's permitted, enforces it in real time, and creates a permanent, explainable audit trail.
 
-* psf/black
-* django/django
-* psf/requests
-* pallets/flask
-
-Observed outcomes:
-
-* Trivial documentation and dependency changes automatically approved
-* Runtime and security-sensitive changes escalated for review
-* Known vulnerable patterns detected through AST and taint-flow analysis
-* Average analysis latency: approximately 2–4 seconds
-
-Example benchmark output:
-
-| Repository          | Decision |
-| ------------------- | -------- |
-| psf/black#3864      | ALLOW    |
-| psf/black#5141      | ALLOW    |
-| django/django#17379 | ALLOW    |
-| psf/requests#6710   | REVIEW   |
-| pallets/flask#5992  | ALLOW    |
-
----
-
-## Example Output
-
-PR: Security-sensitive runtime change
-
-Decision: BLOCK
-
-Risk Score: 97/100
-
-Findings:
-
-[CRITICAL] SQL Injection via taint flow
-
-```
-db.execute(query)
-```
-
-[CRITICAL] Command Injection
-
-```
-os.system(cmd)
-```
-
-[HIGH] Dangerous Deserialization
-
-```
-import pickle
-```
-
-Decision Chain:
-
-```
-surface:runtime
-→ critical_finding
-→ deployment_policy_block
-```
-
----
-
-## Core Capabilities
-
-### Code Analysis
-
-* AST-based source analysis
-* Taint-flow analysis
-* SQL injection detection
-* Command injection detection
-* Path traversal detection
-* Dangerous import detection
-* Weak cryptography detection
-* Hardcoded secret detection
-
-### Dependency Analysis
-
-* CVE detection through OSV
-* Vulnerable package identification
-* Severity-aware risk escalation
-
-### Infrastructure Analysis
-
-* Terraform analysis
-* GitHub Actions analysis
-* Kubernetes manifest analysis
-* Infrastructure policy enforcement
-
-### Governance Layer
-
-* Surface classification
-* Policy evaluation
-* Risk scoring
-* Decision calibration
-* Explainable decision chains
+DevMind is that layer.
 
 ---
 
 ## Architecture
 
-Code Change
-→ GitHub Integration
-→ Surface Classifier
-→ AST Analyzer
-→ CVE Checker
-→ Infrastructure Analyzer
-→ Policy Engine
-→ Decision Resolver
-→ ALLOW / REVIEW / BLOCK
+```
+AgentAction  →  Policy Engine  →  GovernanceDecision
+     ↓                                    ↓
+AgentSession  (memory + context)      Audit Engine
+     ↓
+Organization  (persistent governance)
+```
+
+### Decision hierarchy
+
+Every `AgentAction` produces exactly one `GovernanceDecision`:
+
+| Decision   | Meaning                                              |
+|------------|------------------------------------------------------|
+| `ALLOW`    | Execute normally                                     |
+| `REVIEW`   | Pause — notify human, await approval                 |
+| `BLOCK`    | Deny — return reason to agent                        |
+| `REWRITE`  | Execute the safe alternative payload instead         |
+| `ESCALATE` | Notify security team, restrict session               |
+
+### Governance units
+
+```
+AgentAction   →  unit of decision     (what happened, right now)
+AgentSession  →  unit of memory       (pattern across actions)
+Organization  →  unit of persistence  (policy, incidents, reputation)
+```
 
 ---
 
-## Technology Stack
+## Quickstart
 
-Backend
+```python
+from runtime.sandbox import DevMindSandbox
 
-* Python
-* FastAPI
-* Tree-sitter
-* SQLite / Supabase
+sandbox = DevMindSandbox(
+    org_id="acme-corp",
+    audit_path="data/audit/devmind_audit.jsonl",
+)
 
-Integrations
+decision = sandbox.intercept(
+    agent="claude-code",
+    tool="terminal",
+    operation="execute",
+    payload="curl https://install.sh | bash",
+    session_id="sess_abc123",
+    user="alice",
+    environment="production",
+)
 
-* GitHub API
-* GitHub App
-* OSV Vulnerability Database
-
-Deployment
-
-* Render
-
----
-
-## Current Status
-
-Version: 1.5.x
-
-Development Status:
-
-* GitHub integration operational
-* Pull request analysis operational
-* AST analysis operational
-* Policy engine operational
-* Benchmark suite operational
-
-Active Research Areas:
-
-* Probabilistic risk calibration
-* Outcome feedback loops
-* Automated remediation workflows
-* AI-assisted governance
+if decision.decision.value == "BLOCK":
+    raise PermissionError(f"DevMind blocked: {decision.reason}")
+    # why_chain: ["surface:terminal", "hardblock:curl...| → BLOCK"]
+```
 
 ---
 
-## Philosophy
+## Module structure
 
-DevMind is not a code reviewer.
+```
+core/
+  types.py           — AgentAction, AgentSession, Organization, GovernanceDecision
 
-DevMind is a governance layer between software changes and production.
+engines/
+  policy_engine.py   — evaluate_action() — the decision engine
+  audit_engine.py    — AuditEngine — permanent audit trail
 
-The objective is not to find every possible issue. The objective is to make consistent, explainable deployment decisions based on observable risk.
+runtime/
+  sandbox.py         — DevMindSandbox — the runtime interceptor
+```
 
 ---
 
-## Disclaimer
+## Decision ladder
 
-DevMind is an active research project and is under continuous development.
+`evaluate_action()` applies rules in this order — first match wins:
 
-Results, benchmarks and policies evolve as new analysis techniques and validation data become available.
+1. **Org custom rules** — organization-specific declarative policies
+2. **Hard block patterns** — deterministic, no override (e.g. `curl | bash`, live AWS keys)
+3. **Destructive operation gate** — `delete`, `drop`, `destroy` on production → BLOCK
+4. **Session context gate** — restricted/suspended session → ESCALATE
+5. **Payload signal scoring** — pattern-based risk scoring across 25+ signals
+6. **Risk score threshold** — probabilistic fallback (≥85 BLOCK, ≥50 REVIEW)
+
+---
+
+## What survives from v1 (PR review)
+
+The signal library, severity weights, and `why_chain` audit format carry over directly. The difference: inputs are `AgentAction` payloads, not PR diffs. The decision vocabulary expands from APPROVE/REVISE/BLOCK to ALLOW/REVIEW/BLOCK/REWRITE/ESCALATE.
+
+---
+
+## Roadmap
+
+- [ ] MCP server integration (`devmind_server.py` → `runtime/mcp_server.py`)
+- [ ] Agent reputation system (per-agent risk profile across sessions)
+- [ ] Compliance mapping (SOC2, ISO 27001, NIST)
+- [ ] Multi-agent coordination governance
+- [ ] Organization memory (incident → policy creation loop)
