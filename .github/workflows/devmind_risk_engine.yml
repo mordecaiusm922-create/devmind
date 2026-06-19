@@ -22,8 +22,8 @@ jobs:
       - name: Install dependencies
         run: pip install pytest
 
-      - name: Run governance invariant tests
-        run: python -m pytest tests/test_policy_engine.py -v --tb=short
+      - name: Run governance invariant tests (178 tests)
+        run: python -m pytest tests/ -v --tb=short
 
-      - name: Run real-world risk simulation
+      - name: Run real-world risk simulation (28 scenarios)
         run: python simulate_real_risks.py

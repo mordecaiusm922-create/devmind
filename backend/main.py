@@ -53,7 +53,7 @@ from prob_engine import (
 )
 from evaluate import evaluate_payload
 from safety_flow import SafetyFlowRequest, run_safety_flow
-from sandbox import run_sandbox
+from runtime.sandbox import run_sandbox
 from infra_analyzer import analyze_infra, InfraAnalysisResult
 from cve_checker import check_cves
 from parser import parse_pr_file
@@ -581,7 +581,7 @@ def _score_to_merge_state(level: str) -> str:
 
 
 def _build_pr_comment(result: dict, sf_result: dict | None = None) -> str:
-    from policy_engine import policy_decision, detect_surface
+    from engines.policy_engine import policy_decision, detect_surface
     unified_risk = result.get("risk", {})
     unified_decision = result.get("decision", {})
     s = result.get("summary", {})
@@ -1110,7 +1110,7 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
         response["ast_findings"] = []
     # Pre-compute policy override ANTES del unified decision
     try:
-        from policy_engine import policy_decision as _pd_early
+        from engines.policy_engine import policy_decision as _pd_early
         _files_early = pr_data.get('files', []) or []
         _prompt_early = pr_data.get('title', '') + ' ' + pr_data.get('body', '')
         _intent_early = response.get('intent', {}).get('label', 'general_fix') if isinstance(response.get('intent'), dict) else 'general_fix'
@@ -1124,7 +1124,7 @@ def _pipeline_sync(repo: str, pr_number: int, trace_id: str) -> dict[str, Any]:
 
     # Policy engine - agrega why_chain y surface al response
     try:
-        from policy_engine import policy_decision, detect_surface
+        from engines.policy_engine import policy_decision, detect_surface
         _files = pr_data.get('files', []) or []
         _prompt = pr_data.get('title', '') + ' ' + pr_data.get('body', '')
         _mode = 'secure'
@@ -1982,7 +1982,7 @@ app.add_middleware(
 @app.post("/review", dependencies=[Depends(_require_api_key)])
 async def review_endpoint(payload: dict):
     from infra_analyzer import analyze_infra
-    from policy_engine import policy_decision
+    from engines.policy_engine import policy_decision
     files = list(payload.get("files", []) or [])
     prompt = str(payload.get("prompt", ""))
     mode = str(payload.get("mode", "secure"))
@@ -2036,7 +2036,7 @@ async def review_endpoint(payload: dict):
 
 @app.post("/sandbox", dependencies=[Depends(_require_api_key)])
 async def sandbox_endpoint(payload: dict):
-    from sandbox import sandbox_candidate
+    from runtime.sandbox import sandbox_candidate
     code = (
         payload.get("code")
         or payload.get("candidate")
@@ -2220,7 +2220,7 @@ def _handle_push_event(push_data: dict, installation_id: int, trace_id: str) -> 
                 infra_score = max(infra_score, 90)
         except Exception as _ce:
             log.warning("push_cve_failed", extra={"exc": str(_ce), "trace_id": trace_id})
-        from policy_engine import policy_decision
+        from engines.policy_engine import policy_decision
         _policy = policy_decision(prompt=prompt, files=enriched_files, mode="secure",
             intent_label="general_fix", infra_block=infra_block, infra_score=infra_score, safety_action="")
         action = _policy.get("decision", "REVIEW")
