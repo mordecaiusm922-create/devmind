@@ -1,0 +1,285 @@
+"""
+api.py -- DevMind Governance API
+FastAPI wrapper over the governance engines.
+
+Endpoints:
+    POST /evaluate          -- AgentAction -> GovernanceDecision
+    POST /evaluate-change   -- AgentChange (Terraform/K8s/Helm) -> GovernanceDecision
+    POST /release-gate      -- SessionAudit -> ReleaseDecision
+    GET  /health            -- liveness check
+    GET  /simulate          -- run 28 real-world scenarios, return report
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+from core.types import (
+    AgentAction,
+    AgentChange,
+    AgentSession,
+    ActionContext,
+    ActionSurface,
+    BlastRadius,
+    ChangeImpact,
+    ChangeType,
+    Decision,
+    GovernanceDecision,
+    Organization,
+    SessionRiskProfile,
+    SessionState,
+)
+from engines.policy_engine import evaluate_action
+from engines.infra_engine import evaluate_change
+from engines.release_gate import evaluate_release, SessionAudit, ArtifactScan
+
+# ── App ───────────────────────────────────────────────────────────────────────
+
+app = FastAPI(
+    title="DevMind Governance API",
+    description="Runtime governance for autonomous AI agents.",
+    version="1.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── Request schemas ───────────────────────────────────────────────────────────
+
+class EvaluateActionRequest(BaseModel):
+    agent_id: str                           # e.g. "cursor-agent", "claude-code"
+    tool: str                               # e.g. "database", "filesystem", "cloud"
+    operation: str                          # e.g. "execute", "delete", "write"
+    payload: str                            # raw action content
+    session_id: Optional[str] = None
+    org_id: Optional[str] = None
+
+class EvaluateChangeRequest(BaseModel):
+    agent_id: str
+    change_type: str                        # DELETE, CREATE, MODIFY, DEPLOY, SCALE
+    surface: str                            # terraform, kubernetes, helm, database
+    payload: str                            # raw change content / diff summary
+    affects_production: bool = False
+    blast_radius: Optional[str] = None     # process, service, cluster, account, org
+    session_id: Optional[str] = None
+    diff_summary: Optional[str] = None
+
+class ReleaseGateRequest(BaseModel):
+    agent_id: str
+    session_id: Optional[str] = None
+    # Session audit
+    total_actions: int = 0
+    violations: int = 0
+    blocks: int = 0
+    secrets_accessed: int = 0
+    production_changes: int = 0
+    infra_changes: int = 0
+    # Artifact scan
+    artifact_name: Optional[str] = None
+    has_secrets: bool = False
+    has_critical_vulnerabilities: bool = False
+    targets_production: bool = False
+
+class DecisionResponse(BaseModel):
+    decision: str
+    risk_score: float
+    why: List[str]
+    escalation_required: bool
+    audit_id: str
+    agent_id: str
+    timestamp: str
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _make_session(agent_id: str, session_id: Optional[str], org_id: Optional[str]) -> AgentSession:
+    return AgentSession(
+        session_id=session_id or str(uuid.uuid4()),
+        agent=agent_id,
+        organization=org_id or "default",
+        user=None,
+        started_at=datetime.now(timezone.utc),
+    )
+
+def _decision_response(decision: GovernanceDecision, agent_id: str) -> DecisionResponse:
+    return DecisionResponse(
+        decision=decision.decision.value,
+        risk_score=float(decision.risk_score),
+        why=decision.why_chain,
+        escalation_required=(decision.decision.value in ("ESCALATE", "BLOCK")),
+        audit_id=decision.action_id,
+        agent_id=agent_id,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "service": "devmind-governance-api", "version": "1.0.0"}
+
+
+@app.post("/evaluate", response_model=DecisionResponse)
+def evaluate(req: EvaluateActionRequest):
+    """
+    Evaluate an AgentAction against the policy engine.
+
+    Example (PocketOS scenario):
+        {
+            "agent_id": "cursor-agent",
+            "tool": "cloud",
+            "operation": "delete_volume",
+            "payload": "railway-production-volume",
+            "affects_production": true
+        }
+    """
+    session_id = req.session_id or str(uuid.uuid4())
+
+    action = AgentAction(
+        action_id=str(uuid.uuid4()),
+        session_id=session_id,
+        agent=req.agent_id,
+        tool=req.tool,
+        operation=req.operation,
+        payload=req.payload,
+        timestamp=datetime.now(timezone.utc),
+    )
+    session = _make_session(req.agent_id, session_id, req.org_id)
+
+    try:
+        decision = evaluate_action(action, session)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return _decision_response(decision, req.agent_id)
+
+
+@app.post("/evaluate-change", response_model=DecisionResponse)
+def evaluate_infra_change(req: EvaluateChangeRequest):
+    """
+    Evaluate an infrastructure change (Terraform, K8s, Helm, DB) against the infra engine.
+
+    Example (PocketOS scenario):
+        {
+            "agent_id": "cursor-agent",
+            "change_type": "DELETE",
+            "surface": "database",
+            "payload": "deleteVolume railway-production-volume",
+            "affects_production": true,
+            "blast_radius": "org"
+        }
+    """
+    try:
+        change_type = ChangeType(req.change_type.lower())
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid change_type: {req.change_type}. Valid: {[e.value for e in ChangeType]}"
+        )
+
+    try:
+        surface = ActionSurface(req.surface.lower())
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid surface: {req.surface}. Valid: {[e.value for e in ActionSurface]}"
+        )
+
+    impact = ChangeImpact()
+    if req.affects_production:
+        impact.affects_production = True
+    if req.blast_radius:
+        try:
+            impact.blast_radius = BlastRadius(req.blast_radius.lower())
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid blast_radius: {req.blast_radius}. Valid: {[e.value for e in BlastRadius]}"
+            )
+
+    change = AgentChange(
+        action_id=str(uuid.uuid4()),
+        session_id=req.session_id or str(uuid.uuid4()),
+        agent=req.agent_id,
+        change_type=change_type,
+        surface=surface,
+        payload=req.payload,
+        timestamp=datetime.now(timezone.utc),
+        impact=impact,
+        diff_summary=req.diff_summary,
+    )
+
+    try:
+        decision = evaluate_change(change)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return _decision_response(decision, req.agent_id)
+
+
+@app.post("/release-gate", response_model=DecisionResponse)
+def release_gate(req: ReleaseGateRequest):
+    """Run the release gate against a session audit + artifact scan."""
+    session_audit = SessionAudit(
+        session_id=req.session_id or str(uuid.uuid4()),
+        agent_id=req.agent_id,
+        total_actions=req.total_actions,
+        violations=req.violations,
+        blocks=req.blocks,
+        secrets_accessed=req.secrets_accessed,
+        production_changes=req.production_changes,
+        infra_changes=req.infra_changes,
+    )
+    artifact = ArtifactScan(
+        artifact_name=req.artifact_name or "unnamed",
+        has_secrets=req.has_secrets,
+        has_critical_vulnerabilities=req.has_critical_vulnerabilities,
+        targets_production=req.targets_production,
+    )
+
+    try:
+        decision = evaluate_release(session_audit, artifact)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return _decision_response(decision, req.agent_id)
+
+
+@app.get("/simulate")
+def simulate():
+    """Run the 28 real-world risk scenarios and return the full report."""
+    import subprocess
+    import sys
+    import json as _json
+    import pathlib
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "simulate_real_risks.py"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        report_path = pathlib.Path("data/audit/simulation_summary.json")
+        if report_path.exists():
+            return JSONResponse(
+                content=_json.loads(report_path.read_text(encoding="utf-8"))
+            )
+        return JSONResponse(content={
+            "status": "ok",
+            "stdout": result.stdout[-3000:] if result.stdout else "",
+            "returncode": result.returncode,
+        })
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Simulation timed out")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
