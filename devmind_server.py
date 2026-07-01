@@ -578,5 +578,13 @@ def session_status() -> str:
 # =============================================================================
 
 if __name__ == "__main__":
-    print(f"[DEVMIND] Running on stdio | org={ORG_ID} | env={ENVIRONMENT}", flush=True)
-    mcp.run(transport="stdio")
+    transport = os.getenv("DEVMIND_MCP_TRANSPORT", "stdio")
+    if transport == "streamable-http":
+        port = int(os.getenv("PORT", "8000"))
+        mcp.settings.host = "0.0.0.0"
+        mcp.settings.port = port
+        print(f"[DEVMIND] Running on streamable-http | org={ORG_ID} | env={ENVIRONMENT} | port={port}", flush=True)
+        mcp.run(transport="streamable-http")
+    else:
+        print(f"[DEVMIND] Running on stdio | org={ORG_ID} | env={ENVIRONMENT}", flush=True)
+        mcp.run(transport="stdio")
