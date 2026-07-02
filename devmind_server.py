@@ -58,7 +58,16 @@ from core.types import ActionSurface, ChangeImpact, ChangeType, Decision
 
 print("[DEVMIND] Governance MCP Server starting...", flush=True)
 
-mcp = FastMCP("DevMind Governance")
+from mcp.server.transport_security import TransportSecuritySettings
+
+mcp = FastMCP(
+    "DevMind Governance",
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=["devmind-mcp.onrender.com", "localhost", "127.0.0.1"],
+        allowed_origins=["https://devmind-mcp.onrender.com", "http://localhost", "http://127.0.0.1"],
+    ),
+)
 
 ORG_ID      = os.getenv("DEVMIND_ORG_ID", "devmind-default")
 AUDIT_LOG   = os.getenv("DEVMIND_AUDIT_LOG", "data/audit/devmind_audit.jsonl")
