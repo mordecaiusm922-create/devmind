@@ -5,6 +5,7 @@
 DevMind intercepts, evaluates, and audits every action an AI agent attempts to take — before it executes. Deterministic policy engine. No LLM in the decision path. Sub-50ms response time.
 
 **Live API:** [devmind-2cej.onrender.com/health](https://devmind-2cej.onrender.com/health)
+**Live MCP server:** [devmind-mcp.onrender.com/mcp](https://devmind-mcp.onrender.com/mcp)
 **178 invariant tests passing · CI green on every push**
 
 ---
@@ -88,9 +89,68 @@ Every evaluation produces exactly one `GovernanceDecision`:
 
 ---
 
-## Live API
+## Connect via remote MCP (no local install required)
 
-Deployed at [`devmind-2cej.onrender.com`](https://devmind-2cej.onrender.com), running the exact engine in this repo.
+DevMind runs as a remote MCP server. Any MCP-compatible agent — Claude Desktop, Cursor, or any client supporting the Model Context Protocol — can connect directly over HTTP, with no local Python setup.
+
+**Live MCP endpoint:** `https://devmind-mcp.onrender.com/mcp`
+
+### Claude Desktop
+
+Add to your MCP settings (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "devmind": {
+      "url": "https://devmind-mcp.onrender.com/mcp",
+      "transport": "streamable-http"
+    }
+  }
+}
+```
+
+### Cursor
+
+Add to `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "devmind": {
+      "url": "https://devmind-mcp.onrender.com/mcp"
+    }
+  }
+}
+```
+
+Once connected, every `execute_command`, `write_file`, `delete_file`, `git_operation`, `http_request`, `db_query`, and `deploy` call your agent makes is evaluated by DevMind's policy engine before execution. `session_status` lets you inspect the current session's accumulated risk profile at any point.
+
+### Run it locally instead
+
+If you'd rather run the MCP server on your own machine (stdio transport, the default):
+
+```json
+{
+  "mcpServers": {
+    "devmind": {
+      "command": "python",
+      "args": ["/path/to/devmind_server.py"],
+      "env": {
+        "DEVMIND_ORG_ID": "your-org",
+        "DEVMIND_AUDIT_LOG": "data/audit/devmind_audit.jsonl",
+        "DEVMIND_ENV": "production"
+      }
+    }
+  }
+}
+```
+
+---
+
+## Live API (HTTP)
+
+Deployed at [`devmind-2cej.onrender.com`](https://devmind-2cej.onrender.com), running the exact engine in this repo. Useful for CI pipelines, scripts, or anything that isn't an MCP client.
 
 | Endpoint            | Method | Purpose                                                |
 |----------------------|--------|---------------------------------------------------------|
@@ -136,12 +196,18 @@ python -m pytest tests/ -v          # 178 tests, deterministic, no mocks
 python simulate_real_risks.py       # 28 real-world scenarios
 ```
 
-Run the API locally:
+Run the HTTP API locally:
 
 ```bash
-pip install fastapi uvicorn
 uvicorn api:app --port 8000
 # → http://localhost:8000/docs for interactive Swagger UI
+```
+
+Run the MCP server locally:
+
+```bash
+python devmind_server.py
+# stdio transport by default — connect via claude_desktop_config.json
 ```
 
 Call the engine directly from Python:
@@ -194,6 +260,7 @@ tests/
   test_release_gate.py  — 178 invariant tests total
 
 api.py                  — FastAPI wrapper exposing all three engines over HTTP
+devmind_server.py        — MCP server exposing DevMind as agent-callable tools
 simulate_real_risks.py  — 28 real-world scenarios across fintech, healthcare,
                            SaaS, infrastructure, and supply chain
 ```
@@ -246,6 +313,7 @@ def test_org_blast_radius_always_escalates():
 
 ## Roadmap
 
+- [x] Remote MCP server (`devmind-mcp.onrender.com`)
 - [ ] PyPI package + CLI (`pip install devmind-agent`, `devmind serve`)
 - [ ] GitHub Action (`devmind-action`) — intercept agent PRs in CI/CD pipelines
 - [ ] Kubernetes Admission Webhook — `infra_engine` enforced at the cluster level
@@ -253,3 +321,12 @@ def test_org_blast_radius_always_escalates():
 - [ ] Compliance mapping (SOC2, ISO 27001, NIST AI RMF)
 - [ ] Governance dashboard — visualize session risk, blocked actions, audit trail
 
+---
+
+## Contributing
+
+DevMind is open source and early. Issues, PRs, and feedback from anyone running agents against real infrastructure are welcome — that's exactly the signal this project needs most right now.
+
+**GitHub:** [github.com/mordecaiusm922-create/devmind](https://github.com/mordecaiusm922-create/devmind)
+**Live API:** [devmind-2cej.onrender.com](https://devmind-2cej.onrender.com/health)
+**Live MCP:** [devmind-mcp.onrender.com/mcp](https://devmind-mcp.onrender.com/mcp)
