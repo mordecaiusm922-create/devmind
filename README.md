@@ -323,9 +323,11 @@ def test_org_blast_radius_always_escalates():
 
 ---
 
-## Contributing
+## About this repo
 
-DevMind is open source and early. Issues, PRs, and feedback from anyone running agents against real infrastructure are welcome — that's exactly the signal this project needs most right now.
+The core governance engine is open source so you can audit exactly how decisions are made — no black box, no trust-us. The code here is the same code running in production behind the live API and MCP server above.
+
+This is not a community-governed project. Feedback and bug reports on real-world usage are genuinely valuable and welcome — that's the signal that matters most right now. Pull requests to the core engines are not the intended contribution path.
 
 **GitHub:** [github.com/mordecaiusm922-create/devmind](https://github.com/mordecaiusm922-create/devmind)
 **Live API:** [devmind-2cej.onrender.com](https://devmind-2cej.onrender.com/health)
