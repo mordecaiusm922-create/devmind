@@ -589,11 +589,33 @@ def session_status() -> str:
 if __name__ == "__main__":
     transport = os.getenv("DEVMIND_MCP_TRANSPORT", "stdio")
     if transport == "streamable-http":
+        import uvicorn
+        from starlette.middleware.base import BaseHTTPMiddleware
+        from starlette.responses import JSONResponse
+
+        DEVMIND_MCP_TOKEN = os.getenv("DEVMIND_MCP_TOKEN")
+
+        class TokenAuthMiddleware(BaseHTTPMiddleware):
+            async def dispatch(self, request, call_next):
+                if DEVMIND_MCP_TOKEN:
+                    auth_header = request.headers.get("authorization", "")
+                    expected = f"Bearer {DEVMIND_MCP_TOKEN}"
+                    if auth_header != expected:
+                        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+                return await call_next(request)
+
         port = int(os.getenv("PORT", "8000"))
         mcp.settings.host = "0.0.0.0"
         mcp.settings.port = port
-        print(f"[DEVMIND] Running on streamable-http | org={ORG_ID} | env={ENVIRONMENT} | port={port}", flush=True)
-        mcp.run(transport="streamable-http")
+
+        app = mcp.streamable_http_app()
+        if DEVMIND_MCP_TOKEN:
+            app.add_middleware(TokenAuthMiddleware)
+            print(f"[DEVMIND] Running on streamable-http (AUTHENTICATED) | org={ORG_ID} | env={ENVIRONMENT} | port={port}", flush=True)
+        else:
+            print(f"[DEVMIND] WARNING: Running on streamable-http WITHOUT AUTH | org={ORG_ID} | env={ENVIRONMENT} | port={port}", flush=True)
+
+        uvicorn.run(app, host="0.0.0.0", port=port)
     else:
         print(f"[DEVMIND] Running on stdio | org={ORG_ID} | env={ENVIRONMENT}", flush=True)
         mcp.run(transport="stdio")
