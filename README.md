@@ -95,6 +95,8 @@ DevMind runs as a remote MCP server. Any MCP-compatible agent — Claude Desktop
 
 **Live MCP endpoint:** `https://devmind-mcp.onrender.com/mcp`
 
+The remote server requires a bearer token — it evaluates real tool calls (`execute_command`, `write_file`, `delete_file`, `db_query`, `deploy`), so it is not left open to anonymous requests. Request access or run your own instance using the local setup below.
+
 ### Claude Desktop
 
 Add to your MCP settings (`claude_desktop_config.json`):
@@ -104,7 +106,10 @@ Add to your MCP settings (`claude_desktop_config.json`):
   "mcpServers": {
     "devmind": {
       "url": "https://devmind-mcp.onrender.com/mcp",
-      "transport": "streamable-http"
+      "transport": "streamable-http",
+      "headers": {
+        "Authorization": "Bearer YOUR_DEVMIND_MCP_TOKEN"
+      }
     }
   }
 }
@@ -118,13 +123,18 @@ Add to `.cursor/mcp.json`:
 {
   "mcpServers": {
     "devmind": {
-      "url": "https://devmind-mcp.onrender.com/mcp"
+      "url": "https://devmind-mcp.onrender.com/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_DEVMIND_MCP_TOKEN"
+      }
     }
   }
 }
 ```
 
 Once connected, every `execute_command`, `write_file`, `delete_file`, `git_operation`, `http_request`, `db_query`, and `deploy` call your agent makes is evaluated by DevMind's policy engine before execution. `session_status` lets you inspect the current session's accumulated risk profile at any point.
+
+Requests without a valid token receive `401 Unauthorized` before reaching the governance engine.
 
 ### Run it locally instead
 
