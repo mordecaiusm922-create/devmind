@@ -1,908 +1,534 @@
-import { useState, useEffect, useRef } from "react";
-import { supabase } from "./supabase";
+import React, { useMemo, useState } from "react";
+import { motion } from "framer-motion";
+import {
+  Rocket,
+  Shield,
+  Orbit,
+  TerminalSquare,
+  Database,
+  Layers3,
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  ArrowRight,
+  Cpu,
+  Lock,
+  GitBranch,
+  OrbitIcon,
+  Satellite,
+  Loader2,
+} from "lucide-react";
 
-// ─── Design tokens ────────────────────────────────────────────────────────────
 const C = {
-  bg:       "#07090a",
-  bg1:      "#0f1112",
-  bg2:      "#161a1b",
-  bg3:      "#1d2124",
-  border:   "#2a2d30",
-  borderY:  "rgba(226,255,93,0.2)",
-  yellow:   "#e2ff5d",
-  yellowDim:"rgba(226,255,93,0.08)",
-  yellowGlow:"rgba(226,255,93,0.15)",
-  red:      "#ff4545",
-  redDim:   "rgba(255,69,69,0.09)",
-  orange:   "#ff8c42",
-  blue:     "#5b9cf6",
-  green:    "#4ade80",
-  text:     "#f0f0f0",
-  muted:    "#888d93",
-  faint:    "#3d4248",
-  mono:     "'IBM Plex Mono', 'Fira Code', 'JetBrains Mono', monospace",
+  bg: "#05060a",
+  panel: "rgba(10,14,22,0.86)",
+  panel2: "rgba(13,18,28,0.96)",
+  border: "rgba(255,255,255,0.10)",
+  border2: "rgba(120,180,255,0.18)",
+  text: "#eef4ff",
+  muted: "#93a6c8",
+  dim: "#64728f",
+  blue: "#74c0ff",
+  cyan: "#49f1ff",
+  green: "#58f7b0",
+  yellow: "#ffd46a",
+  red: "#ff6f7d",
+  glow: "rgba(73,241,255,0.16)",
 };
 
-const DEC = {
-  BLOCK:    { color: C.red,    bg: C.redDim,                       border: "rgba(255,69,69,0.25)"    },
-  ESCALATE: { color: C.orange, bg: "rgba(255,140,66,0.09)",        border: "rgba(255,140,66,0.25)"   },
-  REVIEW:   { color: C.yellow, bg: C.yellowDim,                    border: C.borderY                 },
-  ALLOW:    { color: C.green,  bg: "rgba(74,222,128,0.09)",        border: "rgba(74,222,128,0.25)"   },
+const API_BASE = "https://devmind-2cej.onrender.com";
+
+// Each scenario hits the REAL live API. Nothing here is simulated —
+// the decision, risk_score, and why-chain shown are whatever the
+// production engine actually returns at the moment you click "Run".
+const SCENARIOS = [
+  {
+    id: "iam-wildcard",
+    title: "IAM wildcard policy",
+    surface: "Terraform",
+    agent: "Codex",
+    actionLabel: "apply aws_iam_policy",
+    endpoint: "/evaluate-change",
+    body: {
+      agent_id: "codex-agent",
+      change_type: "terraform_apply",
+      surface: "infrastructure",
+      payload: 'Action: "*" Resource: "*" Effect: Allow',
+    },
+  },
+  {
+    id: "privileged-k8s",
+    title: "Privileged container manifest",
+    surface: "Kubernetes",
+    agent: "Claude Code",
+    actionLabel: "kubectl apply privileged pod",
+    endpoint: "/evaluate-change",
+    body: {
+      agent_id: "claude-code-agent",
+      change_type: "k8s_manifest",
+      surface: "kubernetes",
+      payload: "privileged: true\nhostNetwork: true",
+    },
+  },
+  {
+    id: "pocketos-blast-radius",
+    title: "Production volume destroy (PocketOS scenario)",
+    surface: "Terraform",
+    agent: "Cursor",
+    actionLabel: "terraform apply -destroy",
+    endpoint: "/evaluate-change",
+    body: {
+      agent_id: "cursor-agent",
+      change_type: "terraform_apply",
+      surface: "infrastructure",
+      payload: "production volume destroy",
+      affects_production: true,
+      blast_radius: "org",
+    },
+  },
+  {
+    id: "safe-staging",
+    title: "Staging deployment",
+    surface: "Deployment",
+    agent: "Codex",
+    actionLabel: "deploy staging service",
+    endpoint: "/evaluate",
+    body: {
+      agent_id: "codex-agent",
+      tool: "deployment",
+      operation: "deploy",
+      payload: "deploy staging-service to staging environment",
+    },
+  },
+];
+
+// The MCP tools actually exposed by devmind_server.py — verified against source.
+const TOOLS = [
+  ["execute_command", "Run a shell command (terminal surface)"],
+  ["read_file", "Read a file (filesystem surface)"],
+  ["write_file", "Write a file (filesystem surface)"],
+  ["delete_file", "Delete a file (filesystem surface)"],
+  ["git_operation", "Git commands (git surface)"],
+  ["http_request", "Outbound HTTP (network surface)"],
+  ["db_query", "Database query (database surface)"],
+  ["deploy", "Deployment action (deployment surface)"],
+  ["session_status", "Inspect current session governance state"],
+];
+
+const toneMap = {
+  blue: [C.blue, "rgba(116,192,255,0.12)"],
+  cyan: [C.cyan, "rgba(73,241,255,0.12)"],
+  green: [C.green, "rgba(88,247,176,0.12)"],
+  yellow: [C.yellow, "rgba(255,212,106,0.12)"],
+  red: [C.red, "rgba(255,111,125,0.12)"],
+  dim: [C.muted, "rgba(147,166,200,0.08)"],
 };
 
-// ─── Atoms ────────────────────────────────────────────────────────────────────
-const Mono = ({ children, style }) => (
-  <span style={{ fontFamily: C.mono, ...style }}>{children}</span>
-);
-
-function DecBadge({ d, size = 11 }) {
-  const m = DEC[d] || DEC.ALLOW;
+function Pill({ children, tone = "blue" }) {
+  const [fg, bg] = toneMap[tone] || toneMap.blue;
   return (
-    <span style={{
-      display: "inline-flex", alignItems: "center", gap: 5,
-      padding: "3px 9px", borderRadius: 4,
-      background: m.bg, border: `1px solid ${m.border}`,
-      color: m.color, fontFamily: C.mono,
-      fontSize: size, fontWeight: 700, letterSpacing: "0.07em", whiteSpace: "nowrap",
-    }}>
-      <span style={{ width: 5, height: 5, borderRadius: "50%", background: m.color, flexShrink: 0 }} />
-      {d}
+    <span
+      className="inline-flex items-center rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]"
+      style={{ color: fg, background: bg, borderColor: "rgba(255,255,255,0.12)" }}
+    >
+      {children}
     </span>
   );
 }
 
-// ─── Interactive intercept demo ───────────────────────────────────────────────
-const SCENARIOS = [
-  {
-    id: "iam",
-    label: "IAM wildcard",
-    agent: "claude-code",
-    tool: "apply_terraform",
-    params: { resource: "aws_iam_policy", Action: '"*"', Resource: '"*"' },
-    decision: "BLOCK",
-    reason: "iam_wildcard_action + iam_wildcard_resource — hard block, no override",
-    blast_radius: "ORG",
-    risk_score: 97,
-    surface: "terraform",
-  },
-  {
-    id: "k8s",
-    label: "Privileged pod",
-    agent: "codex",
-    tool: "kubectl_apply",
-    params: { kind: "Pod", privileged: "true", hostNetwork: "true" },
-    decision: "BLOCK",
-    reason: "privileged_container + hostNetwork — blast radius CLUSTER, production signal",
-    blast_radius: "CLUSTER",
-    risk_score: 91,
-    surface: "kubernetes",
-  },
-  {
-    id: "secret",
-    label: "Secret in release",
-    agent: "cursor",
-    tool: "release_gate",
-    params: { artifact: "app-v2.1.tar.gz", aws_key: "AKIAIOSFODNN7EXAMPLE" },
-    decision: "BLOCK",
-    reason: "hardcoded_secret in artifact — intercept_release() fired before deployment",
-    blast_radius: "SERVICE",
-    risk_score: 88,
-    surface: "release",
-  },
-  {
-    id: "session",
-    label: "Session accumulation",
-    agent: "claude-code",
-    tool: "release_gate",
-    params: { artifact: "api-v3.0.tar.gz", secrets_accessed: 1, prod_changes: 2 },
-    decision: "BLOCK",
-    reason: "session_risk_score=78 ≥ 70 — session history triggers release block regardless of clean artifact",
-    blast_radius: "SERVICE",
-    risk_score: 78,
-    surface: "release",
-  },
-  {
-    id: "safe",
-    label: "Safe deploy",
-    agent: "claude-code",
-    tool: "kubectl_apply",
-    params: { kind: "Deployment", image: "app:v1.2.3", replicas: 2, env: "staging" },
-    decision: "ALLOW",
-    reason: "no critical signals, blast radius FILE, staging environment — action executes",
-    blast_radius: "FILE",
-    risk_score: 8,
-    surface: "kubernetes",
-  },
-];
-
-function InterceptDemo() {
-  const [active, setActive] = useState(0);
-  const [phase, setPhase] = useState("idle"); // idle | intercepting | decided
-  const [logLines, setLogLines] = useState([]);
-  const logRef = useRef(null);
-  const sc = SCENARIOS[active];
-
-  const surfColor = { terraform: C.orange, kubernetes: C.blue, release: C.yellow, file: C.muted, git: C.muted };
-
-  const run = (sc) => {
-    setPhase("intercepting");
-    setLogLines([]);
-
-    const lines = [
-      { t: 80,  text: `→ intercept() called`, color: C.muted },
-      { t: 180, text: `  agent: ${sc.agent}`, color: C.muted },
-      { t: 280, text: `  tool:  ${sc.tool}`, color: C.muted },
-      { t: 400, text: `  surface: ${sc.surface}`, color: surfColor[sc.surface] || C.muted },
-      { t: 560, text: `→ policy_engine.evaluate()`, color: C.text },
-      { t: 720, text: `  blast_radius: ${sc.blast_radius}`, color: sc.blast_radius === "ORG" || sc.blast_radius === "CLUSTER" ? C.orange : C.muted },
-      { t: 880, text: `  risk_score:   ${sc.risk_score}`, color: sc.risk_score >= 70 ? C.red : sc.risk_score >= 30 ? C.orange : C.green },
-      { t: 1060, text: `→ decision: ${sc.decision}`, color: DEC[sc.decision]?.color || C.text },
-      { t: 1220, text: `  reason: ${sc.reason}`, color: C.muted },
-      { t: 1380, text: `→ AuditEngine.write() [SHA-256]`, color: C.faint },
-      { t: 1520, text: `  ✓ written to devmind_audit.jsonl`, color: C.faint },
-    ];
-
-    lines.forEach(({ t, text, color }) => {
-      setTimeout(() => {
-        setLogLines(prev => [...prev, { text, color, id: t }]);
-        if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-      }, t);
-    });
-
-    setTimeout(() => setPhase("decided"), 1600);
-  };
-
-  const select = (i) => {
-    setActive(i);
-    setPhase("idle");
-    setLogLines([]);
-  };
-
+function Metric({ value, label }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-      {/* Left: scenario picker + agent action */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {/* Scenario tabs */}
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {SCENARIOS.map((s, i) => (
-            <button key={s.id} onClick={() => select(i)} style={{
-              padding: "5px 12px", borderRadius: 5, fontSize: 11, cursor: "pointer",
-              fontFamily: C.mono, fontWeight: active === i ? 700 : 400,
-              background: active === i ? C.yellowDim : "transparent",
-              border: `1px solid ${active === i ? C.borderY : C.border}`,
-              color: active === i ? C.yellow : C.muted,
-              transition: "all 0.12s",
-            }}>{s.label}</button>
-          ))}
-        </div>
-
-        {/* Agent action card */}
-        <div style={{
-          background: C.bg1, border: `1px solid ${C.border}`,
-          borderRadius: 10, overflow: "hidden", flex: 1,
-        }}>
-          <div style={{
-            padding: "10px 16px", borderBottom: `1px solid ${C.border}`,
-            background: C.bg2, display: "flex", alignItems: "center", gap: 10,
-          }}>
-            <div style={{ display: "flex", gap: 5 }}>
-              {[C.red, C.yellow, C.green].map(c => (
-                <span key={c} style={{ width: 10, height: 10, borderRadius: "50%", background: c, opacity: 0.6 }} />
-              ))}
-            </div>
-            <Mono style={{ fontSize: 11, color: C.faint, flex: 1, textAlign: "center" }}>
-              {sc.agent} — tool call
-            </Mono>
-          </div>
-          <div style={{ padding: "16px 18px", fontFamily: C.mono, fontSize: 12, lineHeight: 2 }}>
-            <div style={{ color: C.blue }}>{sc.tool}{"("}{`{`}</div>
-            {Object.entries(sc.params).map(([k, v]) => (
-              <div key={k} style={{ paddingLeft: 18 }}>
-                <span style={{ color: C.muted }}>{k}</span>
-                <span style={{ color: C.faint }}>: </span>
-                <span style={{ color: typeof v === "number" ? C.orange : C.yellow }}>
-                  {typeof v === "string" && !v.startsWith('"') ? `"${v}"` : String(v)}
-                </span>
-                <span style={{ color: C.faint }}>,</span>
-              </div>
-            ))}
-            <div style={{ color: C.blue }}>{`}`}{")"}</div>
-          </div>
-        </div>
-
-        {/* Run button */}
-        <button onClick={() => run(sc)} disabled={phase === "intercepting"} style={{
-          padding: "11px", borderRadius: 8, border: "none",
-          background: phase === "intercepting" ? C.yellowDim : C.yellow,
-          color: C.bg, fontSize: 13, fontWeight: 700,
-          cursor: phase === "intercepting" ? "wait" : "pointer",
-          fontFamily: C.mono, letterSpacing: "0.04em",
-          boxShadow: phase !== "intercepting" ? `0 0 20px ${C.yellowGlow}` : "none",
-          transition: "all 0.15s",
-        }}>
-          {phase === "intercepting" ? "intercepting…" : "run intercept() →"}
-        </button>
-      </div>
-
-      {/* Right: governance output */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {/* Log terminal */}
-        <div style={{
-          background: C.bg1, border: `1px solid ${C.border}`,
-          borderRadius: 10, overflow: "hidden", flex: 1,
-        }}>
-          <div style={{
-            padding: "10px 16px", borderBottom: `1px solid ${C.border}`,
-            background: C.bg2, display: "flex", alignItems: "center", gap: 10,
-          }}>
-            <div style={{ display: "flex", gap: 5 }}>
-              {[C.red, C.yellow, C.green].map(c => (
-                <span key={c} style={{ width: 10, height: 10, borderRadius: "50%", background: c, opacity: 0.6 }} />
-              ))}
-            </div>
-            <Mono style={{ fontSize: 11, color: C.faint, flex: 1, textAlign: "center" }}>
-              devmind — governance output
-            </Mono>
-            {phase !== "idle" && (
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: phase === "decided" ? (DEC[sc.decision]?.color || C.green) : C.yellow, animation: phase === "intercepting" ? "pulse 1s infinite" : "none" }} />
-            )}
-          </div>
-          <div ref={logRef} style={{
-            padding: "14px 16px", height: 220, overflowY: "auto",
-            fontFamily: C.mono, fontSize: 11.5, lineHeight: 1.9,
-          }}>
-            {phase === "idle" && (
-              <span style={{ color: C.faint }}>waiting… press run intercept() to evaluate this action</span>
-            )}
-            {logLines.map(l => (
-              <div key={l.id} style={{ color: l.color }}>{l.text}</div>
-            ))}
-          </div>
-        </div>
-
-        {/* Decision result */}
-        {phase === "decided" && (
-          <div style={{
-            padding: "16px 18px", borderRadius: 10,
-            background: DEC[sc.decision]?.bg || C.bg1,
-            border: `1px solid ${DEC[sc.decision]?.border || C.border}`,
-            animation: "fadeUp 0.3s ease both",
-          }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-              <DecBadge d={sc.decision} size={13} />
-              <Mono style={{ fontSize: 11, color: C.muted }}>
-                risk_score: <span style={{ color: sc.risk_score >= 70 ? C.red : sc.risk_score >= 30 ? C.orange : C.green, fontWeight: 700 }}>{sc.risk_score}</span>
-              </Mono>
-            </div>
-            <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.6, fontFamily: C.mono }}>{sc.reason}</div>
-            <div style={{ marginTop: 10, fontSize: 11, color: C.faint, fontFamily: C.mono }}>
-              blast_radius: <span style={{ color: sc.blast_radius === "ORG" || sc.blast_radius === "CLUSTER" ? C.orange : C.muted }}>{sc.blast_radius}</span>
-              <span style={{ marginLeft: 16 }}>→ audit log written</span>
-            </div>
-          </div>
-        )}
-      </div>
+    <div className="rounded-2xl border p-4" style={{ background: C.panel, borderColor: C.border }}>
+      <div className="text-2xl font-semibold tracking-tight" style={{ color: C.text }}>{value}</div>
+      <div className="mt-1 text-sm" style={{ color: C.muted }}>{label}</div>
     </div>
   );
 }
 
-// ─── Live stream ticker ────────────────────────────────────────────────────────
-const STREAM = [
-  { agent: "claude-code", action: "terraform apply iam-admin",    surface: "terraform", d: "BLOCK",    ms: "0.4ms" },
-  { agent: "codex",       action: "kubectl apply privileged-pod", surface: "k8s",       d: "BLOCK",    ms: "0.3ms" },
-  { agent: "cursor",      action: "release_gate api-v3.tar.gz",   surface: "release",   d: "REVIEW",   ms: "1.1ms" },
-  { agent: "claude-code", action: "read_file .env.production",    surface: "file",      d: "ESCALATE", ms: "0.6ms" },
-  { agent: "codex",       action: "git push origin main",         surface: "git",       d: "ALLOW",    ms: "0.2ms" },
-  { agent: "cursor",      action: "helm upgrade --force prod",    surface: "helm",      d: "REVIEW",   ms: "0.8ms" },
-  { agent: "claude-code", action: "iam_wildcard_resource aws",    surface: "terraform", d: "BLOCK",    ms: "0.4ms" },
-  { agent: "codex",       action: "kubectl exec pod/api-prod",    surface: "k8s",       d: "BLOCK",    ms: "0.3ms" },
-];
-
-function LiveStream() {
-  const [lines, setLines] = useState([]);
-  const [blink, setBlink] = useState(true);
-  const ref = useRef(null);
-  const idx = useRef(0);
-
-  useEffect(() => {
-    const t = setInterval(() => {
-      const ev = STREAM[idx.current % STREAM.length];
-      idx.current++;
-      const ts = new Date().toISOString().split("T")[1].slice(0, 8);
-      setLines(p => [...p.slice(-12), { ...ev, ts, id: Date.now() }]);
-    }, 1200);
-    return () => clearInterval(t);
-  }, []);
-
-  useEffect(() => {
-    const t = setInterval(() => setBlink(p => !p), 500);
-    return () => clearInterval(t);
-  }, []);
-
-  useEffect(() => {
-    if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
-  }, [lines]);
-
-  const sc = { terraform: C.orange, k8s: C.blue, release: C.yellow, file: C.muted, helm: C.blue, git: C.faint };
-
+function Card({ icon: Icon, title, text }) {
   return (
-    <div style={{
-      background: C.bg1, border: `1px solid ${C.border}`,
-      borderRadius: 12, overflow: "hidden",
-    }}>
-      <div style={{
-        padding: "10px 16px", background: C.bg2, borderBottom: `1px solid ${C.border}`,
-        display: "flex", alignItems: "center", gap: 10,
-      }}>
-        <div style={{ display: "flex", gap: 5 }}>
-          {[C.red, C.yellow, C.green].map(c => (
-            <span key={c} style={{ width: 10, height: 10, borderRadius: "50%", background: c, opacity: 0.6 }} />
-          ))}
+    <div className="rounded-2xl border p-5" style={{ background: C.panel, borderColor: C.border }}>
+      <div className="flex items-center gap-3">
+        <div className="rounded-xl border p-2" style={{ background: C.panel2, borderColor: C.border2 }}>
+          <Icon size={18} color={C.cyan} />
         </div>
-        <Mono style={{ fontSize: 11, color: C.faint, flex: 1, textAlign: "center" }}>devmind — live governance stream</Mono>
-        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-          <span style={{ width: 5, height: 5, borderRadius: "50%", background: C.yellow, animation: "pulse 1.8s infinite" }} />
-          <Mono style={{ fontSize: 10, color: C.yellow }}>live</Mono>
-        </div>
+        <h3 className="text-base font-semibold" style={{ color: C.text }}>{title}</h3>
       </div>
-      <div ref={ref} style={{ padding: "12px 16px", height: 240, overflowY: "auto", fontFamily: C.mono, fontSize: 11.5, lineHeight: 1.95 }}>
-        {lines.map(l => (
-          <div key={l.id} style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "nowrap" }}>
-            <span style={{ color: C.faint, flexShrink: 0, fontSize: 10 }}>{l.ts}</span>
-            <span style={{ color: C.muted, flexShrink: 0, minWidth: 80 }}>{l.agent}</span>
-            <span style={{ color: sc[l.surface] || C.muted, flexShrink: 0, fontSize: 10 }}>[{l.surface}]</span>
-            <span style={{ color: C.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.action}</span>
-            <span style={{ color: DEC[l.d]?.color || C.muted, fontWeight: 700, flexShrink: 0 }}>{l.d}</span>
-            <span style={{ color: C.faint, fontSize: 10, flexShrink: 0 }}>{l.ms}</span>
-          </div>
-        ))}
-        <span style={{ color: C.yellow, opacity: blink ? 1 : 0 }}>█</span>
-      </div>
+      <p className="mt-4 text-sm leading-6" style={{ color: C.muted }}>{text}</p>
     </div>
   );
 }
 
-// ─── MCP tools table ──────────────────────────────────────────────────────────
-const MCP_TOOLS = [
-  ["evaluate_action",        "Agent tool calls — file writes, shell, API, database"],
-  ["evaluate_terraform_plan","Terraform plans before apply"],
-  ["evaluate_k8s_manifest",  "Kubernetes manifests before kubectl apply"],
-  ["release_gate",           "Release artifacts before deployment"],
-  ["session_status",         "Current session risk profile"],
-  ["audit_log",              "Retrieve tamper-evident audit records"],
-  ["policy_check",           "Query policy engine directly"],
-  ["blast_radius_check",     "Evaluate scope of a proposed change"],
-  ["session_reset",          "Reset session risk accumulation"],
-  ["governance_report",      "Full session governance summary"],
-  ["risk_score",             "Score an action without enforcing"],
-  ["health",                 "DevMind server status"],
-];
-
-// ─── Nav ──────────────────────────────────────────────────────────────────────
-function Nav({ user, apiKey, onSignIn, onSignOut }) {
-  const [scrolled, setScrolled] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    const fn = () => setScrolled(window.scrollY > 24);
-    window.addEventListener("scroll", fn, { passive: true });
-    return () => window.removeEventListener("scroll", fn);
-  }, []);
-
-  const copy = () => {
-    navigator.clipboard.writeText(apiKey);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1600);
-  };
-
-  return (
-    <nav style={{
-      position: "fixed", top: 0, left: 0, right: 0, zIndex: 300,
-      height: 56, padding: "0 28px",
-      display: "flex", alignItems: "center", justifyContent: "space-between",
-      background: scrolled ? "rgba(7,9,10,0.95)" : "transparent",
-      backdropFilter: scrolled ? "blur(20px)" : "none",
-      borderBottom: scrolled ? `1px solid ${C.border}` : "1px solid transparent",
-      transition: "all 0.2s",
-    }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
-          <rect width="26" height="26" rx="6" fill={C.bg2} />
-          <path d="M7 7h5c3.3 0 6 2.7 6 6s-2.7 6-6 6H7V7z"
-            stroke={C.yellow} strokeWidth="1.8" fill="none" strokeLinejoin="round" />
-          <rect x="10" y="10" width="4.5" height="4.5" rx="1" fill={C.yellow} />
-        </svg>
-        <Mono style={{ fontWeight: 700, fontSize: 14 }}>DevMind</Mono>
-        <Mono style={{
-          fontSize: 9, color: C.yellow, background: C.yellowDim,
-          border: `1px solid ${C.borderY}`, padding: "2px 6px", borderRadius: 3,
-          letterSpacing: "0.1em",
-        }}>BETA</Mono>
-      </div>
-
-      <div style={{ display: "flex", gap: 24, alignItems: "center" }}>
-        {[["#demo","Demo"],["#how","How it works"],["#threats","Threats"],["#mcp","MCP tools"],["https://github.com/mordecaiusm922-create/devmind","GitHub ↗"]].map(([href, label]) => (
-          <a key={href} href={href} target={href.startsWith("http") ? "_blank" : undefined} rel="noreferrer"
-            style={{ fontSize: 13, color: C.muted, textDecoration: "none", transition: "color 0.12s" }}
-            onMouseEnter={e => e.currentTarget.style.color = C.text}
-            onMouseLeave={e => e.currentTarget.style.color = C.muted}>
-            {label}
-          </a>
-        ))}
-        {user ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <img src={user.user_metadata?.avatar_url} alt=""
-              style={{ width: 26, height: 26, borderRadius: "50%", border: `1px solid ${C.borderY}` }} />
-            {apiKey && (
-              <button onClick={copy} style={{
-                padding: "4px 10px", borderRadius: 5, fontSize: 11,
-                background: C.yellowDim, border: `1px solid ${C.borderY}`,
-                color: C.yellow, cursor: "pointer", fontFamily: C.mono,
-              }}>{copied ? "copied!" : `${apiKey.slice(0,12)}…`}</button>
-            )}
-            <button onClick={onSignOut} style={{
-              padding: "5px 12px", borderRadius: 5, fontSize: 12,
-              background: C.bg2, border: `1px solid ${C.border}`,
-              color: C.muted, cursor: "pointer",
-            }}>out</button>
-          </div>
-        ) : (
-          <button onClick={onSignIn} style={{
-            padding: "6px 16px", borderRadius: 6, fontSize: 12, fontWeight: 600,
-            background: C.yellowDim, border: `1px solid ${C.borderY}`,
-            color: C.yellow, cursor: "pointer",
-          }}>Sign in with GitHub</button>
-        )}
-      </div>
-    </nav>
-  );
+function decisionColor(decision) {
+  if (decision === "BLOCK") return C.red;
+  if (decision === "ESCALATE") return C.yellow;
+  if (decision === "ALLOW") return C.green;
+  return C.cyan;
 }
 
-// ─── App ──────────────────────────────────────────────────────────────────────
+function VerdictTag({ verdict }) {
+  const tone = verdict === "BLOCK" ? "red" : verdict === "ESCALATE" ? "yellow" : verdict === "ALLOW" ? "green" : "cyan";
+  return <Pill tone={tone}>{verdict || "…"}</Pill>;
+}
+
 export default function App() {
-  const [user, setUser]   = useState(null);
-  const [apiKey, setApiKey] = useState(null);
+  const [activeId, setActiveId] = useState(SCENARIOS[0].id);
+  const [running, setRunning] = useState(false);
+  const [log, setLog] = useState([]);
+  const [result, setResult] = useState(null); // real API response
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      const u = session?.user ?? null;
-      setUser(u);
-      if (u) {
-        const { data } = await supabase.from("users").select("api_key").eq("id", u.id).single();
-        if (data) setApiKey(data.api_key);
+  const active = useMemo(() => SCENARIOS.find((s) => s.id === activeId) ?? SCENARIOS[0], [activeId]);
+
+  const run = async () => {
+    setRunning(true);
+    setLog([]);
+    setResult(null);
+    setError(null);
+
+    const pushLine = (text, color) => setLog((prev) => [...prev, { id: `${Date.now()}-${Math.random()}`, text, color }]);
+
+    pushLine("intercept()", C.dim);
+    pushLine(`agent: ${active.agent}`, C.text);
+    pushLine(`surface: ${active.surface}`, C.cyan);
+    pushLine(`POST ${API_BASE}${active.endpoint}`, C.text);
+
+    const t0 = performance.now();
+    try {
+      const res = await fetch(`${API_BASE}${active.endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(active.body),
+      });
+      const elapsed = Math.round(performance.now() - t0);
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.detail || `HTTP ${res.status}`);
+        pushLine(`error: ${data.detail || res.status}`, C.red);
+        setRunning(false);
+        return;
       }
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_ev, session) => {
-      const u = session?.user ?? null;
-      setUser(u);
-      if (_ev === "SIGNED_IN" && u) {
-        const key = `dm-${u.id.replace(/-/g,"").slice(0,24)}`;
-        await supabase.from("users").upsert(
-          { id: u.id, username: u.user_metadata?.user_name, email: u.email, api_key: key },
-          { onConflict: "id", ignoreDuplicates: true }
-        );
-        setApiKey(key);
-      }
-    });
-    return () => subscription.unsubscribe();
-  }, []);
 
-  const signIn = () => supabase.auth.signInWithOAuth({
-    provider: "github",
-    options: { redirectTo: "https://devmind-gamma.vercel.app" },
-  });
-  const signOut = () => supabase.auth.signOut();
+      pushLine(`response in ${elapsed}ms`, C.dim);
+      pushLine(`decision: ${data.decision}`, decisionColor(data.decision));
+      pushLine(`risk_score: ${data.risk_score}`, data.risk_score >= 70 ? C.red : data.risk_score >= 30 ? C.yellow : C.green);
+      (data.why || []).forEach((w) => pushLine(`  · ${w}`, C.muted));
+      pushLine(`escalation_required: ${data.escalation_required}`, C.text);
+      pushLine(`audit_id: ${data.audit_id}`, C.dim);
 
-  const Divider = () => (
-    <div style={{ height: 1, background: `linear-gradient(90deg, transparent, ${C.border} 20%, ${C.border} 80%, transparent)` }} />
-  );
+      setResult({ ...data, elapsedMs: elapsed });
+    } catch (e) {
+      // Free-tier Render instances sleep when idle — first call can take 10-20s to wake up.
+      pushLine("Cold start on the free instance can take up to 20s on first request — retrying helps.", C.yellow);
+      setError("Could not reach the live API right now. It may be waking up from idle (free tier). Try again in a few seconds.");
+    }
+    setRunning(false);
+  };
 
-  const SectionEyebrow = ({ label }) => (
-    <Mono style={{ fontSize: 10, color: C.yellow, letterSpacing: "0.14em", textTransform: "uppercase", display: "block", marginBottom: 12 }}>
-      {label}
-    </Mono>
-  );
+  const surfaceColor = (surface) => {
+    if (surface === "Terraform") return C.yellow;
+    if (surface === "Kubernetes") return C.blue;
+    if (surface === "Deployment") return C.cyan;
+    return C.muted;
+  };
 
   return (
-    <>
+    <div className="min-h-screen overflow-hidden" style={{ background: C.bg, color: C.text }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700;800&display=swap');
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;700&display=swap');
+        * { box-sizing: border-box; }
         html { scroll-behavior: smooth; }
-        body {
-          background: ${C.bg};
-          color: ${C.text};
-          font-family: 'Inter', system-ui, sans-serif;
-          -webkit-font-smoothing: antialiased;
-        }
-        ::-webkit-scrollbar { width: 5px; }
-        ::-webkit-scrollbar-track { background: ${C.bg}; }
-        ::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 3px; }
-        input:focus { outline: none; border-color: ${C.borderY} !important; box-shadow: 0 0 0 3px ${C.yellowDim} !important; }
-        @keyframes pulse  { 0%,100%{opacity:1}   50%{opacity:0.3}  }
-        @keyframes fadeUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
-        .fu  { animation: fadeUp 0.45s ease both; }
-        .fu2 { animation: fadeUp 0.45s 0.08s ease both; }
-        .fu3 { animation: fadeUp 0.45s 0.16s ease both; }
-        .fu4 { animation: fadeUp 0.45s 0.24s ease both; }
-        button { transition: opacity 0.1s, transform 0.1s; }
-        button:hover:not(:disabled) { opacity: 0.82; }
-        a { transition: color 0.12s; }
+        body { margin: 0; font-family: Inter, system-ui, sans-serif; }
+        .mono { font-family: 'IBM Plex Mono', monospace; }
+        ::selection { background: rgba(73,241,255,0.24); }
       `}</style>
 
-      <Nav user={user} apiKey={apiKey} onSignIn={signIn} onSignOut={signOut} />
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute left-1/2 top-[-210px] h-[560px] w-[860px] -translate-x-1/2 rounded-full blur-3xl" style={{ background: "radial-gradient(circle, rgba(73,241,255,0.14), transparent 72%)" }} />
+        <div className="absolute right-[-140px] top-[180px] h-[260px] w-[260px] rounded-full blur-3xl" style={{ background: "radial-gradient(circle, rgba(116,192,255,0.14), transparent 70%)" }} />
+      </div>
 
-      {/* ── HERO ── */}
-      <section style={{ padding: "120px 28px 80px", maxWidth: 1100, margin: "0 auto", position: "relative" }}>
-        {/* Glow */}
-        <div style={{
-          position: "absolute", top: 60, left: "50%", transform: "translateX(-50%)",
-          width: 700, height: 400, pointerEvents: "none",
-          background: `radial-gradient(ellipse at 50% 0%, rgba(226,255,93,0.05) 0%, transparent 65%)`,
-        }} />
+      <header className="sticky top-0 z-50 border-b backdrop-blur-2xl" style={{ background: "rgba(5,6,10,0.72)", borderColor: C.border }}>
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="rounded-2xl border p-2" style={{ background: C.panel2, borderColor: C.border2 }}>
+              <Rocket size={18} color={C.cyan} />
+            </div>
+            <div>
+              <div className="text-sm font-semibold tracking-tight" style={{ color: C.text }}>DevMind</div>
+              <div className="text-[11px] uppercase tracking-[0.22em]" style={{ color: C.muted }}>runtime governance for autonomous agents</div>
+            </div>
+          </div>
+          <div className="hidden items-center gap-3 md:flex">
+            <a href="#demo" className="text-sm" style={{ color: C.muted }}>Live demo</a>
+            <a href="#architecture" className="text-sm" style={{ color: C.muted }}>Architecture</a>
+            <a href="#tools" className="text-sm" style={{ color: C.muted }}>MCP tools</a>
+            <a href="https://github.com/mordecaiusm922-create/devmind" className="text-sm" style={{ color: C.muted }}>GitHub</a>
+          </div>
+        </div>
+      </header>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 56, alignItems: "center" }}>
-          {/* Left */}
+      <main className="mx-auto max-w-7xl px-6 pb-20 pt-16">
+        <section className="grid items-center gap-12 lg:grid-cols-2">
           <div>
-            <div className="fu" style={{
-              display: "inline-flex", alignItems: "center", gap: 7,
-              padding: "5px 13px", borderRadius: 100, marginBottom: 24,
-              background: C.yellowDim, border: `1px solid ${C.borderY}`,
-            }}>
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.yellow, animation: "pulse 2s infinite" }} />
-              <Mono style={{ fontSize: 11, color: C.yellow, letterSpacing: "0.04em" }}>
-                runtime governance · agent actions · session memory
-              </Mono>
+            <div className="mb-5 inline-flex items-center gap-2 rounded-full border px-4 py-2" style={{ background: C.panel, borderColor: C.border2 }}>
+              <Satellite size={14} color={C.yellow} />
+              <span className="mono text-[11px] uppercase tracking-[0.2em]" style={{ color: C.yellow }}>live API · deterministic · no LLM in the path</span>
             </div>
 
-            <h1 className="fu2" style={{
-              fontSize: "clamp(28px, 3.5vw, 48px)", fontWeight: 800,
-              lineHeight: 1.1, letterSpacing: "-0.04em", marginBottom: 20,
-            }}>
-              Your agents act.<br />
-              <span style={{
-                background: `linear-gradient(90deg, ${C.yellow}, #f0e868)`,
-                WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-              }}>DevMind decides.</span>
+            <h1 className="max-w-xl text-5xl font-extrabold leading-[1.02] tracking-[-0.06em] md:text-6xl">
+              The control plane
+              <span className="block bg-gradient-to-r from-white via-cyan-200 to-blue-300 bg-clip-text text-transparent" style={{ filter: "drop-shadow(0 0 18px rgba(73,241,255,0.12))" }}>
+                between agent and production.
+              </span>
             </h1>
 
-            <p className="fu3" style={{
-              fontSize: 15, color: C.muted, lineHeight: 1.72, marginBottom: 32, maxWidth: 420,
-            }}>
-              Every agent action — Terraform, Kubernetes, Helm, releases, secrets —
-              intercepted and evaluated before it reaches your systems.
-              Deterministic policy. Session memory. Tamper-evident audit.
+            <p className="mt-6 max-w-2xl text-base leading-7" style={{ color: C.muted }}>
+              DevMind intercepts every action an AI agent attempts against real infrastructure and evaluates it before execution.
+              The demo below is not a simulation — it calls the production API live, every time.
             </p>
 
-            <div className="fu4" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <a href="https://github.com/mordecaiusm922-create/devmind" target="_blank" rel="noreferrer" style={{
-                  display: "inline-flex", alignItems: "center", gap: 7,
-                  padding: "10px 22px", borderRadius: 7, fontSize: 13, fontWeight: 700,
-                  background: C.yellow, color: C.bg, textDecoration: "none",
-                  boxShadow: `0 0 24px ${C.yellowGlow}`,
-                }}>
-                  <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-                  View on GitHub
-                </a>
-                <a href="#demo" style={{
-                  display: "inline-block", padding: "10px 20px", borderRadius: 7, fontSize: 13,
-                  background: C.bg2, border: `1px solid ${C.border}`,
-                  color: C.muted, textDecoration: "none",
-                }}>See it intercept →</a>
-              </div>
-              <Mono style={{ fontSize: 11, color: C.faint }}>
-                pip install devmind-agent
-                <span style={{ color: C.faint }}> · coming to PyPI</span>
-              </Mono>
+            <div className="mt-8 flex flex-wrap gap-3">
+              <a href="#demo" className="inline-flex items-center gap-2 rounded-2xl border px-5 py-3 text-sm font-semibold transition-transform hover:-translate-y-0.5" style={{ background: C.cyan, color: "#04101a", borderColor: C.cyan }}>
+                Run the live demo <ArrowRight size={16} />
+              </a>
+              <a href="https://github.com/mordecaiusm922-create/devmind" className="inline-flex items-center gap-2 rounded-2xl border px-5 py-3 text-sm font-semibold transition-transform hover:-translate-y-0.5" style={{ background: C.panel, color: C.text, borderColor: C.border }}>
+                <OrbitIcon size={16} /> View source
+              </a>
             </div>
 
-            {/* Stats */}
-            <div className="fu4" style={{ display: "flex", gap: 28, marginTop: 36, flexWrap: "wrap" }}>
-              {[["178","tests in CI"],["28/28","scenarios, 0 false negatives"],["<1ms","policy eval"]].map(([n,l]) => (
-                <div key={n}>
-                  <Mono style={{ fontSize: 22, fontWeight: 700, color: C.yellow, display: "block", letterSpacing: "-0.02em" }}>{n}</Mono>
-                  <span style={{ fontSize: 11, color: C.faint }}>{l}</span>
-                </div>
-              ))}
+            <div className="mt-10 grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <Metric value="~50ms" label="typical policy evaluation" />
+              <Metric value="178" label="deterministic tests, CI-enforced" />
+              <Metric value="28" label="real-world risk scenarios" />
             </div>
           </div>
 
-          {/* Right: live stream */}
-          <div className="fu3">
-            <LiveStream />
-          </div>
-        </div>
-      </section>
-
-      <Divider />
-
-      {/* ── INTERACTIVE DEMO ── */}
-      <section id="demo" style={{ padding: "80px 28px", maxWidth: 1100, margin: "0 auto" }}>
-        <div style={{ marginBottom: 36 }}>
-          <SectionEyebrow label="interactive demo" />
-          <h2 style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em", marginBottom: 8 }}>
-            Watch DevMind intercept in real time
-          </h2>
-          <p style={{ fontSize: 14, color: C.muted }}>
-            Pick a scenario. Press run. See the decision ladder execute.
-          </p>
-        </div>
-        <InterceptDemo />
-      </section>
-
-      <Divider />
-
-      {/* ── HOW IT WORKS ── */}
-      <section id="how" style={{ padding: "80px 28px", maxWidth: 1100, margin: "0 auto" }}>
-        <div style={{ marginBottom: 40 }}>
-          <SectionEyebrow label="architecture" />
-          <h2 style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em", marginBottom: 8 }}>
-            Three questions before any system is touched
-          </h2>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, marginBottom: 28 }}>
-          {[
-            { q: "Is this action allowed?", body: "28 signals across Terraform, Kubernetes, Helm, and agent actions. Hard blocks are invariants — they cannot be overridden by the agent, by org rules, or by an LLM escalation. The code path to override doesn't exist." },
-            { q: "What risk has this session built?", body: "DevMind tracks secrets accessed, production changes, infra modifications, and violations across the entire session. The release gate weighs history — not just the current artifact. An agent that accessed secrets earlier faces a harder gate on its next release." },
-            { q: "Can you prove what happened?", body: "Every decision is written to an append-only JSONL with SHA-256 integrity before any system is touched. Agent ID, policy version, decision, blast radius, risk score — all recorded." },
-          ].map(({ q, body }) => (
-            <div key={q} style={{ padding: "22px 22px", borderRadius: 10, background: C.bg1, border: `1px solid ${C.border}` }}>
-              <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 10, lineHeight: 1.35 }}>{q}</h3>
-              <p style={{ fontSize: 13, color: C.muted, lineHeight: 1.65 }}>{body}</p>
+          <div className="rounded-[28px] border p-5 shadow-2xl" style={{ background: C.panel, borderColor: C.border2, boxShadow: `0 0 0 1px ${C.glow}, 0 30px 90px rgba(0,0,0,0.45)` }}>
+            <div className="flex items-center justify-between border-b pb-4" style={{ borderColor: C.border }}>
+              <div className="flex items-center gap-2">
+                <div className="h-3 w-3 rounded-full bg-red-400/80" />
+                <div className="h-3 w-3 rounded-full bg-yellow-300/80" />
+                <div className="h-3 w-3 rounded-full bg-green-400/80" />
+              </div>
+              <div className="mono text-xs uppercase tracking-[0.2em]" style={{ color: C.muted }}>devmind-2cej.onrender.com</div>
+              <Pill tone="green">production</Pill>
             </div>
-          ))}
-        </div>
 
-        {/* Decision ladder + session memory */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
-          <div style={{ padding: "20px 22px", background: C.bg1, border: `1px solid ${C.border}`, borderRadius: 10 }}>
-            <Mono style={{ fontSize: 10, color: C.faint, letterSpacing: "0.1em", textTransform: "uppercase", display: "block", marginBottom: 14 }}>decision ladder</Mono>
-            <div style={{ fontFamily: C.mono, fontSize: 12, lineHeight: 2 }}>
-              {[
-                [C.muted,   "agent action (tool call)"],
-                [C.faint,   "↓"],
-                [C.yellow,  "DevMindSandbox.intercept()"],
-                [C.faint,   "↓"],
-                [C.text,    "policy_engine + infra_engine + release_gate"],
-                [C.faint,   "↓"],
-                [C.text,    "GovernanceDecision"],
-                ["",        ""],
-                [C.green,   "  ALLOW     → action executes"],
-                [C.yellow,  "  REVIEW    → LLM evaluation via Groq"],
-                [C.red,     "  BLOCK     → hard stop, no override"],
-                [C.orange,  "  ESCALATE  → blast radius gate"],
-                ["",        ""],
-                [C.faint,   "↓"],
-                [C.muted,   "AuditEngine → JSONL (SHA-256, append-only)"],
-              ].map(([c, t], i) => (
-                <div key={i} style={{ color: c || "transparent" }}>{t || "\u00a0"}</div>
-              ))}
+            <div className="mt-4 rounded-2xl border p-4" style={{ borderColor: C.border, background: C.panel2 }}>
+              <div className="flex items-center gap-2 mb-3">
+                <Activity size={16} color={C.cyan} />
+                <span className="text-sm font-semibold">What this page actually does</span>
+              </div>
+              <p className="text-sm leading-6" style={{ color: C.muted }}>
+                Scroll to the demo section, pick a scenario, and click Run. Your browser sends a real HTTP request to
+                the production DevMind API and renders whatever it actually returns — decision, risk score, and the
+                exact reasoning chain. Nothing on this page is pre-recorded.
+              </p>
+              <p className="mt-3 text-xs" style={{ color: C.dim }}>
+                Note: the API runs on a free instance and may take up to 20s to respond on the first request after being idle.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section id="demo" className="mt-24 grid gap-8 lg:grid-cols-[1.05fr_0.95fr]">
+          <div>
+            <div className="mb-6 flex items-center gap-3">
+              <Pill tone="cyan">Live demo — real API</Pill>
+              <span className="text-sm" style={{ color: C.muted }}>Choose a scenario, then run it against production.</span>
+            </div>
+
+            <div className="grid gap-3">
+              {SCENARIOS.map((item) => {
+                const isActive = item.id === activeId;
+                return (
+                  <motion.button
+                    key={item.id}
+                    whileHover={{ y: -2 }}
+                    whileTap={{ scale: 0.99 }}
+                    onClick={() => {
+                      setActiveId(item.id);
+                      setLog([]);
+                      setResult(null);
+                      setError(null);
+                    }}
+                    className="rounded-2xl border p-4 text-left transition-all"
+                    style={{ background: isActive ? "rgba(73,241,255,0.08)" : C.panel, borderColor: isActive ? C.border2 : C.border }}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-base font-semibold" style={{ color: C.text }}>{item.title}</span>
+                        </div>
+                        <div className="mt-2 text-sm mono" style={{ color: C.muted }}>{item.actionLabel}</div>
+                      </div>
+                      <div className="mono text-xs" style={{ color: C.dim }}>{item.surface}</div>
+                    </div>
+                  </motion.button>
+                );
+              })}
             </div>
           </div>
 
-          <div style={{ padding: "20px 22px", background: C.bg1, border: `1px solid ${C.border}`, borderRadius: 10 }}>
-            <Mono style={{ fontSize: 10, color: C.faint, letterSpacing: "0.1em", textTransform: "uppercase", display: "block", marginBottom: 14 }}>session memory</Mono>
-            <div style={{ fontFamily: C.mono, fontSize: 12, lineHeight: 2 }}>
-              <div style={{ color: C.faint }}>{"// SessionRiskProfile — accumulated"}</div>
-              <div style={{ color: C.yellow }}>{"{"}</div>
-              {[
-                ["secrets_accessed",       "1",  C.orange],
-                ["production_changes",     "2",  C.red   ],
-                ["infra_changes",          "3",  C.orange],
-                ["session_violation_count","1",  C.red   ],
-                ["session_risk_score",    "78",  C.red   ],
-              ].map(([k,v,vc]) => (
-                <div key={k} style={{ paddingLeft: 16 }}>
-                  <span style={{ color: C.muted }}>{k}</span>
-                  <span style={{ color: C.faint }}>: </span>
-                  <span style={{ color: vc, fontWeight: 700 }}>{v}</span>
-                  <span style={{ color: C.faint }}>,</span>
-                </div>
-              ))}
-              <div style={{ color: C.yellow }}>{"}"}</div>
-              <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.border}`, color: C.faint }}>
-                {"// release_gate → "}
-                <span style={{ color: C.red, fontWeight: 700 }}>BLOCK</span>
-                <span>{"  // score ≥ 70, regardless of artifact"}</span>
+          <div className="rounded-[28px] border p-5" style={{ background: C.panel, borderColor: C.border2 }}>
+            <div className="flex items-center justify-between border-b pb-4" style={{ borderColor: C.border }}>
+              <div className="flex items-center gap-2">
+                <TerminalSquare size={18} color={C.cyan} />
+                <span className="font-semibold">Decision trace</span>
               </div>
+              <button
+                onClick={run}
+                disabled={running}
+                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold transition-opacity disabled:cursor-not-allowed disabled:opacity-70"
+                style={{ background: C.cyan, color: "#03101a", borderColor: C.cyan }}
+              >
+                {running && <Loader2 size={14} className="animate-spin" />}
+                {running ? "Calling live API…" : "Run against production"}
+              </button>
             </div>
-          </div>
-        </div>
 
-        {/* Why not just a prompt */}
-        <div style={{ marginTop: 14, padding: "20px 24px", background: C.yellowDim, border: `1px solid ${C.borderY}`, borderRadius: 10 }}>
-          <Mono style={{ fontSize: 10, color: C.yellow, letterSpacing: "0.1em", textTransform: "uppercase", display: "block", marginBottom: 10 }}>why not just use a prompt?</Mono>
-          <p style={{ fontSize: 13, color: C.muted, lineHeight: 1.65, maxWidth: 780 }}>
-            A system prompt is evaluated by the model at inference time. The model is non-deterministic.
-            Under long context or adversarial input, instructions are not always honored.
-            DevMind operates at the application layer — when it blocks an action, the action does not execute.
-            The block is not a probability. It is a code path that returns <Mono style={{ color: C.red, fontWeight: 700 }}>BLOCK</Mono> before any system is touched.
-            No prompt overrides <Mono style={{ color: C.yellow }}>iam_wildcard_action</Mono>.
-          </p>
-        </div>
-      </section>
-
-      <Divider />
-
-      {/* ── THREAT MODEL ── */}
-      <section id="threats" style={{ padding: "80px 28px", maxWidth: 1100, margin: "0 auto" }}>
-        <div style={{ marginBottom: 40 }}>
-          <SectionEyebrow label="threat model" />
-          <h2 style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em", marginBottom: 8 }}>
-            Five threat classes in production today
-          </h2>
-          <p style={{ fontSize: 14, color: C.muted }}>All 28 scenarios tested. Zero false negatives.</p>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12 }}>
-          {[
-            { title: "Terraform privilege escalation", d: "BLOCK",
-              body: "Agent creates IAM policy with Action: \"*\" or Resource: \"*\". Hard block at the policy engine — no LLM call made, no override possible. Blast radius: ORG." },
-            { title: "Kubernetes container escape", d: "BLOCK",
-              body: "Agent deploys pod with privileged: true or hostNetwork: true. Blast radius computed as CLUSTER → blocked before manifest reaches the cluster." },
-            { title: "Secret injection into release", d: "BLOCK",
-              body: "Agent packages artifact with hardcoded AWS key or API token. Artifact scan fires during intercept_release() — hard block before deployment." },
-            { title: "Session-level risk accumulation", d: "BLOCK",
-              body: "Each action looks reasonable in isolation. Session memory surfaces the pattern: secrets_accessed=1 + production_changes=2 → release gate raises to BLOCK regardless of clean artifact." },
-            { title: "Blast radius override attempt", d: "ESCALATE",
-              body: "ORG or ACCOUNT scope always escalates. The code path to override doesn't exist — this is an invariant tested in CI, not a configuration option." },
-          ].map(({ title, d, body }) => (
-            <div key={title} style={{
-              padding: "18px 20px", borderRadius: 10,
-              background: C.bg1, border: `1px solid ${C.border}`,
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35 }}>{title}</div>
-                <DecBadge d={d} size={10} />
-              </div>
-              <p style={{ fontSize: 12, color: C.muted, lineHeight: 1.65 }}>{body}</p>
+            <div className="mono mt-4 rounded-2xl border p-4 text-[12px] leading-7 overflow-x-auto" style={{ minHeight: 280, background: C.panel2, borderColor: C.border }}>
+              {log.length === 0 ? (
+                <div style={{ color: C.dim }}>Press the button to send a real request to devmind-2cej.onrender.com.</div>
+              ) : (
+                log.map((line) => <div key={line.id} style={{ color: line.color, whiteSpace: "pre-wrap" }}>{line.text}</div>)
+              )}
             </div>
-          ))}
-        </div>
-      </section>
 
-      <Divider />
-
-      {/* ── SURFACES ── */}
-      <section style={{ padding: "80px 28px", maxWidth: 1100, margin: "0 auto" }}>
-        <div style={{ marginBottom: 40 }}>
-          <SectionEyebrow label="coverage" />
-          <h2 style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em" }}>
-            What DevMind governs
-          </h2>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
-          {[
-            { surface: "Terraform",      color: C.orange, items: ["IAM policies","Resource provisioning","State manipulation","Secret injection"] },
-            { surface: "Kubernetes",     color: C.blue,   items: ["Privileged containers","hostNetwork","RBAC escalation","exec access"] },
-            { surface: "Helm",           color: C.yellow, items: ["Chart deployments","Value overrides","Production releases","Force upgrades"] },
-            { surface: "Releases",       color: C.green,  items: ["Artifact secrets","Session risk gates","Deployment approvals","Artifact scan"] },
-            { surface: "Agent actions",  color: C.muted,  items: ["File writes","Shell commands","Database operations","API calls"] },
-          ].map(({ surface, color, items }) => (
-            <div key={surface} style={{ padding: "18px 18px", borderRadius: 10, background: C.bg1, border: `1px solid ${C.border}` }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 14 }}>
-                <span style={{ width: 7, height: 7, borderRadius: "50%", background: color }} />
-                <Mono style={{ fontSize: 12, fontWeight: 700, color }}>{surface}</Mono>
+            {error && (
+              <div className="mt-4 rounded-2xl border p-4" style={{ background: "rgba(255,212,106,0.08)", borderColor: "rgba(255,212,106,0.28)" }}>
+                <span className="text-sm" style={{ color: C.yellow }}>{error}</span>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {items.map(i => (
-                  <div key={i} style={{ fontSize: 12, color: C.muted, display: "flex", gap: 7, alignItems: "flex-start" }}>
-                    <span style={{ color: C.faint, flexShrink: 0, marginTop: 1 }}>·</span>{i}
+            )}
+
+            {result && (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mt-4 rounded-2xl border p-4"
+                style={{
+                  background: result.decision === "BLOCK" ? "rgba(255,111,125,0.08)" : result.decision === "ESCALATE" ? "rgba(255,212,106,0.08)" : "rgba(88,247,176,0.08)",
+                  borderColor: result.decision === "BLOCK" ? "rgba(255,111,125,0.28)" : result.decision === "ESCALATE" ? "rgba(255,212,106,0.28)" : "rgba(88,247,176,0.28)",
+                }}
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 size={18} color={decisionColor(result.decision)} />
+                    <span className="text-sm font-semibold">Live outcome — audit_id {result.audit_id?.slice(0, 8)}…</span>
                   </div>
-                ))}
+                  <VerdictTag verdict={result.decision} />
+                </div>
+                <p className="mt-3 text-sm leading-6" style={{ color: C.muted }}>
+                  risk_score: {result.risk_score} · responded in {result.elapsedMs}ms
+                </p>
+              </motion.div>
+            )}
+          </div>
+        </section>
+
+        <section id="architecture" className="mt-24">
+          <div className="mb-8">
+            <Pill tone="yellow">Architecture</Pill>
+            <h2 className="mt-4 text-3xl font-bold tracking-[-0.04em]">Deterministic governance across every autonomous action.</h2>
+            <p className="mt-3 max-w-3xl text-sm leading-7" style={{ color: C.muted }}>
+              Policy first, blast radius second, evidence third. No language model sits in the decision path —
+              the same input always produces the same output.
+            </p>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <Card icon={Shield} title="Deterministic control" text="Unsafe actions are stopped before execution. The decision is a code path, not a suggestion." />
+            <Card icon={Layers3} title="Blast-radius scoring" text="Every action is mapped to a scope: process, service, cluster, account, or organization." />
+            <Card icon={Database} title="Tamper-evident audit" text="Each decision returns a unique audit_id and a full reasoning chain, so teams can replay exactly what happened." />
+            <Card icon={Orbit} title="Session memory" text="Risk accumulates across the session, making repeated low-grade violations harder to hide." />
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div className="rounded-2xl border p-5" style={{ background: C.panel, borderColor: C.border }}>
+              <div className="mb-4 flex items-center gap-2">
+                <Lock size={16} color={C.yellow} />
+                <h3 className="font-semibold">Threat model</h3>
               </div>
+              <ul className="space-y-3 text-sm leading-6" style={{ color: C.muted }}>
+                <li>• IAM wildcards that expand permissions across the org.</li>
+                <li>• Privileged pods and host networking in Kubernetes.</li>
+                <li>• Hardcoded secrets and private keys in payloads.</li>
+                <li>• ORG/ACCOUNT-scoped changes — escalated unconditionally, no override.</li>
+                <li>• Accumulated session risk from repeated low-grade violations.</li>
+              </ul>
             </div>
-          ))}
-        </div>
-      </section>
 
-      <Divider />
-
-      {/* ── MCP TOOLS ── */}
-      <section id="mcp" style={{ padding: "80px 28px", maxWidth: 900, margin: "0 auto" }}>
-        <div style={{ marginBottom: 36 }}>
-          <SectionEyebrow label="integration" />
-          <h2 style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em", marginBottom: 8 }}>12 MCP tools</h2>
-          <p style={{ fontSize: 14, color: C.muted, marginBottom: 20 }}>
-            Works with Claude Code, OpenAI Codex, or any MCP-compatible client.
-            Governance is model-agnostic — it governs actions, not outputs.
-          </p>
-          {/* Quickstart */}
-          <div style={{ background: C.bg1, border: `1px solid ${C.border}`, borderRadius: 10, padding: "16px 20px", fontFamily: C.mono, fontSize: 12, lineHeight: 1.9, marginBottom: 20 }}>
-            <div style={{ color: C.faint, marginBottom: 6 }}>{"# quickstart"}</div>
-            <div><span style={{ color: C.yellow }}>pip install</span> <span style={{ color: C.text }}>devmind-agent</span></div>
-            <div style={{ marginTop: 8, color: C.faint }}>{"# MCP config"}</div>
-            <div><span style={{ color: C.yellow }}>{"{"}</span></div>
-            <div style={{ paddingLeft: 16 }}><span style={{ color: C.blue }}>"mcpServers"</span><span style={{ color: C.text }}>: {"{"}</span></div>
-            <div style={{ paddingLeft: 32 }}><span style={{ color: C.blue }}>"devmind"</span><span style={{ color: C.text }}>: {"{"} <span style={{ color: C.blue }}>"command"</span>: <span style={{ color: C.green }}>"devmind"</span>, <span style={{ color: C.blue }}>"args"</span>: [<span style={{ color: C.green }}>"serve"</span>] {"}"}</span></div>
-            <div style={{ paddingLeft: 16 }}><span style={{ color: C.text }}>{"}"}</span></div>
-            <div><span style={{ color: C.yellow }}>{"}"}</span></div>
-          </div>
-        </div>
-
-        <div style={{ borderRadius: 10, overflow: "hidden", border: `1px solid ${C.border}` }}>
-          <div style={{ padding: "11px 20px", background: C.bg2, borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between" }}>
-            <Mono style={{ fontSize: 11, color: C.faint }}>tool</Mono>
-            <Mono style={{ fontSize: 11, color: C.faint }}>governs</Mono>
-          </div>
-          {MCP_TOOLS.map(([tool, desc], i) => (
-            <div key={tool} style={{
-              display: "flex", gap: 20, padding: "11px 20px", alignItems: "center",
-              borderBottom: i < MCP_TOOLS.length - 1 ? `1px solid rgba(255,255,255,0.03)` : "none",
-              background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)",
-            }}>
-              <Mono style={{ fontSize: 12, color: C.yellow, flex: "0 0 200px" }}>{tool}</Mono>
-              <span style={{ fontSize: 12, color: C.muted }}>{desc}</span>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <Divider />
-
-      {/* ── ROADMAP ── */}
-      <section style={{ padding: "80px 28px", maxWidth: 720, margin: "0 auto" }}>
-        <div style={{ marginBottom: 40 }}>
-          <SectionEyebrow label="roadmap" />
-          <h2 style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em" }}>Where DevMind is going</h2>
-        </div>
-        {[
-          { phase: "Phase 1", label: "Adoption — now", active: true,
-            items: ["pip install devmind-agent + devmind serve CLI", "Dashboard: session risk visualization", "First 10 real users — Claude Code community, HN, r/devops"] },
-          { phase: "Phase 2", label: "Retention — with users", active: false,
-            items: ["Agent Reputation System — cross-session persistence (Supabase)", "NIST AI RMF compliance baseline"] },
-          { phase: "Phase 3", label: "Moat — with traction", active: false,
-            items: ["Opt-in telemetry: {type, score, decision, surface} — off by default", "Infrastructure ready in Phase 1, activation requires no rewrite"] },
-          { phase: "Phase 4", label: "Network — with volume", active: false,
-            items: ["Agent Risk Intelligence Network", "Aggregated cross-org signals — never payloads"] },
-        ].map(({ phase, label, active, items }, i, arr) => (
-          <div key={phase} style={{ display: "flex", gap: 20 }}>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
-              <div style={{
-                width: 10, height: 10, borderRadius: "50%", marginTop: 18, flexShrink: 0,
-                background: active ? C.yellow : C.border,
-                boxShadow: active ? `0 0 10px ${C.yellowGlow}` : "none",
-              }} />
-              {i < arr.length - 1 && <div style={{ width: 1, flex: 1, background: C.border, marginTop: 4 }} />}
-            </div>
-            <div style={{ paddingBottom: 28, paddingTop: 12 }}>
-              <Mono style={{ fontSize: 10, color: C.faint, textTransform: "uppercase", letterSpacing: "0.1em" }}>{phase}</Mono>
-              <div style={{ fontSize: 14, fontWeight: 600, margin: "4px 0 10px", color: active ? C.text : C.muted }}>{label}</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {items.map(item => (
-                  <div key={item} style={{ fontSize: 12, color: C.faint, display: "flex", gap: 8 }}>
-                    <span style={{ color: active ? C.yellow : C.faint, flexShrink: 0 }}>→</span>{item}
-                  </div>
-                ))}
+            <div className="rounded-2xl border p-5" style={{ background: C.panel, borderColor: C.border }}>
+              <div className="mb-4 flex items-center gap-2">
+                <Cpu size={16} color={C.cyan} />
+                <h3 className="font-semibold">Why this is not a prompt layer</h3>
               </div>
+              <p className="text-sm leading-7" style={{ color: C.muted }}>
+                A prompt can shape output. A control plane changes execution. This layer sits at the application
+                boundary, evaluating the action itself — not asking the model to behave.
+              </p>
             </div>
           </div>
-        ))}
-      </section>
+        </section>
 
-      <Divider />
+        <section id="tools" className="mt-24">
+          <div className="mb-8">
+            <Pill tone="blue">MCP integration</Pill>
+            <h2 className="mt-4 text-3xl font-bold tracking-[-0.04em]">9 tools, exposed over MCP</h2>
+            <p className="mt-3 max-w-3xl text-sm leading-7" style={{ color: C.muted }}>
+              Works with any MCP-compatible client — Claude Desktop, Cursor, or your own. Governance acts on the
+              action, not on which model produced it. Source: <code className="mono">devmind_server.py</code>.
+            </p>
+          </div>
 
-      {/* ── FOOTER ── */}
-      <footer style={{
-        padding: "28px 28px",
-        display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12,
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <svg width="20" height="20" viewBox="0 0 26 26" fill="none">
-            <rect width="26" height="26" rx="6" fill={C.bg2} />
-            <path d="M7 7h5c3.3 0 6 2.7 6 6s-2.7 6-6 6H7V7z" stroke={C.yellow} strokeWidth="1.8" fill="none" strokeLinejoin="round" />
-            <rect x="10" y="10" width="4.5" height="4.5" rx="1" fill={C.yellow} />
-          </svg>
-          <Mono style={{ fontWeight: 700, fontSize: 13 }}>DevMind</Mono>
-          <span style={{ fontSize: 12, color: C.faint }}>— governance layer for autonomous code agents</span>
-        </div>
-        <Mono style={{ fontSize: 11, color: C.faint }}>
-          MIT ·{" "}
-          <a href="https://github.com/mordecaiusm922-create/devmind" style={{ color: C.yellow, textDecoration: "none" }}>GitHub</a>
-          {" "}· FastAPI · Groq · Vercel
-        </Mono>
-      </footer>
-    </>
+          <div className="overflow-hidden rounded-[28px] border" style={{ background: C.panel, borderColor: C.border2 }}>
+            <div className="grid grid-cols-[240px_1fr] border-b px-5 py-3 mono text-[11px] uppercase tracking-[0.18em]" style={{ color: C.dim, background: C.panel2, borderColor: C.border }}>
+              <div>Tool</div>
+              <div>Description</div>
+            </div>
+            {TOOLS.map(([tool, desc], i) => (
+              <div key={tool} className="grid grid-cols-[240px_1fr] gap-6 px-5 py-4 text-sm" style={{ background: i % 2 === 0 ? "rgba(255,255,255,0.01)" : "transparent", borderTop: i === 0 ? "none" : `1px solid ${C.border}` }}>
+                <div className="mono" style={{ color: C.yellow }}>{tool}</div>
+                <div style={{ color: C.muted }}>{desc}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="mt-24 grid gap-4 lg:grid-cols-3">
+          <div className="rounded-2xl border p-5 lg:col-span-2" style={{ background: C.panel, borderColor: C.border }}>
+            <div className="mb-4 flex items-center gap-2">
+              <GitBranch size={16} color={C.cyan} />
+              <h3 className="font-semibold">Control flow</h3>
+            </div>
+            <div className="mono text-sm leading-8" style={{ color: C.muted }}>
+              <div style={{ color: C.text }}>agent tool call / infra change</div>
+              <div>↓</div>
+              <div style={{ color: C.cyan }}>policy_engine.evaluate_action() / infra_engine.evaluate_change()</div>
+              <div>↓</div>
+              <div style={{ color: C.text }}>hard blocks → blast radius gate → production escalation → risk scoring</div>
+              <div>↓</div>
+              <div style={{ color: C.text }}>ALLOW · REVIEW · ESCALATE · BLOCK</div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border p-5" style={{ background: C.panel, borderColor: C.border }}>
+            <div className="mb-4 flex items-center gap-2">
+              <AlertTriangle size={16} color={C.yellow} />
+              <h3 className="font-semibold">Get involved</h3>
+            </div>
+            <p className="text-sm leading-6 mb-4" style={{ color: C.muted }}>
+              DevMind is open source and early. If you're running agents against real infrastructure, feedback on
+              real edge cases is the most valuable thing you can give right now.
+            </p>
+            <a href="https://github.com/mordecaiusm922-create/devmind" className="inline-flex items-center gap-2 text-sm font-semibold" style={{ color: C.cyan }}>
+              View on GitHub <ArrowRight size={14} />
+            </a>
+          </div>
+        </section>
+      </main>
+    </div>
   );
 }

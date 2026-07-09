@@ -40,3 +40,10 @@ debug_*.py
 .env.old
 data/audit/*.jsonl
 legacy/
+
+# Temporales de sesion
+fase0.ps1
+apply_simulation_patch.py
+simulate_real_risks.py.bak
+tmp_untracked/
+*.bak

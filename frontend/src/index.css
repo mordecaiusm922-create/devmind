@@ -41,3 +41,5 @@ input:focus, button:focus, textarea:focus {
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+@import 'tailwindcss';
