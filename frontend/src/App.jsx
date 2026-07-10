@@ -1,172 +1,144 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Rocket,
   Shield,
-  Orbit,
-  Terminal,
-  Database,
   Layers,
+  Database,
   Activity,
   CheckCircle2,
   ArrowRight,
   Cpu,
   Lock,
   GitBranch,
-  Satellite,
   Loader2,
-  ExternalLink,
   Zap,
   Code2,
   BarChart3,
+  ExternalLink,
+  Terminal,
+  Gauge,
+  ScanLine,
 } from "lucide-react";
 
-// --- Design tokens (Anthropic-inspired palette) ---
-const tokens = {
-  // Base
-  bg: "#fafafa",
-  surface: "#ffffff",
-  surfaceAlt: "#f5f5f5",
-  border: "rgba(0,0,0,0.06)",
-  borderAccent: "rgba(99,102,241,0.15)",
-  // Text
-  text: "#0f0f0f",
-  textSecondary: "#525252",
-  textMuted: "#737373",
-  textInverse: "#ffffff",
-  // Accent
-  primary: "#4f46e5",        // indigo 600
-  primaryLight: "#818cf8",   // indigo 400
-  accentWarm: "#f97316",     // orange 500
-  accentGreen: "#059669",
-  accentRed: "#dc2626",
-  accentYellow: "#d97706",
-  // Gradients
-  gradientPrimary: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)",
-  gradientLight: "linear-gradient(135deg, rgba(99,102,241,0.06) 0%, rgba(139,92,246,0.04) 100%)",
-  // Shadows
-  shadowCard: "0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06)",
-  shadowElevated: "0 10px 25px -5px rgba(0,0,0,0.08), 0 4px 10px -6px rgba(0,0,0,0.05)",
+// ─── Design Tokens ───────────────────────────────────────
+const T = {
+  bg:       "#080c12",
+  surface:  "#10161e",
+  surface2: "#161c26",
+  border:   "rgba(148,163,184,0.07)",
+  borderA:  "rgba(45,212,191,0.14)",
+  text:     "#e6edf3",
+  text2:    "#8b9bb4",
+  text3:    "#5c6e82",
+  accent:   "#2dd4bf",
+  accent2:  "#14b8a6",
+  amber:    "#f59e0b",
+  red:      "#ef4444",
+  green:    "#10b981",
+  glow:     "rgba(45,212,191,0.10)",
 };
 
 const API_BASE = "https://devmind-2cej.onrender.com";
 
 const SCENARIOS = [
-  {
-    id: "iam-wildcard",
-    title: "IAM wildcard policy",
-    surface: "Terraform",
-    agent: "Codex",
-    actionLabel: "apply aws_iam_policy",
-    endpoint: "/evaluate-change",
-    body: { agent_id: "codex-agent", change_type: "terraform_apply", surface: "infrastructure", payload: 'Action: "*" Resource: "*" Effect: Allow' },
-  },
-  {
-    id: "privileged-k8s",
-    title: "Privileged container",
-    surface: "Kubernetes",
-    agent: "Claude Code",
-    actionLabel: "kubectl apply privileged pod",
-    endpoint: "/evaluate-change",
-    body: { agent_id: "claude-code-agent", change_type: "k8s_manifest", surface: "kubernetes", payload: "privileged: true\nhostNetwork: true" },
-  },
-  {
-    id: "pocketos-blast-radius",
-    title: "Production volume destroy",
-    surface: "Terraform",
-    agent: "Cursor",
-    actionLabel: "terraform apply -destroy",
-    endpoint: "/evaluate-change",
-    body: { agent_id: "cursor-agent", change_type: "terraform_apply", surface: "infrastructure", payload: "production volume destroy", affects_production: true, blast_radius: "org" },
-  },
-  {
-    id: "safe-staging",
-    title: "Staging deployment",
-    surface: "Deployment",
-    agent: "Codex",
-    actionLabel: "deploy staging service",
-    endpoint: "/evaluate",
-    body: { agent_id: "codex-agent", tool: "deployment", operation: "deploy", payload: "deploy staging-service to staging environment" },
-  },
+  { id: "iam-wildcard",    title: "IAM wildcard policy",              surface: "Terraform",   agent: "Codex",      actionLabel: "apply aws_iam_policy",      endpoint: "/evaluate-change", body: { agent_id:"codex-agent",       change_type:"terraform_apply", surface:"infrastructure", payload:'Action: "*" Resource: "*" Effect: Allow' } },
+  { id: "privileged-k8s",  title: "Privileged container",            surface: "Kubernetes",  agent: "Claude Code", actionLabel: "kubectl apply privileged pod", endpoint: "/evaluate-change", body: { agent_id:"claude-code-agent",  change_type:"k8s_manifest",    surface:"kubernetes",     payload:"privileged: true\nhostNetwork: true" } },
+  { id: "pocketos-blast",  title: "Production volume destroy",       surface: "Terraform",   agent: "Cursor",      actionLabel: "terraform apply -destroy",   endpoint: "/evaluate-change", body: { agent_id:"cursor-agent",      change_type:"terraform_apply", surface:"infrastructure", payload:"production volume destroy", affects_production:true, blast_radius:"org" } },
+  { id: "safe-staging",    title: "Staging deployment",              surface: "Deployment",  agent: "Codex",      actionLabel: "deploy staging service",     endpoint: "/evaluate",         body: { agent_id:"codex-agent",       tool:"deployment", operation:"deploy", payload:"deploy staging-service to staging environment" } },
 ];
 
 const TOOLS = [
-  ["execute_command", "Run a shell command"],
-  ["read_file", "Read a file"],
-  ["write_file", "Write a file"],
-  ["delete_file", "Delete a file"],
-  ["git_operation", "Git operations"],
-  ["http_request", "Outbound HTTP request"],
-  ["db_query", "Database query"],
-  ["deploy", "Deployment action"],
-  ["session_status", "Session governance state"],
+  ["execute_command","Run a shell command (terminal surface)"],
+  ["read_file","Read a file (filesystem surface)"],
+  ["write_file","Write a file (filesystem surface)"],
+  ["delete_file","Delete a file (filesystem surface)"],
+  ["git_operation","Git commands (git surface)"],
+  ["http_request","Outbound HTTP request (network surface)"],
+  ["db_query","Database query (database surface)"],
+  ["deploy","Deployment action (deployment surface)"],
+  ["session_status","Inspect current session governance state"],
 ];
 
-// --- Helpers ---
-const decisionColor = (d) =>
-  d === "BLOCK" ? tokens.accentRed : d === "ESCALATE" ? tokens.accentYellow : d === "ALLOW" ? tokens.accentGreen : tokens.primary;
+// ─── Helpers ─────────────────────────────────────────────
+const decisionClr = d => d==="BLOCK"?T.red : d==="ESCALATE"?T.amber : d==="ALLOW"?T.green : T.accent;
+const decisionBg  = d => d==="BLOCK"?"rgba(239,68,68,0.06)" : d==="ESCALATE"?"rgba(245,158,11,0.06)" : d==="ALLOW"?"rgba(16,185,129,0.06)" : "rgba(45,212,191,0.06)";
 
-const decisionBg = (d) =>
-  d === "BLOCK" ? "rgba(220,38,38,0.06)" : d === "ESCALATE" ? "rgba(217,119,6,0.06)" : d === "ALLOW" ? "rgba(5,150,105,0.06)" : "rgba(99,102,241,0.06)";
-
-function Badge({ children, color = tokens.primary, variant = "outline" }) {
+function Badge({ children, color = T.accent, filled = false }) {
   return (
-    <span
-      className="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium tracking-wide"
-      style={{
-        color,
-        background: variant === "filled" ? color + "12" : "transparent",
-        border: variant === "filled" ? `1px solid ${color}20` : `1px solid ${color}25`,
-      }}
-    >
-      {children}
-    </span>
+    <span className="inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]" style={{
+      color: filled ? T.bg : color,
+      background: filled ? color : "transparent",
+      border: `1px solid ${color}28`,
+    }}>{children}</span>
   );
 }
 
-function MetricCard({ value, label, icon: Icon }) {
+function Metric({ value, label }) {
   return (
-    <div className="flex items-start gap-3 rounded-2xl p-5" style={{ background: tokens.surface, border: `1px solid ${tokens.border}`, boxShadow: tokens.shadowCard }}>
-      {Icon && <Icon size={20} style={{ color: tokens.primaryLight, marginTop: 2 }} />}
-      <div>
-        <div className="text-2xl font-bold" style={{ color: tokens.text }}>{value}</div>
-        <div className="text-sm mt-0.5" style={{ color: tokens.textMuted }}>{label}</div>
-      </div>
+    <div className="flex items-baseline gap-2">
+      <span className="text-3xl font-bold tracking-tight" style={{ color: T.text, fontFamily: "'Sora', sans-serif" }}>{value}</span>
+      <span className="text-sm" style={{ color: T.text3 }}>{label}</span>
     </div>
   );
 }
 
-function FeatureCard({ icon: Icon, title, desc }) {
+// ─── Background Scan Lines ──────────────────────────────
+function ScanLines() {
   return (
-    <div className="rounded-2xl p-6 transition-all hover:shadow-md" style={{ background: tokens.surface, border: `1px solid ${tokens.border}`, boxShadow: tokens.shadowCard }}>
-      <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-4" style={{ background: tokens.gradientLight }}>
-        <Icon size={20} style={{ color: tokens.primary }} />
-      </div>
-      <h3 className="text-base font-semibold mb-2" style={{ color: tokens.text }}>{title}</h3>
-      <p className="text-sm leading-6" style={{ color: tokens.textSecondary }}>{desc}</p>
+    <div className="pointer-events-none absolute inset-0 overflow-hidden opacity-[0.03]" aria-hidden="true">
+      <div className="absolute inset-0" style={{
+        background: "repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(45,212,191,1) 2px, rgba(45,212,191,1) 3px)",
+        maskImage: "radial-gradient(ellipse 80% 60% at 50% 40%, black 30%, transparent 70%)",
+        WebkitMaskImage: "radial-gradient(ellipse 80% 60% at 50% 40%, black 30%, transparent 70%)",
+      }} />
+      <motion.div
+        className="absolute left-0 right-0 h-[3px]"
+        style={{ background: T.accent, boxShadow: `0 0 40px ${T.accent}, 0 0 80px ${T.accent}` }}
+        animate={{ top: ["-2%", "102%"] }}
+        transition={{ duration: 6, repeat: Infinity, ease: "linear" }}
+      />
     </div>
   );
 }
 
+// ─── Live Ticker ────────────────────────────────────────
+function LiveTicker() {
+  const [dots, setDots] = useState("");
+  useEffect(() => { const i = setInterval(() => setDots(p => p.length >= 3 ? "" : p + "."), 600); return () => clearInterval(i); }, []);
+  return (
+    <div className="flex items-center gap-2 text-xs" style={{ color: T.accent }}>
+      <span className="relative flex h-2 w-2">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ background: T.accent }} />
+        <span className="relative inline-flex rounded-full h-2 w-2" style={{ background: T.accent }} />
+      </span>
+      <span className="mono tracking-wider">SYSTEM LIVE{dots}</span>
+    </div>
+  );
+}
+
+// ─── App ─────────────────────────────────────────────────
 export default function App() {
   const [activeId, setActiveId] = useState(SCENARIOS[0].id);
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState([]);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const terminalRef = useRef(null);
 
-  const active = useMemo(() => SCENARIOS.find((s) => s.id === activeId) ?? SCENARIOS[0], [activeId]);
+  const active = useMemo(() => SCENARIOS.find(s => s.id === activeId) ?? SCENARIOS[0], [activeId]);
+
+  // Auto-scroll terminal
+  useEffect(() => { if (terminalRef.current) terminalRef.current.scrollTop = terminalRef.current.scrollHeight; }, [log]);
 
   const run = async () => {
-    setRunning(true);
-    setLog([]);
-    setResult(null);
-    setError(null);
-    const pushLine = (text, color) => setLog((prev) => [...prev, { id: `${Date.now()}-${Math.random()}`, text, color }]);
-    pushLine("Intercepting agent action…", tokens.textMuted);
-    pushLine(`Agent: ${active.agent}`, tokens.text);
-    pushLine(`Surface: ${active.surface}`, tokens.primaryLight);
-    pushLine(`POST ${API_BASE}${active.endpoint}`, tokens.textSecondary);
+    setRunning(true); setLog([]); setResult(null); setError(null);
+    const push = (t, c) => setLog(p => [...p, { id: Math.random().toString(36), text: t, color: c }]);
+    push("▸ intercept()", T.text3);
+    push(`  agent   : ${active.agent}`, T.text2);
+    push(`  surface : ${active.surface}`, T.accent);
+    push(`  POST    : ${API_BASE}${active.endpoint}`, T.text3);
+    push("", "transparent");
     const t0 = performance.now();
     try {
       const res = await fetch(`${API_BASE}${active.endpoint}`, {
@@ -174,325 +146,332 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(active.body),
       });
-      const elapsed = Math.round(performance.now() - t0);
+      const ms = Math.round(performance.now() - t0);
       const data = await res.json();
-      if (!res.ok) {
-        setError(data.detail || `HTTP ${res.status}`);
-        pushLine(`Error: ${data.detail || res.status}`, tokens.accentRed);
-        setRunning(false);
-        return;
-      }
-      pushLine(`Response in ${elapsed}ms`, tokens.textMuted);
-      pushLine(`Decision: ${data.decision}`, decisionColor(data.decision));
-      pushLine(`Risk score: ${data.risk_score}`, data.risk_score >= 70 ? tokens.accentRed : data.risk_score >= 30 ? tokens.accentYellow : tokens.accentGreen);
-      (data.why || []).forEach((w) => pushLine(`  • ${w}`, tokens.textSecondary));
-      pushLine(`Escalation required: ${data.escalation_required}`, tokens.text);
-      pushLine(`Audit ID: ${data.audit_id}`, tokens.textMuted);
-      setResult({ ...data, elapsedMs: elapsed });
+      if (!res.ok) { setError(data.detail || `HTTP ${res.status}`); push(`✗ error: ${data.detail || res.status}`, T.red); setRunning(false); return; }
+      push(`◂ response  ${ms}ms`, T.text3);
+      push(`  decision : ${data.decision}`, decisionClr(data.decision));
+      push(`  score    : ${data.risk_score}`, data.risk_score >= 70 ? T.red : data.risk_score >= 30 ? T.amber : T.green);
+      (data.why || []).forEach(w => push(`    • ${w}`, T.text2));
+      push(`  escalate : ${data.escalation_required}`, T.text);
+      push(`  audit_id : ${data.audit_id}`, T.text3);
+      setResult({ ...data, elapsedMs: ms });
     } catch (e) {
-      pushLine("Cold start: free instance may need up to 20s on first request.", tokens.accentYellow);
-      setError("Could not reach the API — it might be waking up from idle. Please try again.");
+      push("⚠ Cold start — free instance may take up to 20s", T.amber);
+      setError("Could not reach the API. It may be waking up from idle. Please try again.");
     }
     setRunning(false);
   };
 
+  const reset = () => { setLog([]); setResult(null); setError(null); };
+
   return (
-    <div className="min-h-screen" style={{ background: tokens.bg, color: tokens.text, fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <div className="min-h-screen" style={{ background: T.bg, color: T.text, fontFamily: "'Inter', system-ui, sans-serif" }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
-        body { margin: 0; }
+        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+        body { margin: 0; -webkit-font-smoothing: antialiased; }
         .mono { font-family: 'JetBrains Mono', monospace; }
-        ::selection { background: rgba(99,102,241,0.2); }
+        ::selection { background: rgba(45,212,191,0.25); color: ${T.text}; }
+        html { scroll-behavior: smooth; }
       `}</style>
 
-      {/* --- Header --- */}
-      <header className="sticky top-0 z-50 backdrop-blur-xl" style={{ background: "rgba(250,250,250,0.8)", borderBottom: `1px solid ${tokens.border}` }}>
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      {/* ─── Header ──────────────────────────────────── */}
+      <header className="sticky top-0 z-50 backdrop-blur-xl" style={{ background: "rgba(8,12,18,0.82)", borderBottom: `1px solid ${T.border}` }}>
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: tokens.gradientPrimary }}>
-              <Rocket size={18} style={{ color: tokens.textInverse }} />
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: T.accent }}>
+              <Rocket size={16} style={{ color: T.bg }} />
             </div>
-            <div>
-              <div className="text-sm font-bold tracking-tight" style={{ color: tokens.text }}>DevMind</div>
-              <div className="text-[11px] uppercase tracking-widest" style={{ color: tokens.textMuted }}>Runtime governance</div>
-            </div>
+            <span className="text-sm font-bold tracking-tight mono">DevMind</span>
           </div>
-          <nav className="hidden md:flex items-center gap-6 text-sm font-medium" style={{ color: tokens.textSecondary }}>
-            <a href="#demo" className="hover:text-indigo-600 transition-colors">Live demo</a>
-            <a href="#architecture" className="hover:text-indigo-600 transition-colors">Architecture</a>
-            <a href="#tools" className="hover:text-indigo-600 transition-colors">MCP tools</a>
-            <a href="https://github.com/mordecaiusm922-create/devmind" className="inline-flex items-center gap-1.5 hover:text-indigo-600 transition-colors">
-              GitHub <ExternalLink size={14} />
-            </a>
-          </nav>
+          <div className="flex items-center gap-6">
+            <LiveTicker />
+            <nav className="hidden md:flex items-center gap-6 text-sm font-medium" style={{ color: T.text2 }}>
+              <a href="#demo" className="hover:text-teal-400 transition-colors">Demo</a>
+              <a href="#arch" className="hover:text-teal-400 transition-colors">Architecture</a>
+              <a href="#tools" className="hover:text-teal-400 transition-colors">MCP</a>
+              <a href="https://github.com/mordecaiusm922-create/devmind" className="inline-flex items-center gap-1.5 hover:text-teal-400 transition-colors">
+                GitHub <ExternalLink size={13} />
+              </a>
+            </nav>
+          </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 pt-16 pb-24">
-        {/* --- Hero --- */}
-        <section className="grid lg:grid-cols-2 gap-12 items-center">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-semibold uppercase tracking-wider mb-6" style={{ background: tokens.gradientLight, color: tokens.primary, border: `1px solid ${tokens.borderAccent}` }}>
-              <Satellite size={14} /> Live API · Deterministic engine
-            </div>
-            <h1 className="text-5xl lg:text-6xl font-extrabold leading-[1.08] tracking-tight" style={{ color: tokens.text }}>
-              The control plane
-              <span className="block mt-1" style={{ background: tokens.gradientPrimary, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-                between agent and production.
-              </span>
-            </h1>
-            <p className="mt-6 text-lg leading-8 max-w-xl" style={{ color: tokens.textSecondary }}>
-              DevMind intercepts every action an AI agent attempts against real infrastructure and evaluates it before execution.
-              The demo below calls the production API — every outcome you see is a real response.
-            </p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <a href="#demo" className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold text-white shadow-md hover:shadow-lg transition-all" style={{ background: tokens.gradientPrimary }}>
-                <Zap size={16} /> Run the live demo
-              </a>
-              <a href="https://github.com/mordecaiusm922-create/devmind" className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold transition-all" style={{ background: tokens.surface, color: tokens.text, border: `1px solid ${tokens.border}`, boxShadow: tokens.shadowCard }}>
-                <Code2 size={16} /> View source
-              </a>
-            </div>
-
-            <div className="mt-10 grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <MetricCard value="~50ms" label="Avg. evaluation latency" icon={Activity} />
-              <MetricCard value="178" label="Deterministic tests" icon={Shield} />
-              <MetricCard value="28" label="Risk scenarios" icon={BarChart3} />
-            </div>
-          </div>
-
-          <div className="rounded-3xl p-6 shadow-xl" style={{ background: tokens.surface, border: `1px solid ${tokens.border}`, boxShadow: tokens.shadowElevated }}>
-            <div className="flex items-center gap-2 mb-4">
-              <div className="w-3 h-3 rounded-full bg-red-400" />
-              <div className="w-3 h-3 rounded-full bg-yellow-400" />
-              <div className="w-3 h-3 rounded-full bg-green-400" />
-              <span className="mono text-xs ml-2" style={{ color: tokens.textMuted }}>devmind-2cej.onrender.com</span>
-              <Badge color={tokens.accentGreen} variant="filled">production</Badge>
-            </div>
-            <div className="rounded-2xl p-5" style={{ background: tokens.surfaceAlt, border: `1px solid ${tokens.border}` }}>
-              <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                <Activity size={16} style={{ color: tokens.primary }} /> How the demo works
-              </h3>
-              <p className="text-sm leading-6" style={{ color: tokens.textSecondary }}>
-                Pick a real-world scenario below, then click "Run against production". Your browser sends a direct HTTP request to the DevMind API and renders the live decision, risk score, and reasoning chain — nothing is simulated.
-              </p>
-              <p className="text-xs mt-3 italic" style={{ color: tokens.textMuted }}>
-                Free instance may take up to 20s on the first request after idle.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        {/* --- Live Demo --- */}
-        <section id="demo" className="mt-24 grid lg:grid-cols-[1fr_1.2fr] gap-8">
-          <div>
-            <h2 className="text-2xl font-bold mb-2 flex items-center gap-2">
-              <Terminal size={24} style={{ color: tokens.primary }} /> Live demo
-            </h2>
-            <p className="text-sm mb-6" style={{ color: tokens.textSecondary }}>Select a scenario to test against the production engine.</p>
-            <div className="space-y-3">
-              {SCENARIOS.map((s) => {
-                const isActive = s.id === activeId;
-                return (
-                  <motion.button
-                    key={s.id}
-                    whileHover={{ scale: 1.01 }}
-                    whileTap={{ scale: 0.99 }}
-                    onClick={() => { setActiveId(s.id); setLog([]); setResult(null); setError(null); }}
-                    className="w-full text-left rounded-2xl p-4 transition-all duration-200"
-                    style={{
-                      background: isActive ? tokens.gradientLight : tokens.surface,
-                      border: isActive ? `1px solid ${tokens.borderAccent}` : `1px solid ${tokens.border}`,
-                      boxShadow: isActive ? tokens.shadowElevated : tokens.shadowCard,
-                    }}
-                  >
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <span className="font-semibold" style={{ color: tokens.text }}>{s.title}</span>
-                        <div className="text-sm mono mt-1" style={{ color: tokens.textMuted }}>{s.actionLabel}</div>
-                      </div>
-                      <Badge color={tokens.primaryLight}>{s.surface}</Badge>
-                    </div>
-                  </motion.button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="rounded-3xl p-6 shadow-xl" style={{ background: tokens.surface, border: `1px solid ${tokens.border}`, boxShadow: tokens.shadowElevated }}>
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="font-semibold flex items-center gap-2">
-                <BarChart3 size={18} style={{ color: tokens.primary }} /> Decision trace
-              </h3>
-              <button
-                onClick={run}
-                disabled={running}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-md hover:shadow-lg transition-all disabled:opacity-70"
-                style={{ background: tokens.gradientPrimary, border: "none" }}
-              >
-                {running && <Loader2 size={14} className="animate-spin" />}
-                {running ? "Calling API…" : "Run against production"}
-              </button>
-            </div>
-
-            <div
-              className="mono rounded-2xl p-5 text-sm leading-7 overflow-x-auto min-h-[240px]"
-              style={{ background: tokens.surfaceAlt, border: `1px solid ${tokens.border}` }}
-            >
-              {log.length === 0 ? (
-                <span style={{ color: tokens.textMuted }}>Click the button to send a real request to the live API.</span>
-              ) : (
-                log.map((line) => (
-                  <div key={line.id} style={{ color: line.color, whiteSpace: "pre-wrap" }}>{line.text}</div>
-                ))
-              )}
-            </div>
-
-            <AnimatePresence>
-              {error && (
-                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mt-4 rounded-2xl p-4" style={{ background: "rgba(217,119,6,0.06)", border: "1px solid rgba(217,119,6,0.25)" }}>
-                  <span className="text-sm" style={{ color: tokens.accentYellow }}>{error}</span>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            <AnimatePresence>
-              {result && (
-                <motion.div
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  className="mt-4 rounded-2xl p-5"
-                  style={{ background: decisionBg(result.decision), border: `1px solid ${decisionColor(result.decision)}20` }}
-                >
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="font-semibold text-sm flex items-center gap-2">
-                      <CheckCircle2 size={18} style={{ color: decisionColor(result.decision) }} />
-                      Audit ID {result.audit_id?.slice(0, 8)}…
-                    </span>
-                    <Badge color={decisionColor(result.decision)} variant="filled">{result.decision}</Badge>
-                  </div>
-                  <p className="text-sm" style={{ color: tokens.textSecondary }}>
-                    Risk score: {result.risk_score} • Responded in {result.elapsedMs}ms
-                  </p>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        </section>
-
-        {/* --- Architecture --- */}
-        <section id="architecture" className="mt-24">
-          <div className="text-center max-w-3xl mx-auto mb-12">
-            <Badge color={tokens.accentYellow}>Architecture</Badge>
-            <h2 className="mt-4 text-3xl font-bold tracking-tight">Deterministic governance for every autonomous action.</h2>
-            <p className="mt-3 text-base leading-7" style={{ color: tokens.textSecondary }}>
-              Policy first, blast radius second, evidence third. No language model sits in the decision path — the same input always produces the same output.
-            </p>
-          </div>
-          <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-5">
-            <FeatureCard icon={Shield} title="Deterministic control" desc="Unsafe actions are stopped before execution. The decision is a code path, not a suggestion." />
-            <FeatureCard icon={Layers} title="Blast‑radius scoring" desc="Every action is mapped to a scope: process, service, cluster, account, or organization." />
-            <FeatureCard icon={Database} title="Tamper‑evident audit" desc="Each decision returns a unique audit ID and a full reasoning chain, replayable at any time." />
-            <FeatureCard icon={Orbit} title="Session memory" desc="Risk accumulates across the session, making repeated low‑grade violations harder to hide." />
-          </div>
-          <div className="grid md:grid-cols-2 gap-5 mt-5">
-            <div className="rounded-2xl p-6" style={{ background: tokens.surface, border: `1px solid ${tokens.border}`, boxShadow: tokens.shadowCard }}>
-              <div className="flex items-center gap-2 mb-3">
-                <Lock size={18} style={{ color: tokens.accentYellow }} />
-                <h3 className="font-semibold">Threat model</h3>
+      {/* ─── Hero ────────────────────────────────────── */}
+      <section className="relative overflow-hidden">
+        <ScanLines />
+        <div className="relative max-w-6xl mx-auto px-6 pt-20 pb-24">
+          <div className="grid lg:grid-cols-[1fr_1.1fr] gap-16 items-start">
+            {/* Left column — thesis */}
+            <div className="pt-6">
+              <div className="inline-flex items-center gap-2 rounded-full px-4 py-1.5 mb-8 text-xs font-semibold uppercase tracking-widest" style={{ background: T.surface, border: `1px solid ${T.borderA}`, color: T.accent }}>
+                <ScanLine size={13} /> Runtime Governance Engine
               </div>
-              <ul className="space-y-2 text-sm" style={{ color: tokens.textSecondary }}>
-                <li>• IAM wildcards that expand permissions across the org.</li>
-                <li>• Privileged pods and host networking in Kubernetes.</li>
-                <li>• Hardcoded secrets and private keys in payloads.</li>
-                <li>• ORG/ACCOUNT‑scoped changes — escalated unconditionally.</li>
-                <li>• Accumulated session risk from repeated low‑grade violations.</li>
+
+              <h1 className="text-5xl lg:text-6xl font-extrabold leading-[1.06] tracking-[-0.04em]" style={{ fontFamily: "'Sora', sans-serif" }}>
+                The control plane
+                <br />
+                <span style={{ color: T.accent }}>between agent</span>
+                <span className="block" style={{ color: T.text2 }}>and production.</span>
+              </h1>
+
+              <p className="mt-6 text-base leading-7 max-w-lg" style={{ color: T.text2 }}>
+                DevMind intercepts every action an AI agent attempts against real infrastructure
+                and evaluates it deterministically before execution. No language model in the
+                decision path — the same input always produces the same output.
+              </p>
+
+              <div className="mt-10 flex items-center gap-6 flex-wrap">
+                <Metric value="~50ms" label="avg. evaluation" />
+                <div className="w-px h-8" style={{ background: T.border }} />
+                <Metric value="178" label="tests, CI-enforced" />
+                <div className="w-px h-8" style={{ background: T.border }} />
+                <Metric value="28" label="risk scenarios" />
+              </div>
+
+              <div className="mt-8 flex gap-3">
+                <a href="https://github.com/mordecaiusm922-create/devmind" className="inline-flex items-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold transition-all hover:-translate-y-0.5" style={{ background: T.surface, border: `1px solid ${T.border}`, color: T.text }}>
+                  <Code2 size={15} /> View source
+                </a>
+                <a href="https://devmind-2cej.onrender.com/health" className="inline-flex items-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold transition-all hover:-translate-y-0.5" style={{ border: `1px solid ${T.borderA}`, color: T.accent }}>
+                  <Activity size={15} /> API health
+                </a>
+              </div>
+            </div>
+
+            {/* Right column — live terminal demo IN the hero */}
+            <div id="demo" className="rounded-2xl overflow-hidden" style={{ background: T.surface, border: `1px solid ${T.border}`, boxShadow: `0 0 0 1px ${T.glow}, 0 20px 60px rgba(0,0,0,0.4)` }}>
+              {/* Terminal chrome */}
+              <div className="flex items-center justify-between px-5 py-3" style={{ background: T.surface2, borderBottom: `1px solid ${T.border}` }}>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full" style={{ background: "#ef4444" }} />
+                  <div className="w-3 h-3 rounded-full" style={{ background: "#f59e0b" }} />
+                  <div className="w-3 h-3 rounded-full" style={{ background: "#10b981" }} />
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="mono text-[11px] tracking-wider" style={{ color: T.text3 }}>devmind-2cej.onrender.com</span>
+                  <Badge color={T.green} filled>live</Badge>
+                </div>
+              </div>
+
+              {/* Scenario selector */}
+              <div className="grid grid-cols-2 gap-px p-2" style={{ background: T.surface2 }}>
+                {SCENARIOS.map(s => {
+                  const active = s.id === activeId;
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => { setActiveId(s.id); reset(); }}
+                      className="text-left px-4 py-3 rounded-xl transition-all duration-200"
+                      style={{
+                        background: active ? T.surface : "transparent",
+                        border: active ? `1px solid ${T.borderA}` : "1px solid transparent",
+                      }}
+                    >
+                      <div className="text-xs font-semibold" style={{ color: active ? T.text : T.text2 }}>{s.title}</div>
+                      <div className="text-[10px] mono mt-0.5" style={{ color: T.text3 }}>{s.surface} · {s.agent}</div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Terminal output */}
+              <div
+                ref={terminalRef}
+                className="mono text-[12px] leading-7 px-5 py-4 overflow-y-auto"
+                style={{ height: 260, background: T.bg, color: T.text2 }}
+              >
+                {log.length === 0 && (
+                  <div style={{ color: T.text3 }}>
+                    <div>Select a scenario and run it against the production API.</div>
+                    <div className="mt-2">Every response below is a real, live decision.</div>
+                  </div>
+                )}
+                {log.map(l => (
+                  <div key={l.id} style={{ color: l.color, whiteSpace: "pre-wrap", minHeight: l.text === "" ? "0.5em" : "auto" }}>
+                    {l.text || "\u00A0"}
+                  </div>
+                ))}
+
+                {/* Result card inline */}
+                <AnimatePresence>
+                  {result && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      className="mt-3 rounded-xl p-4"
+                      style={{ background: decisionBg(result.decision), border: `1px solid ${decisionClr(result.decision)}20` }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-xs flex items-center gap-1.5" style={{ color: decisionClr(result.decision) }}>
+                          <CheckCircle2 size={14} /> {result.decision}
+                        </span>
+                        <span className="text-[10px] mono" style={{ color: T.text3 }}>audit: {result.audit_id?.slice(0, 12)}</span>
+                      </div>
+                      <div className="text-[11px] mt-1" style={{ color: T.text3 }}>
+                        risk_score: {result.risk_score} · {result.elapsedMs}ms
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {error && (
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-3 rounded-xl p-3 text-[11px]" style={{ background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.2)", color: T.amber }}>
+                    {error}
+                  </motion.div>
+                )}
+              </div>
+
+              {/* Action bar */}
+              <div className="flex items-center gap-3 px-5 py-3" style={{ background: T.surface2, borderTop: `1px solid ${T.border}` }}>
+                <button
+                  onClick={run}
+                  disabled={running}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all disabled:opacity-60 flex-1 justify-center"
+                  style={{ background: T.accent, color: T.bg, border: "none" }}
+                >
+                  {running && <Loader2 size={14} className="animate-spin" />}
+                  {running ? "Evaluating…" : "Run against production"}
+                  {!running && <Zap size={14} />}
+                </button>
+                <button
+                  onClick={reset}
+                  className="px-4 py-2.5 rounded-xl text-sm font-medium transition-all"
+                  style={{ background: "transparent", border: `1px solid ${T.border}`, color: T.text3 }}
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ─── Architecture ────────────────────────────── */}
+      <section id="arch" className="py-24">
+        <div className="max-w-6xl mx-auto px-6">
+          <div className="mb-14">
+            <Badge color={T.amber}>Architecture</Badge>
+            <h2 className="mt-4 text-3xl font-bold tracking-[-0.03em]" style={{ fontFamily: "'Sora', sans-serif" }}>
+              Deterministic governance across every autonomous action.
+            </h2>
+            <p className="mt-3 max-w-2xl text-base leading-7" style={{ color: T.text2 }}>
+              Policy first, blast radius second, evidence third. The same payload always
+              produces the same decision — no non-determinism, no model in the loop.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
+            {[
+              [Shield, "Deterministic control", "Unsafe actions are stopped before execution. The decision is a code path, not a suggestion."],
+              [Layers, "Blast‑radius scoring", "Every action maps to a scope: process, service, cluster, account, or organization."],
+              [Database, "Tamper‑evident audit", "Each decision returns a unique audit ID and a full reasoning chain."],
+              [Gauge, "Session memory", "Risk accumulates across the session — repeated low‑grade violations become harder to hide."],
+            ].map(([Icon, title, desc]) => (
+              <div key={title} className="rounded-2xl p-6 transition-all hover:border-teal-500/20" style={{ background: T.surface, border: `1px solid ${T.border}` }}>
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center mb-4" style={{ background: T.surface2 }}>
+                  <Icon size={17} style={{ color: T.accent }} />
+                </div>
+                <h3 className="text-sm font-semibold mb-2">{title}</h3>
+                <p className="text-sm leading-6" style={{ color: T.text2 }}>{desc}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4 mt-4">
+            <div className="rounded-2xl p-6" style={{ background: T.surface, border: `1px solid ${T.border}` }}>
+              <div className="flex items-center gap-2 mb-3">
+                <Lock size={16} style={{ color: T.amber }} />
+                <h3 className="font-semibold text-sm">Threat model</h3>
+              </div>
+              <ul className="space-y-2 text-sm" style={{ color: T.text2 }}>
+                <li>• IAM wildcards expanding permissions across the org</li>
+                <li>• Privileged pods & host networking in Kubernetes</li>
+                <li>• Hardcoded secrets and private keys in payloads</li>
+                <li>• ORG/ACCOUNT scoped changes — escalated unconditionally</li>
+                <li>• Accumulated session risk from repeated violations</li>
               </ul>
             </div>
-            <div className="rounded-2xl p-6" style={{ background: tokens.surface, border: `1px solid ${tokens.border}`, boxShadow: tokens.shadowCard }}>
+            <div className="rounded-2xl p-6" style={{ background: T.surface, border: `1px solid ${T.border}` }}>
               <div className="flex items-center gap-2 mb-3">
-                <Cpu size={18} style={{ color: tokens.primary }} />
-                <h3 className="font-semibold">Not a prompt layer</h3>
+                <Cpu size={16} style={{ color: T.accent }} />
+                <h3 className="font-semibold text-sm">Not a prompt layer</h3>
               </div>
-              <p className="text-sm leading-7" style={{ color: tokens.textSecondary }}>
-                A prompt can shape output. A control plane changes execution. This layer sits at the application boundary, evaluating the action itself — not asking the model to behave.
+              <p className="text-sm leading-7" style={{ color: T.text2 }}>
+                A prompt can shape output. A control plane changes execution. DevMind
+                sits at the application boundary, evaluating the action itself — not
+                asking the model to behave.
               </p>
             </div>
           </div>
-        </section>
 
-        {/* --- MCP Tools --- */}
-        <section id="tools" className="mt-24">
-          <div className="text-center max-w-3xl mx-auto mb-12">
-            <Badge color={tokens.primary}>MCP integration</Badge>
-            <h2 className="mt-4 text-3xl font-bold tracking-tight">9 tools, exposed over MCP</h2>
-            <p className="mt-3 text-base leading-7" style={{ color: tokens.textSecondary }}>
-              Works with any MCP‑compatible client — Claude Desktop, Cursor, or your own. Governance acts on the action, not on which model produced it.
+          {/* Control flow */}
+          <div className="mt-4 rounded-2xl p-6" style={{ background: T.surface, border: `1px solid ${T.border}` }}>
+            <div className="flex items-center gap-2 mb-4">
+              <GitBranch size={16} style={{ color: T.accent }} />
+              <h3 className="font-semibold text-sm">Decision ladder</h3>
+            </div>
+            <div className="mono text-sm leading-8" style={{ color: T.text2 }}>
+              <span style={{ color: T.text }}>agent tool call / infra change</span>
+              <br />↓<br />
+              <span style={{ color: T.accent }}>policy_engine.evaluate_action() / infra_engine.evaluate_change()</span>
+              <br />↓<br />
+              <span style={{ color: T.text }}>hard blocks → blast radius gate → production escalation → risk scoring</span>
+              <br />↓<br />
+              <span style={{ color: T.text }}>ALLOW · REVIEW · ESCALATE · BLOCK</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ─── MCP Tools ────────────────────────────────── */}
+      <section id="tools" className="py-24" style={{ background: T.surface }}>
+        <div className="max-w-6xl mx-auto px-6">
+          <div className="mb-14">
+            <Badge color={T.accent}>MCP integration</Badge>
+            <h2 className="mt-4 text-3xl font-bold tracking-[-0.03em]" style={{ fontFamily: "'Sora', sans-serif" }}>
+              9 tools, exposed over MCP
+            </h2>
+            <p className="mt-3 max-w-2xl text-base leading-7" style={{ color: T.text2 }}>
+              Works with any MCP‑compatible client — Claude Desktop, Cursor, or your own.
+              Governance acts on the action, not on which model produced it.
             </p>
           </div>
-          <div className="overflow-hidden rounded-2xl shadow-md" style={{ background: tokens.surface, border: `1px solid ${tokens.border}` }}>
-            <div className="grid grid-cols-[280px_1fr] px-6 py-4 text-xs font-semibold uppercase tracking-wider" style={{ background: tokens.surfaceAlt, color: tokens.textMuted, borderBottom: `1px solid ${tokens.border}` }}>
+
+          <div className="overflow-hidden rounded-2xl" style={{ border: `1px solid ${T.border}` }}>
+            <div className="grid grid-cols-[260px_1fr] px-6 py-3 text-xs font-semibold uppercase tracking-widest" style={{ color: T.text3, background: T.surface2, borderBottom: `1px solid ${T.border}` }}>
               <div>Tool</div>
               <div>Description</div>
             </div>
             {TOOLS.map(([tool, desc], i) => (
               <div
                 key={tool}
-                className="grid grid-cols-[280px_1fr] px-6 py-4 text-sm items-center"
-                style={{ borderBottom: i !== TOOLS.length - 1 ? `1px solid ${tokens.border}` : "none" }}
+                className="grid grid-cols-[260px_1fr] px-6 py-3.5 text-sm items-center"
+                style={{ borderBottom: i !== TOOLS.length - 1 ? `1px solid ${T.border}` : "none", background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.008)" }}
               >
-                <code className="mono font-medium" style={{ color: tokens.primary }}>{tool}</code>
-                <span style={{ color: tokens.textSecondary }}>{desc}</span>
+                <code className="mono font-medium" style={{ color: T.accent }}>{tool}</code>
+                <span style={{ color: T.text2 }}>{desc}</span>
               </div>
             ))}
           </div>
-        </section>
+        </div>
+      </section>
 
-        {/* --- Control flow & CTA --- */}
-        <section className="mt-24 grid md:grid-cols-3 gap-5">
-          <div className="md:col-span-2 rounded-2xl p-6" style={{ background: tokens.surface, border: `1px solid ${tokens.border}`, boxShadow: tokens.shadowCard }}>
-            <div className="flex items-center gap-2 mb-4">
-              <GitBranch size={18} style={{ color: tokens.primary }} />
-              <h3 className="font-semibold">Control flow</h3>
+      {/* ─── Footer ───────────────────────────────────── */}
+      <footer className="py-10" style={{ borderTop: `1px solid ${T.border}` }}>
+        <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-4 text-sm" style={{ color: T.text3 }}>
+          <div className="flex items-center gap-3">
+            <div className="w-6 h-6 rounded flex items-center justify-center" style={{ background: T.accent }}>
+              <Rocket size={11} style={{ color: T.bg }} />
             </div>
-            <div className="mono text-sm leading-8" style={{ color: tokens.textSecondary }}>
-              <div style={{ color: tokens.text }}>agent tool call / infra change</div>
-              <div>↓</div>
-              <div style={{ color: tokens.primary }}>policy_engine.evaluate_action() / infra_engine.evaluate_change()</div>
-              <div>↓</div>
-              <div style={{ color: tokens.text }}>hard blocks → blast radius gate → production escalation → risk scoring</div>
-              <div>↓</div>
-              <div style={{ color: tokens.text }}>ALLOW · REVIEW · ESCALATE · BLOCK</div>
-            </div>
+            <span>DevMind · Runtime governance for autonomous agents</span>
           </div>
-          <div className="rounded-2xl p-6 flex flex-col justify-between" style={{ background: tokens.gradientLight, border: `1px solid ${tokens.borderAccent}` }}>
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <Rocket size={18} style={{ color: tokens.primary }} />
-                <h3 className="font-semibold">Get involved</h3>
-              </div>
-              <p className="text-sm leading-6" style={{ color: tokens.textSecondary }}>
-                DevMind is open source and early. If you're running agents against real infrastructure, your feedback on real edge cases is the most valuable thing right now.
-              </p>
-            </div>
-            <a
-              href="https://github.com/mordecaiusm922-create/devmind"
-              className="mt-5 inline-flex items-center gap-2 text-sm font-semibold py-2.5 px-5 rounded-xl self-start transition-all"
-              style={{ background: tokens.gradientPrimary, color: tokens.textInverse, boxShadow: tokens.shadowCard }}
-            >
-              View on GitHub <ArrowRight size={16} />
-            </a>
-          </div>
-        </section>
-      </main>
-
-      <footer className="border-t py-8" style={{ borderColor: tokens.border }}>
-        <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-4 text-sm" style={{ color: tokens.textMuted }}>
-          <span>DevMind · Runtime governance for autonomous agents</span>
           <div className="flex gap-6">
-            <a href="https://github.com/mordecaiusm922-create/devmind" className="hover:text-indigo-600 transition-colors">GitHub</a>
-            <a href="#demo" className="hover:text-indigo-600 transition-colors">Demo</a>
+            <a href="https://github.com/mordecaiusm922-create/devmind" className="hover:text-teal-400 transition-colors">GitHub</a>
+            <a href="https://devmind-2cej.onrender.com/health" className="hover:text-teal-400 transition-colors">API status</a>
+            <a href="https://devmind-mcp.onrender.com/mcp" className="hover:text-teal-400 transition-colors">MCP endpoint</a>
           </div>
         </div>
       </footer>
