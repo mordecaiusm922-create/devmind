@@ -289,6 +289,35 @@ simulate_real_risks.py  — 28 real-world scenarios across fintech, healthcare,
 
 The policy engine (`policy_engine.py`) mirrors this ordering for tool-call actions, with its own signal library for terminal, filesystem, database, and cloud surfaces.
 
+## Semantic parsing (Terraform & Kubernetes)
+
+Beyond regex-based signal matching, DevMind's infra engine parses structured infrastructure changes directly:
+
+- **Terraform**: accepts real `terraform plan -json` output. Reads `resource_changes[].type` and `.change.actions` to classify destructive operations against a resource taxonomy (data persistence, IAM scope, network scope, cluster scope) — and infers blast radius from the plan's actual structure when the caller doesn't declare one explicitly.
+- **Kubernetes**: accepts real Pod/Deployment YAML manifests. Parses `securityContext`, `hostNetwork`/`hostPID`/`hostIPC`, and capability lists against the official [Kubernetes Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/) (Baseline and Restricted profiles).
+
+Both parsers are additive: if the payload isn't valid structured input, the engine falls back to the existing regex-based signal matching — nothing about the current behavior changes for callers who pass plain strings.
+
+```python
+# Real terraform plan -json, not a string someone typed
+plan_json = subprocess.run(["terraform", "plan", "-out=tfplan"], ...)
+plan_json = subprocess.run(["terraform", "show", "-json", "tfplan"], capture_output=True)
+
+response = requests.post(
+    "https://devmind-2cej.onrender.com/evaluate-change",
+    json={
+        "agent_id": "cursor-agent",
+        "change_type": "terraform_apply",
+        "surface": "infrastructure",
+        "payload": plan_json.stdout,
+        "affects_production": True,
+    }
+)
+# blast_radius is inferred from the plan itself if not declared --
+# no need to manually classify "this deletes an EBS volume" as ORG-scoped.
+```
+
+181 tests (178 core invariants + 3 covering the semantic parsers), all passing in CI.
 ---
 
 ## Testing philosophy
