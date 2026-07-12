@@ -29,7 +29,15 @@ from core.types import (
     GovernanceDecision,
     RiskBand,
 )
-
+from engines.terraform_semantic import (
+    parse_terraform_plan,
+    extract_semantic_signals,
+    infer_blast_radius_from_plan,
+)
+from engines.k8s_semantic import (
+    parse_k8s_manifest,
+    extract_semantic_signals as extract_k8s_semantic_signals,
+)
 
 # =============================================================================
 # Signal definitions — (name, severity_weight, surface, pattern)
@@ -176,11 +184,47 @@ def evaluate_change(change: AgentChange) -> GovernanceDecision:
     )
 
     # -------------------------------------------------------------------
-    # Step 1: Collect matched signals (always run, used by every step)
+    # Step 0: Semantic parsing -- if payload is a real `terraform plan -json`
+    # or Kubernetes Pod/Deployment YAML, extract structural signals with
+    # certainty instead of relying only on regex over the raw string.
+    # Additive: unparseable payloads fall through silently to regex matching.
     # -------------------------------------------------------------------
     score = 0
     critical_hit: str | None = None
+    semantic_signals: list[dict[str, Any]] = []
 
+    parsed_plan = parse_terraform_plan(change.payload)
+    if parsed_plan is not None:
+        semantic_signals = extract_semantic_signals(parsed_plan)
+        if semantic_signals:
+            why_chain.append(
+                f"Semantic parse: valid terraform plan JSON detected, "
+                f"{len(semantic_signals)} structural signal(s) found"
+            )
+        # Only fill in blast radius if caller left it at the default --
+        # never override an explicitly declared value.
+        if change.impact.blast_radius == BlastRadius.PROCESS:
+            inferred = infer_blast_radius_from_plan(parsed_plan)
+            if inferred is not None:
+                change.impact.blast_radius = BlastRadius(inferred)
+                why_chain.append(
+                    f"Blast radius inferred from plan structure: {inferred} "
+                    f"(no explicit blast_radius was declared)"
+                )
+
+    parsed_manifest = parse_k8s_manifest(change.payload)
+    if parsed_manifest is not None:
+        k8s_semantic_signals = extract_k8s_semantic_signals(parsed_manifest)
+        semantic_signals.extend(k8s_semantic_signals)
+        if k8s_semantic_signals:
+            why_chain.append(
+                f"Semantic parse: valid Kubernetes Pod/Deployment YAML detected, "
+                f"{len(k8s_semantic_signals)} structural signal(s) found"
+            )
+
+    # -------------------------------------------------------------------
+    # Step 1: Collect matched signals (regex, always run over raw payload)
+    # -------------------------------------------------------------------
     for name, weight, sig_surface, pattern in _SIGNALS:
         if sig_surface != "*" and sig_surface != target_surface:
             continue
@@ -194,6 +238,16 @@ def evaluate_change(change: AgentChange) -> GovernanceDecision:
             why_chain.append(f"Signal matched: {name} (+{weight})")
             if name in _CRITICAL_SIGNALS and critical_hit is None:
                 critical_hit = name
+
+    # -------------------------------------------------------------------
+    # Step 1b: Fold in semantic signals from Step 0 (if any were found)
+    # -------------------------------------------------------------------
+    for sig in semantic_signals:
+        score += sig["severity"]
+        matched_signals.append(sig)
+        why_chain.append(
+            f"Semantic signal matched: {sig['name']} (+{sig['severity']}) -- {sig['detail']}"
+        )
 
     score = min(score, 100)
 

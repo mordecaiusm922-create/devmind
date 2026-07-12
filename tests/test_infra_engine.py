@@ -28,6 +28,7 @@ from core.types import (
     RiskBand,
 )
 from engines.infra_engine import evaluate_change
+from engines.k8s_semantic import parse_k8s_manifest
 
 
 # =============================================================================
@@ -366,6 +367,94 @@ class TestSurfaceIsolation:
         decision = evaluate_change(c)
         signal_names = [s["name"] for s in decision.signals]
         assert "iam_wildcard_action" not in signal_names
+
+
+# =============================================================================
+# Kubernetes semantic parsing: structured PSS classification with regex fallback
+# =============================================================================
+
+class TestKubernetesSemanticParsing:
+    def test_privileged_container_emits_high_baseline_signal(self) -> None:
+        payload = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unsafe-app
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: registry.example/app:v1
+          securityContext:
+            privileged: true
+"""
+        decision = evaluate_change(change(
+            change_type=ChangeType.K8S_MANIFEST,
+            surface=ActionSurface.KUBERNETES,
+            payload=payload,
+        ))
+
+        signal = next(
+            item for item in decision.signals
+            if item["name"] == "semantic_k8s_baseline_privileged_container"
+        )
+        assert 35 <= signal["severity"] <= 45
+
+    def test_clean_manifest_emits_no_semantic_signals(self) -> None:
+        payload = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clean-app
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: registry.example/app:v1
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+"""
+        decision = evaluate_change(change(
+            change_type=ChangeType.K8S_MANIFEST,
+            surface=ActionSurface.KUBERNETES,
+            payload=payload,
+        ))
+
+        assert not [
+            item for item in decision.signals
+            if item["name"].startswith("semantic_k8s_")
+        ]
+
+    def test_invalid_yaml_falls_back_silently_to_regex(self) -> None:
+        payload = """\
+apiVersion: v1
+kind: Pod
+metadata: [broken
+spec:
+  containers:
+    - name: unsafe
+      securityContext:
+        privileged: true
+"""
+        assert parse_k8s_manifest(payload) is None
+
+        decision = evaluate_change(change(
+            change_type=ChangeType.K8S_MANIFEST,
+            surface=ActionSurface.KUBERNETES,
+            payload=payload,
+        ))
+        signal_names = [item["name"] for item in decision.signals]
+        assert "privileged_container" in signal_names
+        assert not any("Kubernetes Pod/Deployment YAML detected" in step for step in decision.why_chain)
 
 
 # =============================================================================
