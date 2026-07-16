@@ -1,0 +1,40 @@
+name: 🔑 Request MCP Token
+description: Request a bearer token to connect to the remote DevMind MCP server (devmind-mcp.onrender.com)
+title: "[Token Request] "
+labels: ["token-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for wanting to try DevMind's remote MCP server. Tokens are issued manually for now (early stage — no self-serve auth yet).
+
+        Fill this out and I'll reply here with a token, usually within a day or two.
+
+        **Alternative:** you don't need a token at all if you run the server locally instead — see the "Run it locally" section in the [README](https://github.com/mordecaiusm922-create/devmind#run-it-locally-instead).
+
+  - type: input
+    id: use-case
+    attributes:
+      label: What are you connecting it to?
+      description: Claude Desktop, Cursor, another MCP client, or just testing manually?
+      placeholder: "e.g. Cursor, on a Terraform-heavy repo"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: What's the agent doing that you want governed?
+      description: Even a one-liner helps — this is genuinely useful signal for me, not a formality.
+      placeholder: "e.g. Claude Code applies Terraform changes to our staging AWS account"
+    validations:
+      required: false
+
+  - type: input
+    id: contact
+    attributes:
+      label: Where should I send the token?
+      description: GitHub is fine (I'll reply here), or leave an email/X handle if you'd rather.
+      placeholder: "reply here, or you@example.com, or @yourhandle"
+    validations:
+      required: true
