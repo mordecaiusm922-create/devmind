@@ -1,4 +1,4 @@
-# DevMind — Runtime Governance for Autonomous AI Agents
+﻿# DevMind — Runtime Governance for Autonomous AI Agents
 
 > **The control plane that sits between an agent's decision and your production systems.**
 
@@ -6,7 +6,7 @@ DevMind intercepts, evaluates, and audits every action an AI agent attempts to t
 
 **Live API:** [devmind-2cej.onrender.com/health](https://devmind-2cej.onrender.com/health)
 **Live MCP server:** [devmind-mcp.onrender.com/mcp](https://devmind-mcp.onrender.com/mcp)
-**178 invariant tests passing · CI green on every push**
+**181 invariant tests passing · CI green on every push**
 
 ---
 
@@ -95,7 +95,7 @@ DevMind runs as a remote MCP server. Any MCP-compatible agent — Claude Desktop
 
 **Live MCP endpoint:** `https://devmind-mcp.onrender.com/mcp`
 
-The remote server requires a bearer token — it evaluates real tool calls (`execute_command`, `write_file`, `delete_file`, `db_query`, `deploy`), so it is not left open to anonymous requests. Request access or run your own instance using the local setup below.
+The remote server requires a bearer token — it evaluates real tool calls (`execute_command`, `write_file`, `delete_file`, `db_query`, `deploy`), so it is not left open to anonymous requests. **This is currently a single shared bearer token, not per-agent or per-user identity.** That's a deliberate trade-off for this stage — sufficient for single-tenant use and evaluation, but it does not yet give you per-identity audit attribution beyond the `agent_id`/`session_id` fields the caller supplies. Per-agent credentials are a natural next step once there's a real multi-tenant use case driving it. [Request a token by opening an issue](https://github.com/mordecaiusm922-create/devmind/issues/new?template=request_token.yml) — usually answered within a day or two — or run your own instance using the local setup below.
 
 ### Claude Desktop
 
@@ -202,7 +202,7 @@ Both return in well under 100ms — deterministic Python running in-process, not
 git clone https://github.com/mordecaiusm922-create/devmind
 cd devmind
 pip install -r requirements.txt
-python -m pytest tests/ -v          # 178 tests, deterministic, no mocks
+python -m pytest tests/ -v          # 181 tests, deterministic, no mocks
 python simulate_real_risks.py       # 28 real-world scenarios
 ```
 
@@ -261,13 +261,15 @@ core/
 engines/
   policy_engine.py     — evaluate_action()  — tool-call governance
   infra_engine.py      — evaluate_change()  — Terraform / K8s / Helm governance
+  terraform_semantic.py — semantic parser for `terraform plan -json`
+  k8s_semantic.py       — semantic parser for K8s Pod/Deployment manifests
   release_gate.py      — evaluate_release() — session + artifact release governance
   audit_engine.py       — permanent, structured decision log
 
 tests/
   test_policy_engine.py
-  test_infra_engine.py
-  test_release_gate.py  — 178 invariant tests total
+  test_infra_engine.py  — includes semantic parser coverage
+  test_release_gate.py  — 181 invariant tests total
 
 api.py                  — FastAPI wrapper exposing all three engines over HTTP
 devmind_server.py        — MCP server exposing DevMind as agent-callable tools
@@ -281,13 +283,42 @@ simulate_real_risks.py  — 28 real-world scenarios across fintech, healthcare,
 
 `evaluate_change()` applies rules in this order — first decisive match wins:
 
-1. **Hard blocks** — deterministic, no override. IAM wildcards, hardcoded secrets, public S3 buckets, open security groups, privileged containers, `hostNetwork`/`hostPID`, cluster-admin bindings.
-2. **Blast radius gate** — `ORG` or `ACCOUNT` scope → `ESCALATE`, unconditionally. This is the invariant that would have caught PocketOS.
-3. **Production escalation** — a critical signal plus `affects_production=True` → `BLOCK`.
-4. **Signal-based risk scoring** — 25+ weighted regex signals across Terraform, Kubernetes, and generic surfaces.
-5. **Risk threshold decision** — probabilistic fallback when no hard rule fires (≥85 `BLOCK`, ≥50 `REVIEW`).
+1. **Semantic parsing** — if the payload is a real `terraform plan -json` or a Kubernetes Pod/Deployment manifest, the engine reads the actual structure (resource types, planned actions, security context) instead of relying only on pattern matching. Falls through silently to the steps below if the payload isn't parseable as either.
+2. **Hard blocks** — deterministic, no override. IAM wildcards, hardcoded secrets, public S3 buckets, open security groups, privileged containers, `hostNetwork`/`hostPID`, cluster-admin bindings.
+3. **Blast radius gate** — `ORG` or `ACCOUNT` scope → `ESCALATE`, unconditionally. This is the invariant that would have caught PocketOS. If the caller didn't declare a blast radius and the payload was a parseable Terraform plan, it can be inferred here from the plan's own structure.
+4. **Production escalation** — a critical signal plus `affects_production=True` → `BLOCK`.
+5. **Signal-based risk scoring** — 25+ weighted regex signals across Terraform, Kubernetes, and generic surfaces.
+6. **Risk threshold decision** — probabilistic fallback when no hard rule fires (≥85 `BLOCK`, ≥50 `REVIEW`).
 
 The policy engine (`policy_engine.py`) mirrors this ordering for tool-call actions, with its own signal library for terminal, filesystem, database, and cloud surfaces.
+
+### Semantic parsing (Terraform & Kubernetes)
+
+Beyond regex-based signal matching, the infra engine parses structured infrastructure changes directly:
+
+- **Terraform**: accepts real `terraform plan -json` output. Reads `resource_changes[].type` and `.change.actions` to classify destructive operations against a resource taxonomy (data persistence, IAM scope, network scope, cluster scope) — and infers blast radius from the plan's actual structure when the caller doesn't declare one explicitly.
+- **Kubernetes**: accepts real Pod/Deployment YAML manifests. Parses `securityContext`, `hostNetwork`/`hostPID`/`hostIPC`, and capability lists against the official [Kubernetes Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/) (Baseline and Restricted profiles).
+
+Both parsers are additive: if the payload isn't valid structured input, the engine falls back to the existing regex-based signal matching — nothing about existing behavior changes for callers who pass plain strings.
+
+```python
+# Real terraform plan -json, not a string someone typed
+plan = subprocess.run(["terraform", "plan", "-out=tfplan"], capture_output=True)
+plan_json = subprocess.run(["terraform", "show", "-json", "tfplan"], capture_output=True)
+
+response = requests.post(
+    "https://devmind-2cej.onrender.com/evaluate-change",
+    json={
+        "agent_id": "cursor-agent",
+        "change_type": "terraform_apply",
+        "surface": "infrastructure",
+        "payload": plan_json.stdout,
+        "affects_production": True,
+    }
+)
+# blast_radius is inferred from the plan itself if not declared --
+# no need to manually classify "this deletes an EBS volume" as ORG-scoped.
+```
 
 ---
 
@@ -309,7 +340,17 @@ def test_org_blast_radius_always_escalates():
     assert decision.escalation_required == True
 ```
 
-178 tests, zero mocks on the decision logic itself. If someone weakens an invariant, CI fails before it reaches main.
+181 tests, zero mocks on the decision logic itself. If someone weakens an invariant, CI fails before it reaches main.
+
+---
+
+## Known limitations
+
+Stated plainly, because a governance tool that hides its own gaps isn't trustworthy:
+
+- **Pattern-based detection can be evaded by obfuscation.** Outside of Terraform plan JSON and Kubernetes manifests (which are now parsed structurally), signal matching is regex over the payload string. A payload that fragments a destructive command across multiple session actions — for example, decoding a base64 command into a file in one action and executing that file in a later one — can currently pass each individual check. Closing this class of evasion (session-level payload correlation, broader semantic parsing) is on the roadmap, not solved today.
+- **Semantic parsing covers Terraform and Kubernetes only.** Helm values, Pulumi, CloudFormation, and other IaC formats are still evaluated via regex signals, not structural parsing.
+- **MCP authentication is a shared bearer token**, not per-agent or per-user identity (see "Connect via remote MCP" above).
 
 ---
 
@@ -324,9 +365,12 @@ def test_org_blast_radius_always_escalates():
 ## Roadmap
 
 - [x] Remote MCP server (`devmind-mcp.onrender.com`)
+- [x] Semantic parsing for Terraform plans and Kubernetes manifests
+- [ ] Session-level payload correlation (close the obfuscation/fragmentation gap above)
 - [ ] PyPI package + CLI (`pip install devmind-agent`, `devmind serve`)
 - [ ] GitHub Action (`devmind-action`) — intercept agent PRs in CI/CD pipelines
 - [ ] Kubernetes Admission Webhook — `infra_engine` enforced at the cluster level
+- [ ] Per-agent MCP identity (beyond the current shared bearer token)
 - [ ] Agent reputation system — cross-session trust scores persisted in Supabase
 - [ ] Compliance mapping (SOC2, ISO 27001, NIST AI RMF)
 - [ ] Governance dashboard — visualize session risk, blocked actions, audit trail
