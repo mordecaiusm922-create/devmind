@@ -172,6 +172,14 @@ SIGNALS: tuple[Signal, ...] = (
            re.compile(r"\btruncate\s+(table\s+)?\w+", re.I)),
 
     # --- Cloud / Infrastructure ---
+    Signal("terraform_destroy_cli", "critical", "terminal",
+           re.compile(r"\bterraform\b[^\r\n]*\bdestroy\b", re.I)),
+    Signal("terraform_auto_approve_destructive", "critical", "terminal",
+           re.compile(r"\bterraform\b[^\r\n]*\b(destroy|apply)\b[^\r\n]*-auto-approve\b", re.I)),
+    Signal("kubectl_delete_cli",     "critical", "terminal",
+           re.compile(r"\bkubectl\b[^\r\n]*\bdelete\b", re.I)),
+    Signal("helm_uninstall_cli",     "critical", "terminal",
+           re.compile(r"\bhelm\b[^\r\n]*\buninstall\b", re.I)),
     Signal("iam_wildcard",          "critical", "cloud",
            re.compile(r"['\"]?[Aa]ction['\"]?\s*[:=]\s*['\"]?\*['\"]?|['\"]?[Rr]esource['\"]?\s*[:=]\s*['\"]?\*['\"]?|\*:\*", re.I)),
     Signal("public_cloud_resource", "critical", "*",

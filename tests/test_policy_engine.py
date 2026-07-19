@@ -336,3 +336,25 @@ class TestScoreBounds:
         assert 0 <= d.risk_score <= 100, (
             f"score={d.risk_score} out of bounds for '{payload}'"
         )
+
+def test_terraform_destroy_cli_blocks_in_production() -> None:
+    """
+    Regression test — PocketOS-style incident. Loom found that 	erraform destroy
+    invoked via bash/execute (not through infra_engine's Terraform-plan-JSON path)
+    was silently ALLOWed in production. Must BLOCK.
+    """
+    d = evaluate_action(
+        action(
+            tool="bash",
+            operation="execute",
+            payload="terraform destroy -target=aws_ebs_volume.production_db -auto-approve",
+            environment="production",
+        )
+    )
+    assert d.decision == Decision.BLOCK, (
+        f"REGRESSION: terraform destroy via bash must BLOCK in production, "
+        f"got {d.decision} (risk_score={d.risk_score})"
+    )
+    assert d.risk_score >= 85, (
+        f"REGRESSION: risk_score must be >= 85, got {d.risk_score}"
+    )
