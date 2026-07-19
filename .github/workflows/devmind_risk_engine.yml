@@ -1,4 +1,4 @@
-﻿name: DevMind Risk Engine
+name: DevMind Risk Engine
 
 on:
   push:
@@ -20,7 +20,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install pytest
+        run: pip install -r requirements.txt
 
       - name: Run governance invariant tests (178 tests)
         run: python -m pytest tests/ -v --tb=short
