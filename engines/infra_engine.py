@@ -1,15 +1,15 @@
 """
-engines/infra_engine.py — DevMind Agent Governance
+engines/infra_engine.py Ã¢â‚¬â€ DevMind Agent Governance
 Infrastructure governance for Terraform, Kubernetes, and Helm changes.
 
 Entry point: evaluate_change(change: AgentChange) -> GovernanceDecision
 
 Decision ladder (mirrors policy_engine.py ordering):
-    1. Hard blocks       — deterministic, no override (critical signals)
-    2. Blast radius gate — ORG/ACCOUNT -> ESCALATE always
-    3. Production escalation — critical signal + affects_production -> BLOCK
-    4. Signal scoring    — weighted risk score from matched patterns
-    5. Risk threshold    — >=85 BLOCK, >=30 REVIEW, else ALLOW
+    1. Hard blocks       Ã¢â‚¬â€ deterministic, no override (critical signals)
+    2. Blast radius gate Ã¢â‚¬â€ ORG/ACCOUNT -> ESCALATE always
+    3. Production escalation Ã¢â‚¬â€ critical signal + affects_production -> BLOCK
+    4. Signal scoring    Ã¢â‚¬â€ weighted risk score from matched patterns
+    5. Risk threshold    Ã¢â‚¬â€ >=85 BLOCK, >=30 REVIEW, else ALLOW
 
 Never empty why_chain. Surface "*" signals apply across Terraform/K8s/Helm.
 """
@@ -40,7 +40,7 @@ from engines.k8s_semantic import (
 )
 
 # =============================================================================
-# Signal definitions — (name, severity_weight, surface, pattern)
+# Signal definitions Ã¢â‚¬â€ (name, severity_weight, surface, pattern)
 # surface: "terraform" | "kubernetes" | "helm" | "*"
 # =============================================================================
 
@@ -65,7 +65,7 @@ _SIGNALS: tuple[tuple[str, int, str, re.Pattern[str]], ...] = (
     ("hardcoded_secret", 45, "*",
         re.compile(r'(?i)(password|secret|api[_-]?key|token)\s*=\s*"[^"$]{6,}"')),
     ("prod_resource_name", 15, "*",
-        re.compile(r'(?i)\b(prod|production)[-_][a-z0-9_-]+')),
+        re.compile(r'(?i)\b(prod|production)[-_ ][a-z0-9_-]+')),
     ("large_scale_change", 20, "terraform",
         re.compile(r'(?i)resources_changed\s*[:=]\s*([5-9]\d|\d{3,})')),
 
@@ -126,7 +126,7 @@ _CRITICAL_SIGNALS: frozenset[str] = frozenset({
 
 
 # =============================================================================
-# Surface routing — which signal surface applies to which ChangeType
+# Surface routing Ã¢â‚¬â€ which signal surface applies to which ChangeType
 # =============================================================================
 
 _SURFACE_FOR_CHANGE: dict[ChangeType, str] = {
@@ -252,7 +252,7 @@ def evaluate_change(change: AgentChange) -> GovernanceDecision:
     score = min(score, 100)
 
     # -------------------------------------------------------------------
-    # Step 2: Blast radius gate — ORG/ACCOUNT always escalate
+    # Step 2: Blast radius gate Ã¢â‚¬â€ ORG/ACCOUNT always escalate
     # -------------------------------------------------------------------
     if change.impact.blast_radius in (BlastRadius.ORG, BlastRadius.ACCOUNT):
         why_chain.append(
@@ -269,7 +269,7 @@ def evaluate_change(change: AgentChange) -> GovernanceDecision:
         )
 
     # -------------------------------------------------------------------
-    # Step 3: Hard blocks — critical signal alone, independent of env
+    # Step 3: Hard blocks Ã¢â‚¬â€ critical signal alone, independent of env
     # -------------------------------------------------------------------
     # A critical signal with secrets exposure or IAM admin is always BLOCK,
     # even outside production, because the artifact itself is dangerous
@@ -284,7 +284,7 @@ def evaluate_change(change: AgentChange) -> GovernanceDecision:
         )
 
     # -------------------------------------------------------------------
-    # Step 4: Production escalation — critical signal + prod -> BLOCK
+    # Step 4: Production escalation Ã¢â‚¬â€ critical signal + prod -> BLOCK
     # -------------------------------------------------------------------
     if critical_hit and change.impact.affects_production:
         why_chain.append(
@@ -338,7 +338,7 @@ def evaluate_change(change: AgentChange) -> GovernanceDecision:
 
 
 # =============================================================================
-# Helper — build GovernanceDecision
+# Helper Ã¢â‚¬â€ build GovernanceDecision
 # =============================================================================
 
 def _decision(

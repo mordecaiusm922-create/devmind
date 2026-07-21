@@ -1,5 +1,5 @@
-﻿"""
-engines/policy_engine.py — DevMind Agent Governance
+"""
+engines/policy_engine.py â€” DevMind Agent Governance
 Policy engine for AgentAction evaluation.
 
 This replaces the PR-based policy_engine.py.
@@ -7,12 +7,12 @@ Input:  AgentAction
 Output: GovernanceDecision
 
 Decision ladder (first match wins):
-    1. Org custom rules          — configured per organization
-    2. Hard block signals        — deterministic, no override
-    3. Surface + operation gate  — based on what the action touches
-    4. Session context gate      — rising risk / restricted state
-    5. Payload signals           — pattern-based risk scoring
-    6. Risk score threshold      — probabilistic fallback
+    1. Org custom rules          â€” configured per organization
+    2. Hard block signals        â€” deterministic, no override
+    3. Surface + operation gate  â€” based on what the action touches
+    4. Session context gate      â€” rising risk / restricted state
+    5. Payload signals           â€” pattern-based risk scoring
+    6. Risk score threshold      â€” probabilistic fallback
 """
 
 from __future__ import annotations
@@ -123,7 +123,7 @@ def classify_surface(tool: str, operation: str) -> ActionSurface:
 
 
 # =============================================================================
-# Signal definitions — what patterns in the payload indicate risk
+# Signal definitions â€” what patterns in the payload indicate risk
 # =============================================================================
 
 @dataclass(frozen=True)
@@ -189,7 +189,7 @@ SIGNALS: tuple[Signal, ...] = (
     Signal("privileged_container",  "critical", "*",
            re.compile(r"privileged\s*[:=]\s*true|allowPrivilegeEscalation\s*[:=]\s*true|runAsUser\s*[:=]\s*0", re.I)),
     Signal("prod_env_detected",     "high",     "*",
-           re.compile(r"\bprod(uction)?\b|\bprd\b", re.I)),
+           re.compile(r"\bprod(uction)?(?=[_\W]|$)|\bprd\b", re.I)),
 
     # --- Data exfiltration ---
     Signal("curl_post_file",        "critical", "terminal",
@@ -229,7 +229,7 @@ def _scan_signals(payload: str, surface: ActionSurface) -> list[dict[str, Any]]:
     payload_l = payload.lower()
     for signal in SIGNALS:
         if signal.surface not in ("*", surface.value):
-            # Still check if pattern matches — surface mismatch is a mismatch
+            # Still check if pattern matches â€” surface mismatch is a mismatch
             # but critical cross-surface patterns (e.g. hardcoded_secret in terminal)
             # should still fire.
             if signal.severity != "critical":
@@ -245,7 +245,7 @@ def _scan_signals(payload: str, surface: ActionSurface) -> list[dict[str, Any]]:
 
 
 # =============================================================================
-# Hard block patterns — deterministic, no override possible
+# Hard block patterns â€” deterministic, no override possible
 # =============================================================================
 
 HARD_BLOCK_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -309,19 +309,19 @@ def _session_gate(
     rp = session.risk_profile
 
     if session.state == SessionState.SUSPENDED:
-        chain.append("session:suspended → BLOCK")
+        chain.append("session:suspended â†’ BLOCK")
         return Decision.BLOCK
 
     if session.state == SessionState.RESTRICTED:
-        chain.append("session:restricted → ESCALATE")
+        chain.append("session:restricted â†’ ESCALATE")
         return Decision.ESCALATE
 
     if rp.risk_trend == RiskTrend.CRITICAL:
-        chain.append("session:risk_trend=critical → ESCALATE")
+        chain.append("session:risk_trend=critical â†’ ESCALATE")
         return Decision.ESCALATE
 
     if rp.policy_violations >= 3:
-        chain.append(f"session:policy_violations={rp.policy_violations} → REVIEW")
+        chain.append(f"session:policy_violations={rp.policy_violations} â†’ REVIEW")
         return Decision.REVIEW
 
     return None
@@ -387,7 +387,7 @@ def evaluate_action(
         f"agent:{action.agent}",
     ]
 
-    # 1. Hard block — ALWAYS first, no rule can override this
+    # 1. Hard block â€” ALWAYS first, no rule can override this
     for pattern in HARD_BLOCK_PATTERNS:
         if pattern.search(action.payload):
             chain.append(f"hardblock:{pattern.pattern[:60]}")
@@ -395,7 +395,7 @@ def evaluate_action(
             return _verdict(action, Decision.BLOCK, 98, surface, chain, signals, t0,
                             reason="hardblock_pattern")
 
-    # 2. Org custom rules — evaluated after hard blocks
+    # 2. Org custom rules â€” evaluated after hard blocks
     if org_rules:
         org_decision = _apply_org_rules(action, surface, org_rules, chain)
         if org_decision is not None:
@@ -404,7 +404,7 @@ def evaluate_action(
             return _verdict(action, org_decision, score, surface, chain, signals, t0,
                             reason="org_policy_rule")
 
-    # 3. Scan signals early — needed for production escalation in operation gates
+    # 3. Scan signals early â€” needed for production escalation in operation gates
     _early_signals = _scan_signals(action.payload, surface)
     _env = (action.context.environment or "").lower()
     _is_prod = "prod" in _env
@@ -425,7 +425,7 @@ def evaluate_action(
     if op in _HIGH_PRIVILEGE_OPERATIONS:
         chain.append(f"high_privilege_op:{op}")
         if _has_critical and _is_prod:
-            chain.append("critical_signal+production → BLOCK")
+            chain.append("critical_signal+production â†’ BLOCK")
             return _verdict(action, Decision.BLOCK, 90, surface, chain, _early_signals, t0,
                             reason="critical_signal_in_production")
         score = max(_score_from_signals(_early_signals), 55)
@@ -450,28 +450,28 @@ def evaluate_action(
         chain.append("no_risk_signals")
 
     # 6. Risk score threshold
-    # Critical signal in production → always BLOCK
+    # Critical signal in production â†’ always BLOCK
     env = (action.context.environment or "").lower()
     is_production = "prod" in env
     has_critical = any(s["severity"] == "critical" for s in signals)
 
     if has_critical and is_production:
         score = max(score, 90)
-        chain.append(f"critical_signal_in_production → BLOCK")
+        chain.append(f"critical_signal_in_production â†’ BLOCK")
         return _verdict(action, Decision.BLOCK, score, surface, chain, signals, t0,
                         reason="critical_signal_in_production")
 
     if score >= 85:
-        chain.append(f"risk_score:{score} → BLOCK")
+        chain.append(f"risk_score:{score} â†’ BLOCK")
         return _verdict(action, Decision.BLOCK, score, surface, chain, signals, t0,
                         reason="risk_threshold_block")
 
     if score >= 30:
-        chain.append(f"risk_score:{score} → REVIEW")
+        chain.append(f"risk_score:{score} â†’ REVIEW")
         return _verdict(action, Decision.REVIEW, score, surface, chain, signals, t0,
                         reason="risk_threshold_review")
 
-    chain.append(f"risk_score:{score} → ALLOW")
+    chain.append(f"risk_score:{score} â†’ ALLOW")
     return _verdict(action, Decision.ALLOW, score, surface, chain, signals, t0,
                     reason="no_risk_signals")
 
