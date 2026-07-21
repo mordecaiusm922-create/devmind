@@ -1,20 +1,20 @@
 """
-devmind_server.py — DevMind Agent Governance
+devmind_server.py Ã¢â‚¬â€ DevMind Agent Governance
 MCP Server: the runtime enforcement point for AI agents.
 
 Every tool call an agent makes passes through DevMindSandbox.intercept()
 before execution. DevMind decides: ALLOW / REVIEW / BLOCK / REWRITE / ESCALATE.
 
 Tools exposed to agents:
-    execute_command     — run a shell command (terminal surface)
-    read_file           — read a file (filesystem surface)
-    write_file          — write a file (filesystem surface)
-    delete_file         — delete a file (filesystem surface)
-    git_operation       — git commands (git surface)
-    http_request        — outbound HTTP (network surface)
-    db_query            — database query (database surface)
-    deploy              — deployment action (deployment surface)
-    session_status      — inspect current session state
+    execute_command     Ã¢â‚¬â€ run a shell command (terminal surface)
+    read_file           Ã¢â‚¬â€ read a file (filesystem surface)
+    write_file          Ã¢â‚¬â€ write a file (filesystem surface)
+    delete_file         Ã¢â‚¬â€ delete a file (filesystem surface)
+    git_operation       Ã¢â‚¬â€ git commands (git surface)
+    http_request        Ã¢â‚¬â€ outbound HTTP (network surface)
+    db_query            Ã¢â‚¬â€ database query (database surface)
+    deploy              Ã¢â‚¬â€ deployment action (deployment surface)
+    session_status      Ã¢â‚¬â€ inspect current session state
 
 Usage (Claude Desktop / claude.ai):
     Add to claude_desktop_config.json:
@@ -81,13 +81,13 @@ sandbox = GovernedSandbox(
     audit_path=AUDIT_LOG,
 )
 
-# Active session — one per server process (one agent conversation)
+# Active session Ã¢â‚¬â€ one per server process (one agent conversation)
 _SESSION_ID = str(uuid.uuid4())
 
 print(f"[DEVMIND] org={ORG_ID} env={ENVIRONMENT} session={_SESSION_ID}", flush=True)
 
 # =============================================================================
-# Secret redaction — applied to all output returned to the agent
+# Secret redaction Ã¢â‚¬â€ applied to all output returned to the agent
 # =============================================================================
 
 _REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -127,7 +127,7 @@ def _enforce(decision_obj: Any, payload: str) -> tuple[bool, str]:
             f"[DEVMIND BLOCK]\n"
             f"Reason: {decision_obj.reason}\n"
             f"Risk score: {decision_obj.risk_score}/100\n"
-            f"Why: {' → '.join(decision_obj.why_chain[-3:])}\n"
+            f"Why: {' Ã¢â€ â€™ '.join(decision_obj.why_chain[-3:])}\n"
             f"Instruction: solve the task without crossing this security boundary."
         )
 
@@ -272,7 +272,7 @@ def write_file(path: str, content: str, rationale: str) -> str:
 def delete_file(path: str, rationale: str) -> str:
     """
     Delete a file through DevMind governance.
-    High-risk operation — always requires justification.
+    High-risk operation Ã¢â‚¬â€ always requires justification.
 
     Args:
         path:      File to delete.
@@ -345,7 +345,7 @@ def db_query(query: str, rationale: str) -> str:
     DevMind evaluates the query for destructive or injection patterns.
 
     NOTE: This tool evaluates and audits the query.
-    Execution happens through your own DB connection — implement _execute_query().
+    Execution happens through your own DB connection Ã¢â‚¬â€ implement _execute_query().
 
     Args:
         query:     The SQL or query string.
@@ -411,7 +411,7 @@ def http_request(url: str, method: str, rationale: str) -> str:
 def deploy(target: str, artifact: str, rationale: str) -> str:
     """
     Trigger a deployment through DevMind governance.
-    Always high-risk — evaluated against environment and target.
+    Always high-risk Ã¢â‚¬â€ evaluated against environment and target.
 
     Args:
         target:    Deploy target (e.g. 'production', 'staging', 'k8s/prod').
@@ -597,6 +597,8 @@ if __name__ == "__main__":
 
         class TokenAuthMiddleware(BaseHTTPMiddleware):
             async def dispatch(self, request, call_next):
+                if request.url.path == "/health":
+                    return await call_next(request)
                 if DEVMIND_MCP_TOKEN:
                     auth_header = request.headers.get("authorization", "")
                     expected = f"Bearer {DEVMIND_MCP_TOKEN}"
@@ -609,6 +611,13 @@ if __name__ == "__main__":
         mcp.settings.port = port
 
         app = mcp.streamable_http_app()
+
+        from starlette.routing import Route
+        from starlette.responses import JSONResponse as _JSONResponse
+        async def _health(request):
+            return _JSONResponse({"status": "ok", "service": "devmind-mcp"})
+        app.router.routes.insert(0, Route("/health", _health, methods=["GET"]))
+
         if DEVMIND_MCP_TOKEN:
             app.add_middleware(TokenAuthMiddleware)
             print(f"[DEVMIND] Running on streamable-http (AUTHENTICATED) | org={ORG_ID} | env={ENVIRONMENT} | port={port}", flush=True)
