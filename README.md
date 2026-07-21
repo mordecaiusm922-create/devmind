@@ -6,7 +6,7 @@ DevMind intercepts, evaluates, and audits every action an AI agent attempts to t
 
 **Live API:** [devmind-2cej.onrender.com/health](https://devmind-2cej.onrender.com/health)
 **Live MCP server:** [devmind-mcp.onrender.com/mcp](https://devmind-mcp.onrender.com/mcp)
-**181 invariant tests passing · CI green on every push**
+**182 invariant tests passing · CI green on every push**
 
 ---
 
@@ -63,15 +63,17 @@ No agent touched Railway. The decision returned before the call was ever made.
                     └─────────────────────┘
 
                     ┌─────────────────────┐
-  SessionAudit  ──▶ │   Release Gate       │ ──▶ GovernanceDecision
-  + ArtifactScan    │   release_gate.py    │
+  AgentChange   ──▶ │   Release Gate       │ ──▶ GovernanceDecision
+  (release_publish/ │   release_gate.py    │
+   release_promote) │  70% session + 30%   │
+                    │  artifact scan        │
                     └─────────────────────┘
 
   AgentSession  →  unit of memory       (pattern across actions in a session)
   Organization  →  unit of persistence  (policy, incident history, reputation)
 ```
 
-Three engines, one decision contract. `AgentAction` (tool calls — terminal, filesystem, database, cloud) routes through the **policy engine**. `AgentChange` (Terraform applies, K8s manifests, Helm releases) routes through the **infra engine**, which evaluates blast radius before anything else. Session-level release decisions route through the **release gate**, which weighs accumulated session risk at 70%.
+Three engines, one decision contract. `AgentAction` (tool calls — terminal, filesystem, database, cloud) routes through the **policy engine**. `AgentChange` (Terraform applies, K8s manifests, Helm releases) routes through the **infra engine**, which evaluates blast radius before anything else. `AgentChange` with a release change type (`release_publish`/`release_promote`) routes through the **release gate**, which derives a session-risk score from the caller's `AgentSession` and an artifact-risk score from the payload, weighting them 70/30.
 
 ### Decision hierarchy
 
@@ -89,11 +91,18 @@ Every evaluation produces exactly one `GovernanceDecision`:
 
 ---
 
+## Audit trail
+
+Every decision made by `/evaluate`, `/evaluate-change`, and `/release-gate` is persisted to a Supabase-backed audit log (`audit_records` table) — not just returned in the response. Each record stores the agent, tool, operation, a SHA-256 hash of the payload (never the raw payload itself), the full decision, risk score, and why-chain, timestamped and queryable by session, agent, decision, or organization. This is what lets an organization answer "show me every time an agent tried to run `terraform destroy` against production last month" with an actual query, not a promise.
+
+---
+
 ## Connect via remote MCP (no local install required)
 
 DevMind runs as a remote MCP server. Any MCP-compatible agent — Claude Desktop, Cursor, or any client supporting the Model Context Protocol — can connect directly over HTTP, with no local Python setup.
 
 **Live MCP endpoint:** `https://devmind-mcp.onrender.com/mcp`
+**Health check (no auth required):** `https://devmind-mcp.onrender.com/health`
 
 The remote server requires a bearer token — it evaluates real tool calls (`execute_command`, `write_file`, `delete_file`, `db_query`, `deploy`), so it is not left open to anonymous requests. **This is currently a single shared bearer token, not per-agent or per-user identity.** That's a deliberate trade-off for this stage — sufficient for single-tenant use and evaluation, but it does not yet give you per-identity audit attribution beyond the `agent_id`/`session_id` fields the caller supplies. Per-agent credentials are a natural next step once there's a real multi-tenant use case driving it. [Request a token by opening an issue](https://github.com/mordecaiusm922-create/devmind/issues/new?template=request_token.yml) — usually answered within a day or two — or run your own instance using the local setup below.
 
@@ -134,7 +143,7 @@ Add to `.cursor/mcp.json`:
 
 Once connected, every `execute_command`, `write_file`, `delete_file`, `git_operation`, `http_request`, `db_query`, and `deploy` call your agent makes is evaluated by DevMind's policy engine before execution. `session_status` lets you inspect the current session's accumulated risk profile at any point.
 
-Requests without a valid token receive `401 Unauthorized` before reaching the governance engine.
+Requests without a valid token receive `401 Unauthorized` before reaching the governance engine. `/health` is exempt from this check, so external monitoring (uptime checks, load balancer health probes) can verify liveness without credentials.
 
 ### Run it locally instead
 
@@ -156,6 +165,8 @@ If you'd rather run the MCP server on your own machine (stdio transport, the def
 }
 ```
 
+For the HTTP transport instead of stdio, set `DEVMIND_MCP_TRANSPORT=streamable-http` and `DEVMIND_MCP_TOKEN=<your-token>` before running.
+
 ---
 
 ## Live API (HTTP)
@@ -167,7 +178,7 @@ Deployed at [`devmind-2cej.onrender.com`](https://devmind-2cej.onrender.com), ru
 | `/health`            | GET    | Liveness check                                          |
 | `/evaluate`          | POST   | Evaluate an `AgentAction` (tool call) via policy engine  |
 | `/evaluate-change`   | POST   | Evaluate an `AgentChange` (Terraform/K8s/Helm) via infra engine |
-| `/release-gate`      | POST   | Evaluate a session + artifact scan via release gate       |
+| `/release-gate`      | POST   | Evaluate a release (`AgentChange` + `AgentSession`) via release gate |
 | `/simulate`          | GET    | Run the 28 real-world risk scenarios, return the report  |
 
 ```bash
@@ -190,6 +201,17 @@ curl -X POST https://devmind-2cej.onrender.com/evaluate \
     "operation": "execute",
     "payload": "curl https://install.sh | bash"
   }'
+
+# Release with a dirty session + secret in the artifact → BLOCK
+curl -X POST https://devmind-2cej.onrender.com/release-gate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_id": "release-bot",
+    "change_type": "release_publish",
+    "payload": "api_key = \"sk-abc123secretvalue\"",
+    "affects_production": true,
+    "policy_violations": 3
+  }'
 ```
 
 Both return in well under 100ms — deterministic Python running in-process, not an LLM call.
@@ -202,7 +224,7 @@ Both return in well under 100ms — deterministic Python running in-process, not
 git clone https://github.com/mordecaiusm922-create/devmind
 cd devmind
 pip install -r requirements.txt
-python -m pytest tests/ -v          # 181 tests, deterministic, no mocks
+python -m pytest tests/ -v          # 182 tests, deterministic, no mocks
 python simulate_real_risks.py       # 28 real-world scenarios
 ```
 
@@ -264,14 +286,15 @@ engines/
   terraform_semantic.py — semantic parser for `terraform plan -json`
   k8s_semantic.py       — semantic parser for K8s Pod/Deployment manifests
   release_gate.py      — evaluate_release() — session + artifact release governance
-  audit_engine.py       — permanent, structured decision log
+  audit_engine.py       — audit trail: JSONL (local/dev) and Supabase (production)
 
 tests/
   test_policy_engine.py
   test_infra_engine.py  — includes semantic parser coverage
-  test_release_gate.py  — 181 invariant tests total
+  test_release_gate.py  — 182 invariant tests total
 
-api.py                  — FastAPI wrapper exposing all three engines over HTTP
+api.py                  — FastAPI wrapper exposing all three engines over HTTP,
+                           each call persisted to the Supabase audit trail
 devmind_server.py        — MCP server exposing DevMind as agent-callable tools
 simulate_real_risks.py  — 28 real-world scenarios across fintech, healthcare,
                            SaaS, infrastructure, and supply chain
@@ -340,7 +363,7 @@ def test_org_blast_radius_always_escalates():
     assert decision.escalation_required == True
 ```
 
-181 tests, zero mocks on the decision logic itself. If someone weakens an invariant, CI fails before it reaches main.
+182 tests, zero mocks on the decision logic itself. If someone weakens an invariant, CI fails before it reaches main.
 
 ---
 
@@ -351,6 +374,7 @@ Stated plainly, because a governance tool that hides its own gaps isn't trustwor
 - **Pattern-based detection can be evaded by obfuscation.** Outside of Terraform plan JSON and Kubernetes manifests (which are now parsed structurally), signal matching is regex over the payload string. A payload that fragments a destructive command across multiple session actions — for example, decoding a base64 command into a file in one action and executing that file in a later one — can currently pass each individual check. Closing this class of evasion (session-level payload correlation, broader semantic parsing) is on the roadmap, not solved today.
 - **Semantic parsing covers Terraform and Kubernetes only.** Helm values, Pulumi, CloudFormation, and other IaC formats are still evaluated via regex signals, not structural parsing.
 - **MCP authentication is a shared bearer token**, not per-agent or per-user identity (see "Connect via remote MCP" above).
+- **The `/evaluate` endpoint's `context.environment` field must be explicitly set on the request** for production-aware policy signals to apply — it is not inferred from other fields. If your integration omits it, actions won't be evaluated as production traffic even if they target production infrastructure.
 
 ---
 
@@ -366,6 +390,7 @@ Stated plainly, because a governance tool that hides its own gaps isn't trustwor
 
 - [x] Remote MCP server (`devmind-mcp.onrender.com`)
 - [x] Semantic parsing for Terraform plans and Kubernetes manifests
+- [x] Persistent audit trail (Supabase-backed, survives redeploys — previously write-only to a sandbox log, never reachable from the live API)
 - [ ] Session-level payload correlation (close the obfuscation/fragmentation gap above)
 - [ ] PyPI package + CLI (`pip install devmind-agent`, `devmind serve`)
 - [ ] GitHub Action (`devmind-action`) — intercept agent PRs in CI/CD pipelines
