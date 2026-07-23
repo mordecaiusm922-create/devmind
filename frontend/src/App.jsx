@@ -21,7 +21,7 @@ import {
   ScanLine,
 } from "lucide-react";
 
-// ─── Design Tokens ───────────────────────────────────────
+// â”€â”€â”€ Design Tokens â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const T = {
   bg:       "#080c12",
   surface:  "#10161e",
@@ -60,7 +60,7 @@ const TOOLS = [
   ["session_status","Inspect current session governance state"],
 ];
 
-// ─── Helpers ─────────────────────────────────────────────
+// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const decisionClr = d => d==="BLOCK"?T.red : d==="ESCALATE"?T.amber : d==="ALLOW"?T.green : T.accent;
 const decisionBg  = d => d==="BLOCK"?"rgba(239,68,68,0.06)" : d==="ESCALATE"?"rgba(245,158,11,0.06)" : d==="ALLOW"?"rgba(16,185,129,0.06)" : "rgba(45,212,191,0.06)";
 
@@ -83,7 +83,7 @@ function Metric({ value, label }) {
   );
 }
 
-// ─── Background Scan Lines ──────────────────────────────
+// â”€â”€â”€ Background Scan Lines â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function ScanLines() {
   return (
     <div className="pointer-events-none absolute inset-0 overflow-hidden opacity-[0.03]" aria-hidden="true">
@@ -102,7 +102,7 @@ function ScanLines() {
   );
 }
 
-// ─── Live Ticker ────────────────────────────────────────
+// â”€â”€â”€ Live Ticker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function LiveTicker() {
   const [dots, setDots] = useState("");
   useEffect(() => { const i = setInterval(() => setDots(p => p.length >= 3 ? "" : p + "."), 600); return () => clearInterval(i); }, []);
@@ -117,7 +117,7 @@ function LiveTicker() {
   );
 }
 
-// ─── App ─────────────────────────────────────────────────
+// â”€â”€â”€ App â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export default function App() {
   const [activeId, setActiveId] = useState(SCENARIOS[0].id);
   const [running, setRunning] = useState(false);
@@ -134,7 +134,7 @@ export default function App() {
   const run = async () => {
     setRunning(true); setLog([]); setResult(null); setError(null);
     const push = (t, c) => setLog(p => [...p, { id: Math.random().toString(36), text: t, color: c }]);
-    push("▸ intercept()", T.text3);
+    push("â–¸ intercept()", T.text3);
     push(`  agent   : ${active.agent}`, T.text2);
     push(`  surface : ${active.surface}`, T.accent);
     push(`  POST    : ${API_BASE}${active.endpoint}`, T.text3);
@@ -148,16 +148,16 @@ export default function App() {
       });
       const ms = Math.round(performance.now() - t0);
       const data = await res.json();
-      if (!res.ok) { setError(data.detail || `HTTP ${res.status}`); push(`✗ error: ${data.detail || res.status}`, T.red); setRunning(false); return; }
-      push(`◂ response  ${ms}ms`, T.text3);
+      if (!res.ok) { setError(data.detail || `HTTP ${res.status}`); push(`âœ— error: ${data.detail || res.status}`, T.red); setRunning(false); return; }
+      push(`â—‚ response  ${ms}ms`, T.text3);
       push(`  decision : ${data.decision}`, decisionClr(data.decision));
       push(`  score    : ${data.risk_score}`, data.risk_score >= 70 ? T.red : data.risk_score >= 30 ? T.amber : T.green);
-      (data.why || []).forEach(w => push(`    • ${w}`, T.text2));
+      (data.why || []).forEach(w => push(`    â€¢ ${w}`, T.text2));
       push(`  escalate : ${data.escalation_required}`, T.text);
       push(`  audit_id : ${data.audit_id}`, T.text3);
       setResult({ ...data, elapsedMs: ms });
     } catch (e) {
-      push("⚠ Cold start — free instance may take up to 20s", T.amber);
+      push("âš  Cold start â€” free instance may take up to 20s", T.amber);
       setError("Could not reach the API. It may be waking up from idle. Please try again.");
     }
     setRunning(false);
@@ -175,7 +175,7 @@ export default function App() {
         html { scroll-behavior: smooth; }
       `}</style>
 
-      {/* ─── Header ──────────────────────────────────── */}
+      {/* â”€â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <header className="sticky top-0 z-50 backdrop-blur-xl" style={{ background: "rgba(8,12,18,0.82)", borderBottom: `1px solid ${T.border}` }}>
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -198,12 +198,12 @@ export default function App() {
         </div>
       </header>
 
-      {/* ─── Hero ────────────────────────────────────── */}
+      {/* â”€â”€â”€ Hero â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <section className="relative overflow-hidden">
         <ScanLines />
         <div className="relative max-w-6xl mx-auto px-6 pt-20 pb-24">
           <div className="grid lg:grid-cols-[1fr_1.1fr] gap-16 items-start">
-            {/* Left column — thesis */}
+            {/* Left column â€” thesis */}
             <div className="pt-6">
               <div className="inline-flex items-center gap-2 rounded-full px-4 py-1.5 mb-8 text-xs font-semibold uppercase tracking-widest" style={{ background: T.surface, border: `1px solid ${T.borderA}`, color: T.accent }}>
                 <ScanLine size={13} /> Runtime Governance Engine
@@ -219,13 +219,13 @@ export default function App() {
               <p className="mt-6 text-base leading-7 max-w-lg" style={{ color: T.text2 }}>
                 DevMind intercepts every action an AI agent attempts against real infrastructure
                 and evaluates it deterministically before execution. No language model in the
-                decision path — the same input always produces the same output.
+                decision path â€” the same input always produces the same output.
               </p>
 
               <div className="mt-10 flex items-center gap-6 flex-wrap">
                 <Metric value="~50ms" label="avg. evaluation" />
                 <div className="w-px h-8" style={{ background: T.border }} />
-                <Metric value="178" label="tests, CI-enforced" />
+                <Metric value="182" label="tests, CI-enforced" />
                 <div className="w-px h-8" style={{ background: T.border }} />
                 <Metric value="28" label="risk scenarios" />
               </div>
@@ -240,7 +240,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Right column — live terminal demo IN the hero */}
+            {/* Right column â€” live terminal demo IN the hero */}
             <div id="demo" className="rounded-2xl overflow-hidden" style={{ background: T.surface, border: `1px solid ${T.border}`, boxShadow: `0 0 0 1px ${T.glow}, 0 20px 60px rgba(0,0,0,0.4)` }}>
               {/* Terminal chrome */}
               <div className="flex items-center justify-between px-5 py-3" style={{ background: T.surface2, borderBottom: `1px solid ${T.border}` }}>
@@ -270,7 +270,7 @@ export default function App() {
                       }}
                     >
                       <div className="text-xs font-semibold" style={{ color: active ? T.text : T.text2 }}>{s.title}</div>
-                      <div className="text-[10px] mono mt-0.5" style={{ color: T.text3 }}>{s.surface} · {s.agent}</div>
+                      <div className="text-[10px] mono mt-0.5" style={{ color: T.text3 }}>{s.surface} Â· {s.agent}</div>
                     </button>
                   );
                 })}
@@ -311,7 +311,7 @@ export default function App() {
                         <span className="text-[10px] mono" style={{ color: T.text3 }}>audit: {result.audit_id?.slice(0, 12)}</span>
                       </div>
                       <div className="text-[11px] mt-1" style={{ color: T.text3 }}>
-                        risk_score: {result.risk_score} · {result.elapsedMs}ms
+                        risk_score: {result.risk_score} Â· {result.elapsedMs}ms
                       </div>
                     </motion.div>
                   )}
@@ -333,7 +333,7 @@ export default function App() {
                   style={{ background: T.accent, color: T.bg, border: "none" }}
                 >
                   {running && <Loader2 size={14} className="animate-spin" />}
-                  {running ? "Evaluating…" : "Run against production"}
+                  {running ? "Evaluatingâ€¦" : "Run against production"}
                   {!running && <Zap size={14} />}
                 </button>
                 <button
@@ -349,7 +349,7 @@ export default function App() {
         </div>
       </section>
 
-      {/* ─── Architecture ────────────────────────────── */}
+      {/* â”€â”€â”€ Architecture â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <section id="arch" className="py-24">
         <div className="max-w-6xl mx-auto px-6">
           <div className="mb-14">
@@ -359,16 +359,16 @@ export default function App() {
             </h2>
             <p className="mt-3 max-w-2xl text-base leading-7" style={{ color: T.text2 }}>
               Policy first, blast radius second, evidence third. The same payload always
-              produces the same decision — no non-determinism, no model in the loop.
+              produces the same decision â€” no non-determinism, no model in the loop.
             </p>
           </div>
 
           <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
             {[
               [Shield, "Deterministic control", "Unsafe actions are stopped before execution. The decision is a code path, not a suggestion."],
-              [Layers, "Blast‑radius scoring", "Every action maps to a scope: process, service, cluster, account, or organization."],
-              [Database, "Tamper‑evident audit", "Each decision returns a unique audit ID and a full reasoning chain."],
-              [Gauge, "Session memory", "Risk accumulates across the session — repeated low‑grade violations become harder to hide."],
+              [Layers, "Blastâ€‘radius scoring", "Every action maps to a scope: process, service, cluster, account, or organization."],
+              [Database, "Tamperâ€‘evident audit", "Each decision returns a unique audit ID and a full reasoning chain."],
+              [Gauge, "Session memory", "Risk accumulates across the session â€” repeated lowâ€‘grade violations become harder to hide."],
             ].map(([Icon, title, desc]) => (
               <div key={title} className="rounded-2xl p-6 transition-all hover:border-teal-500/20" style={{ background: T.surface, border: `1px solid ${T.border}` }}>
                 <div className="w-9 h-9 rounded-lg flex items-center justify-center mb-4" style={{ background: T.surface2 }}>
@@ -387,11 +387,11 @@ export default function App() {
                 <h3 className="font-semibold text-sm">Threat model</h3>
               </div>
               <ul className="space-y-2 text-sm" style={{ color: T.text2 }}>
-                <li>• IAM wildcards expanding permissions across the org</li>
-                <li>• Privileged pods & host networking in Kubernetes</li>
-                <li>• Hardcoded secrets and private keys in payloads</li>
-                <li>• ORG/ACCOUNT scoped changes — escalated unconditionally</li>
-                <li>• Accumulated session risk from repeated violations</li>
+                <li>â€¢ IAM wildcards expanding permissions across the org</li>
+                <li>â€¢ Privileged pods & host networking in Kubernetes</li>
+                <li>â€¢ Hardcoded secrets and private keys in payloads</li>
+                <li>â€¢ ORG/ACCOUNT scoped changes â€” escalated unconditionally</li>
+                <li>â€¢ Accumulated session risk from repeated violations</li>
               </ul>
             </div>
             <div className="rounded-2xl p-6" style={{ background: T.surface, border: `1px solid ${T.border}` }}>
@@ -401,7 +401,7 @@ export default function App() {
               </div>
               <p className="text-sm leading-7" style={{ color: T.text2 }}>
                 A prompt can shape output. A control plane changes execution. DevMind
-                sits at the application boundary, evaluating the action itself — not
+                sits at the application boundary, evaluating the action itself â€” not
                 asking the model to behave.
               </p>
             </div>
@@ -415,18 +415,18 @@ export default function App() {
             </div>
             <div className="mono text-sm leading-8" style={{ color: T.text2 }}>
               <span style={{ color: T.text }}>agent tool call / infra change</span>
-              <br />↓<br />
+              <br />â†“<br />
               <span style={{ color: T.accent }}>policy_engine.evaluate_action() / infra_engine.evaluate_change()</span>
-              <br />↓<br />
-              <span style={{ color: T.text }}>hard blocks → blast radius gate → production escalation → risk scoring</span>
-              <br />↓<br />
-              <span style={{ color: T.text }}>ALLOW · REVIEW · ESCALATE · BLOCK</span>
+              <br />â†“<br />
+              <span style={{ color: T.text }}>hard blocks â†’ blast radius gate â†’ production escalation â†’ risk scoring</span>
+              <br />â†“<br />
+              <span style={{ color: T.text }}>ALLOW Â· REVIEW Â· ESCALATE Â· BLOCK</span>
             </div>
           </div>
         </div>
       </section>
 
-      {/* ─── MCP Tools ────────────────────────────────── */}
+      {/* â”€â”€â”€ MCP Tools â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <section id="tools" className="py-24" style={{ background: T.surface }}>
         <div className="max-w-6xl mx-auto px-6">
           <div className="mb-14">
@@ -435,7 +435,7 @@ export default function App() {
               9 tools, exposed over MCP
             </h2>
             <p className="mt-3 max-w-2xl text-base leading-7" style={{ color: T.text2 }}>
-              Works with any MCP‑compatible client — Claude Desktop, Cursor, or your own.
+              Works with any MCPâ€‘compatible client â€” Claude Desktop, Cursor, or your own.
               Governance acts on the action, not on which model produced it.
             </p>
           </div>
@@ -459,14 +459,14 @@ export default function App() {
         </div>
       </section>
 
-      {/* ─── Footer ───────────────────────────────────── */}
+      {/* â”€â”€â”€ Footer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <footer className="py-10" style={{ borderTop: `1px solid ${T.border}` }}>
         <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-4 text-sm" style={{ color: T.text3 }}>
           <div className="flex items-center gap-3">
             <div className="w-6 h-6 rounded flex items-center justify-center" style={{ background: T.accent }}>
               <Rocket size={11} style={{ color: T.bg }} />
             </div>
-            <span>DevMind · Runtime governance for autonomous agents</span>
+            <span>DevMind Â· Runtime governance for autonomous agents</span>
           </div>
           <div className="flex gap-6">
             <a href="https://github.com/mordecaiusm922-create/devmind" className="hover:text-teal-400 transition-colors">GitHub</a>
