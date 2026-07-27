@@ -83,18 +83,18 @@ class EvaluateChangeRequest(BaseModel):
 class ReleaseGateRequest(BaseModel):
     agent_id: str
     session_id: Optional[str] = None
-    # Session audit
+    change_type: str = "release_publish"
+    payload: str = ""
+    diff_summary: Optional[str] = None
+    artifact_ref: Optional[str] = None
+    affects_production: bool = False
+    org_id: Optional[str] = None
     total_actions: int = 0
-    violations: int = 0
-    blocks: int = 0
-    secrets_accessed: int = 0
-    production_changes: int = 0
-    infra_changes: int = 0
-    # Artifact scan
-    artifact_name: Optional[str] = None
-    has_secrets: bool = False
-    has_critical_vulnerabilities: bool = False
-    targets_production: bool = False
+    policy_violations: int = 0
+    blocked_actions: int = 0
+    escalated_actions: int = 0
+    cumulative_score: float = 0.0
+    peak_score: int = 0
 
 class DecisionResponse(BaseModel):
     decision: str
@@ -244,28 +244,50 @@ def evaluate_infra_change(req: EvaluateChangeRequest):
 
 @app.post("/release-gate", response_model=DecisionResponse)
 def release_gate(req: ReleaseGateRequest):
-    """Run the release gate against a session audit + artifact scan."""
-    session_audit = SessionAudit(
+    """Run the release gate: evaluate_release derives SessionAudit + ArtifactScan internally."""
+    try:
+        change_type = ChangeType(req.change_type.lower())
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid change_type: {req.change_type}. Valid: release_publish, release_promote"
+        )
+
+    change = AgentChange(
+        action_id=str(uuid.uuid4()),
         session_id=req.session_id or str(uuid.uuid4()),
-        agent_id=req.agent_id,
-        total_actions=req.total_actions,
-        violations=req.violations,
-        blocks=req.blocks,
-        secrets_accessed=req.secrets_accessed,
-        production_changes=req.production_changes,
-        infra_changes=req.infra_changes,
+        agent=req.agent_id,
+        change_type=change_type,
+        surface=ActionSurface.RELEASE,
+        payload=req.payload,
+        timestamp=datetime.now(timezone.utc),
+        impact=ChangeImpact(affects_production=req.affects_production),
+        diff_summary=req.diff_summary,
+        artifact_ref=req.artifact_ref,
     )
-    artifact = ArtifactScan(
-        artifact_name=req.artifact_name or "unnamed",
-        has_secrets=req.has_secrets,
-        has_critical_vulnerabilities=req.has_critical_vulnerabilities,
-        targets_production=req.targets_production,
+
+    session = AgentSession(
+        session_id=req.session_id or change.session_id,
+        agent=req.agent_id,
+        organization=req.org_id or "default",
+        user=None,
+        started_at=datetime.now(timezone.utc),
+        risk_profile=SessionRiskProfile(
+            total_actions=req.total_actions,
+            policy_violations=req.policy_violations,
+            blocked_actions=req.blocked_actions,
+            escalated_actions=req.escalated_actions,
+            cumulative_score=req.cumulative_score,
+            peak_score=req.peak_score,
+        ),
     )
 
     try:
-        decision = evaluate_release(session_audit, artifact)
+        decision = evaluate_release(change, session)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    audit.record_change(change, decision, organization=req.org_id)
 
     return _decision_response(decision, req.agent_id)
 
