@@ -1027,7 +1027,7 @@ class DefaultEvaluatorEngine:
 
         try:
 
-            from sandbox import sandbox_candidate
+            from runtime.sandbox import sandbox_candidate
 
             _sandbox = sandbox_candidate(candidate.diff[:2000])
 

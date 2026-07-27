@@ -1,6 +1,6 @@
 import sys
 sys.path.insert(0, ".")
-from sandbox import run_sandbox
+from runtime.sandbox import run_sandbox
 
 result = run_sandbox(
     'cursor.execute("SELECT * FROM users WHERE email = %s", [email])',
