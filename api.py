@@ -38,6 +38,7 @@ from core.types import (
 from engines.policy_engine import evaluate_action
 from engines.infra_engine import evaluate_change
 from engines.release_gate import evaluate_release, SessionAudit, ArtifactScan
+from engines.audit_engine import SupabaseAuditEngine
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
@@ -54,6 +55,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+audit = SupabaseAuditEngine()
+
 # ── Request schemas ───────────────────────────────────────────────────────────
 
 class EvaluateActionRequest(BaseModel):
@@ -63,6 +66,8 @@ class EvaluateActionRequest(BaseModel):
     payload: str                            # raw action content
     session_id: Optional[str] = None
     org_id: Optional[str] = None
+    environment: Optional[str] = None
+    user: Optional[str] = None
 
 class EvaluateChangeRequest(BaseModel):
     agent_id: str
@@ -73,6 +78,7 @@ class EvaluateChangeRequest(BaseModel):
     blast_radius: Optional[str] = None     # process, service, cluster, account, org
     session_id: Optional[str] = None
     diff_summary: Optional[str] = None
+    org_id: Optional[str] = None
 
 class ReleaseGateRequest(BaseModel):
     agent_id: str
@@ -123,7 +129,7 @@ def _decision_response(decision: GovernanceDecision, agent_id: str) -> DecisionR
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health():
     return {"status": "ok", "service": "devmind-governance-api", "version": "1.0.0"}
 
@@ -144,6 +150,11 @@ def evaluate(req: EvaluateActionRequest):
     """
     session_id = req.session_id or str(uuid.uuid4())
 
+    context = ActionContext(
+        user=req.user,
+        environment=req.environment,
+    )
+
     action = AgentAction(
         action_id=str(uuid.uuid4()),
         session_id=session_id,
@@ -152,6 +163,7 @@ def evaluate(req: EvaluateActionRequest):
         operation=req.operation,
         payload=req.payload,
         timestamp=datetime.now(timezone.utc),
+        context=context,
     )
     session = _make_session(req.agent_id, session_id, req.org_id)
 
@@ -159,6 +171,8 @@ def evaluate(req: EvaluateActionRequest):
         decision = evaluate_action(action, session)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    audit.record(action, decision, organization=req.org_id)
 
     return _decision_response(decision, req.agent_id)
 
@@ -222,6 +236,8 @@ def evaluate_infra_change(req: EvaluateChangeRequest):
         decision = evaluate_change(change)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    audit.record_change(change, decision, organization=req.org_id)
 
     return _decision_response(decision, req.agent_id)
 
