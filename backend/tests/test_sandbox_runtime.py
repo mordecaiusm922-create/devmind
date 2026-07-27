@@ -12,7 +12,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from pipeline import DevMindPipeline, Mode, TaskInput
 from runtime import CandidateScheduler, CandidateState, VerificationTrap
-from sandbox import run_sandbox
+from runtime.sandbox import run_sandbox
 from verify import verify_candidate_evidence
 
 
