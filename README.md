@@ -371,7 +371,7 @@ def test_org_blast_radius_always_escalates():
 
 Stated plainly, because a governance tool that hides its own gaps isn't trustworthy:
 
-- **Pattern-based detection can be evaded by obfuscation.** Outside of Terraform plan JSON and Kubernetes manifests (which are now parsed structurally), signal matching is regex over the payload string. A payload that fragments a destructive command across multiple session actions — for example, decoding a base64 command into a file in one action and executing that file in a later one — can currently pass each individual check. Closing this class of evasion (session-level payload correlation, broader semantic parsing) is on the roadmap, not solved today.
+- **Pattern-based detection can be evaded by obfuscation.** Outside of Terraform plan JSON and Kubernetes manifests (which are now parsed structurally), signal matching is regex over the payload string. Commands split or obfuscated across multiple session actions can currently evade per-action checks. Closing this class of evasion (session-level payload correlation, broader semantic parsing) is on the roadmap, not solved today.
 - **Semantic parsing covers Terraform and Kubernetes only.** Helm values, Pulumi, CloudFormation, and other IaC formats are still evaluated via regex signals, not structural parsing.
 - **MCP authentication is a shared bearer token**, not per-agent or per-user identity (see "Connect via remote MCP" above).
 - **The `/evaluate` endpoint's `context.environment` field must be explicitly set on the request** for production-aware policy signals to apply — it is not inferred from other fields. If your integration omits it, actions won't be evaluated as production traffic even if they target production infrastructure.
