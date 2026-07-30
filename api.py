@@ -12,10 +12,11 @@ Endpoints:
 from __future__ import annotations
 
 import uuid
+import hashlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -56,6 +57,42 @@ app.add_middleware(
 )
 
 audit = SupabaseAuditEngine()
+
+async def resolve_org_from_token(request: Request) -> str | None:
+    """Phase 1 permissive auth: use the real org_id from a valid Bearer
+    token if present; otherwise return None so callers fall back to the
+    body-supplied org_id (today's behavior), logged loudly for visibility.
+    """
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        print("AUTH: no bearer token -- falling back to body org_id")
+        return None
+    raw_token = auth_header.removeprefix("Bearer ").strip()
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    if audit._client is None:
+        print("AUTH: no Supabase client -- falling back to body org_id")
+        return None
+    try:
+        result = (
+            audit._client.table("api_credentials")
+            .select("org_id, revoked_at")
+            .eq("token_hash", token_hash)
+            .single()
+            .execute()
+        )
+    except Exception as e:
+        print(f"AUTH: token lookup failed: {e}")
+        return None
+    if not result.data or result.data.get("revoked_at") is not None:
+        raise HTTPException(status_code=401, detail="Invalid or revoked token")
+    try:
+        audit._client.table("api_credentials").update(
+            {"last_used_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("token_hash", token_hash).execute()
+    except Exception:
+        pass
+    return result.data["org_id"]
+
 
 # ── Request schemas ───────────────────────────────────────────────────────────
 
@@ -135,7 +172,7 @@ def health():
 
 
 @app.post("/evaluate", response_model=DecisionResponse)
-def evaluate(req: EvaluateActionRequest):
+async def evaluate(req: EvaluateActionRequest, request: Request):
     """
     Evaluate an AgentAction against the policy engine.
 
@@ -148,6 +185,10 @@ def evaluate(req: EvaluateActionRequest):
             "affects_production": true
         }
     """
+    resolved_org = await resolve_org_from_token(request)
+    if resolved_org is not None:
+        req.org_id = resolved_org
+
     session_id = req.session_id or str(uuid.uuid4())
 
     context = ActionContext(
@@ -178,7 +219,7 @@ def evaluate(req: EvaluateActionRequest):
 
 
 @app.post("/evaluate-change", response_model=DecisionResponse)
-def evaluate_infra_change(req: EvaluateChangeRequest):
+async def evaluate_infra_change(req: EvaluateChangeRequest, request: Request):
     """
     Evaluate an infrastructure change (Terraform, K8s, Helm, DB) against the infra engine.
 
@@ -192,6 +233,9 @@ def evaluate_infra_change(req: EvaluateChangeRequest):
             "blast_radius": "org"
         }
     """
+    resolved_org = await resolve_org_from_token(request)
+    if resolved_org is not None:
+        req.org_id = resolved_org
     try:
         change_type = ChangeType(req.change_type.lower())
     except ValueError:
@@ -243,8 +287,11 @@ def evaluate_infra_change(req: EvaluateChangeRequest):
 
 
 @app.post("/release-gate", response_model=DecisionResponse)
-def release_gate(req: ReleaseGateRequest):
+async def release_gate(req: ReleaseGateRequest, request: Request):
     """Run the release gate: evaluate_release derives SessionAudit + ArtifactScan internally."""
+    resolved_org = await resolve_org_from_token(request)
+    if resolved_org is not None:
+        req.org_id = resolved_org
     try:
         change_type = ChangeType(req.change_type.lower())
     except ValueError:
