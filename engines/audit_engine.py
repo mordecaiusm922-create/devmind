@@ -249,6 +249,8 @@ class SupabaseAuditEngine:
             key = os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_SERVICE_KEY")
             if url and key:
                 self._client = create_client(url, key)
+            else:
+                print("SupabaseAuditEngine: SUPABASE_URL/SUPABASE_KEY not set -- audit trail and token resolution disabled")
         except Exception as e:
             print(f"SupabaseAuditEngine: client init failed: {e}")
 
