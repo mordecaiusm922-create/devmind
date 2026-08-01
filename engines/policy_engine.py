@@ -309,19 +309,19 @@ def _session_gate(
     rp = session.risk_profile
 
     if session.state == SessionState.SUSPENDED:
-        chain.append("session:suspended â†’ BLOCK")
+        chain.append("session:suspended → BLOCK")
         return Decision.BLOCK
 
     if session.state == SessionState.RESTRICTED:
-        chain.append("session:restricted â†’ ESCALATE")
+        chain.append("session:restricted → ESCALATE")
         return Decision.ESCALATE
 
     if rp.risk_trend == RiskTrend.CRITICAL:
-        chain.append("session:risk_trend=critical â†’ ESCALATE")
+        chain.append("session:risk_trend=critical → ESCALATE")
         return Decision.ESCALATE
 
     if rp.policy_violations >= 3:
-        chain.append(f"session:policy_violations={rp.policy_violations} â†’ REVIEW")
+        chain.append(f"session:policy_violations={rp.policy_violations} → REVIEW")
         return Decision.REVIEW
 
     return None
@@ -425,7 +425,7 @@ def evaluate_action(
     if op in _HIGH_PRIVILEGE_OPERATIONS:
         chain.append(f"high_privilege_op:{op}")
         if _has_critical and _is_prod:
-            chain.append("critical_signal+production â†’ BLOCK")
+            chain.append("critical_signal+production → BLOCK")
             return _verdict(action, Decision.BLOCK, 90, surface, chain, _early_signals, t0,
                             reason="critical_signal_in_production")
         score = max(_score_from_signals(_early_signals), 55)
@@ -450,28 +450,28 @@ def evaluate_action(
         chain.append("no_risk_signals")
 
     # 6. Risk score threshold
-    # Critical signal in production â†’ always BLOCK
+    # Critical signal in production → always BLOCK
     env = (action.context.environment or "").lower()
     is_production = "prod" in env
     has_critical = any(s["severity"] == "critical" for s in signals)
 
     if has_critical and is_production:
         score = max(score, 90)
-        chain.append(f"critical_signal_in_production â†’ BLOCK")
+        chain.append(f"critical_signal_in_production → BLOCK")
         return _verdict(action, Decision.BLOCK, score, surface, chain, signals, t0,
                         reason="critical_signal_in_production")
 
     if score >= 85:
-        chain.append(f"risk_score:{score} â†’ BLOCK")
+        chain.append(f"risk_score:{score} → BLOCK")
         return _verdict(action, Decision.BLOCK, score, surface, chain, signals, t0,
                         reason="risk_threshold_block")
 
     if score >= 30:
-        chain.append(f"risk_score:{score} â†’ REVIEW")
+        chain.append(f"risk_score:{score} → REVIEW")
         return _verdict(action, Decision.REVIEW, score, surface, chain, signals, t0,
                         reason="risk_threshold_review")
 
-    chain.append(f"risk_score:{score} â†’ ALLOW")
+    chain.append(f"risk_score:{score} → ALLOW")
     return _verdict(action, Decision.ALLOW, score, surface, chain, signals, t0,
                     reason="no_risk_signals")
 
