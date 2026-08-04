@@ -1,5 +1,5 @@
 """
-engines/policy_engine.py â€” DevMind Agent Governance
+engines/policy_engine.py — DevMind Agent Governance
 Policy engine for AgentAction evaluation.
 
 This replaces the PR-based policy_engine.py.
@@ -7,12 +7,12 @@ Input:  AgentAction
 Output: GovernanceDecision
 
 Decision ladder (first match wins):
-    1. Org custom rules          â€” configured per organization
-    2. Hard block signals        â€” deterministic, no override
-    3. Surface + operation gate  â€” based on what the action touches
-    4. Session context gate      â€” rising risk / restricted state
-    5. Payload signals           â€” pattern-based risk scoring
-    6. Risk score threshold      â€” probabilistic fallback
+    1. Org custom rules          — configured per organization
+    2. Hard block signals        — deterministic, no override
+    3. Surface + operation gate  — based on what the action touches
+    4. Session context gate      — rising risk / restricted state
+    5. Payload signals           — pattern-based risk scoring
+    6. Risk score threshold      — probabilistic fallback
 """
 
 from __future__ import annotations
@@ -123,7 +123,7 @@ def classify_surface(tool: str, operation: str) -> ActionSurface:
 
 
 # =============================================================================
-# Signal definitions â€” what patterns in the payload indicate risk
+# Signal definitions — what patterns in the payload indicate risk
 # =============================================================================
 
 @dataclass(frozen=True)
@@ -229,7 +229,7 @@ def _scan_signals(payload: str, surface: ActionSurface) -> list[dict[str, Any]]:
     payload_l = payload.lower()
     for signal in SIGNALS:
         if signal.surface not in ("*", surface.value):
-            # Still check if pattern matches â€” surface mismatch is a mismatch
+            # Still check if pattern matches — surface mismatch is a mismatch
             # but critical cross-surface patterns (e.g. hardcoded_secret in terminal)
             # should still fire.
             if signal.severity != "critical":
@@ -245,7 +245,7 @@ def _scan_signals(payload: str, surface: ActionSurface) -> list[dict[str, Any]]:
 
 
 # =============================================================================
-# Hard block patterns â€” deterministic, no override possible
+# Hard block patterns — deterministic, no override possible
 # =============================================================================
 
 HARD_BLOCK_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -387,7 +387,7 @@ def evaluate_action(
         f"agent:{action.agent}",
     ]
 
-    # 1. Hard block â€” ALWAYS first, no rule can override this
+    # 1. Hard block — ALWAYS first, no rule can override this
     for pattern in HARD_BLOCK_PATTERNS:
         if pattern.search(action.payload):
             chain.append(f"hardblock:{pattern.pattern[:60]}")
@@ -395,7 +395,7 @@ def evaluate_action(
             return _verdict(action, Decision.BLOCK, 98, surface, chain, signals, t0,
                             reason="hardblock_pattern")
 
-    # 2. Org custom rules â€” evaluated after hard blocks
+    # 2. Org custom rules — evaluated after hard blocks
     if org_rules:
         org_decision = _apply_org_rules(action, surface, org_rules, chain)
         if org_decision is not None:
@@ -404,7 +404,7 @@ def evaluate_action(
             return _verdict(action, org_decision, score, surface, chain, signals, t0,
                             reason="org_policy_rule")
 
-    # 3. Scan signals early â€” needed for production escalation in operation gates
+    # 3. Scan signals early — needed for production escalation in operation gates
     _early_signals = _scan_signals(action.payload, surface)
     _env = (action.context.environment or "").lower()
     _is_prod = "prod" in _env

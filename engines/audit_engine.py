@@ -25,7 +25,7 @@ from core.types import AgentAction, AgentChange, ChangeType, GovernanceDecision
 
 
 # =============================================================================
-# AuditRecord Ã¢â‚¬â€ the immutable record of one governance event
+# AuditRecord — the immutable record of one governance event
 # =============================================================================
 
 @dataclass(frozen=True)
@@ -203,7 +203,7 @@ class AuditEngine:
         return results
 
     def stats(self, session_id: str | None = None) -> dict[str, Any]:
-        """Aggregate stats Ã¢â‚¬â€ useful for session risk profiles."""
+        """Aggregate stats — useful for session risk profiles."""
         records = self.query(session_id=session_id, limit=10_000)
         if not records:
             return {"total": 0}
@@ -225,7 +225,7 @@ class AuditEngine:
         }
 
 # =============================================================================
-# SupabaseAuditEngine Ã¢â‚¬â€ production backend, survives Render redeploys
+# SupabaseAuditEngine — production backend, survives Render redeploys
 # =============================================================================
 
 class SupabaseAuditEngine:

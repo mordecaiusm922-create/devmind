@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from .schemas import VerifyRequest, VerifyResult
 
-_SECRET_RX = re.compile(r"(secret|api_key|token|password|passwd|pwd)", re.I)
+_SECRET_RX = re.compile(r"(secret|api_key|token|password|passwd|pwd)", re.I)
 _LOG_SECRET_RX = re.compile(r"logging\.(?:info|debug|warning|error|exception).{0,80}(secret|token|password|key)", re.I | re.S)
 
 

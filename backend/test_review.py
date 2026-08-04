@@ -1,4 +1,4 @@
-﻿import json, urllib.request
+import json, urllib.request
 
 api_key = "dm-5db56ee14229-4daa8e87edef25a4b17c"
 url = "https://devmind-2cej.onrender.com/review"

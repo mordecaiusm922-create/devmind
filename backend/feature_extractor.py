@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 CRITICAL_MODULES = ["auth", "payment", "token", "session", "password", "db", "execute", "query", "secret", "key"]
 
 EXTERNAL_PATTERNS = ["request", "fetch", "http", "socket", "redis", "celery", "boto", "s3", "smtp"]

@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 sys.path.insert(0, ".")
 from runtime.sandbox import sandbox_candidate
 

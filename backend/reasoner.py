@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 from pydantic import BaseModel
 from typing import Literal, List, Optional, Dict, Any
 from openai import OpenAI

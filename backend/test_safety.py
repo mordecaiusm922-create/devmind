@@ -1,4 +1,4 @@
-﻿import json, urllib.request
+import json, urllib.request
 
 body = json.dumps({
     "prompt": "fix sql injection in login.py",

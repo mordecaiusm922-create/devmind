@@ -97,10 +97,10 @@ DAMPENING_CASES = [
 # ANSI helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
-R="[0m"; BOLD="[1m"; DIM="[2m"
-RED="[91m"; YLW="[93m"; GRN="[92m"
-CYN="[96m"; BLU="[94m"; WHT="[97m"
-GRY="[90m"; MAG="[95m"
+R=""; BOLD=""; DIM=""
+RED=""; YLW=""; GRN=""
+CYN=""; BLU=""; WHT=""
+GRY=""; MAG=""
 
 def c(text, *codes): return "".join(codes)+str(text)+R
 

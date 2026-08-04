@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 sys.path.insert(0, ".")
 from surface_classifier import classify_change_surface
 

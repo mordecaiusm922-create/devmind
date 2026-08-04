@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 sys.path.insert(0, ".")
 from infra_analyzer import analyze_infra
 
