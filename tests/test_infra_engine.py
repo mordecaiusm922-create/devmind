@@ -8,6 +8,7 @@ If any of these fail, the infrastructure governance layer is broken.
 Run: pytest tests/ -v (from devmind/ root with PYTHONPATH=devmind/devmind)
 """
 
+import json
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -372,6 +373,83 @@ class TestSurfaceIsolation:
 # =============================================================================
 # Kubernetes semantic parsing: structured PSS classification with regex fallback
 # =============================================================================
+
+class TestTerraformSemanticParsing:
+    def test_compute_instance_delete_emits_compute_scope_signal(self) -> None:
+        plan_json = json.dumps({
+            "format_version": "1.2",
+            "terraform_version": "1.9.8",
+            "resource_changes": [
+                {
+                    "address": "aws_instance.payments_api",
+                    "mode": "managed",
+                    "type": "aws_instance",
+                    "name": "payments_api",
+                    "change": {"actions": ["delete"]},
+                }
+            ],
+        })
+        decision = evaluate_change(change(
+            change_type=ChangeType.TERRAFORM_APPLY,
+            surface=ActionSurface.INFRASTRUCTURE,
+            payload=plan_json,
+        ))
+        signal = next(
+            item for item in decision.signals
+            if item["name"] == "semantic_compute_scope_delete"
+        )
+        assert 35 <= signal["severity"] <= 45
+
+    def test_lambda_function_delete_emits_compute_scope_signal(self) -> None:
+        plan_json = json.dumps({
+            "format_version": "1.2",
+            "terraform_version": "1.9.8",
+            "resource_changes": [
+                {
+                    "address": "aws_lambda_function.payment_processor",
+                    "mode": "managed",
+                    "type": "aws_lambda_function",
+                    "name": "payment_processor",
+                    "change": {"actions": ["delete"]},
+                }
+            ],
+        })
+        decision = evaluate_change(change(
+            change_type=ChangeType.TERRAFORM_APPLY,
+            surface=ActionSurface.INFRASTRUCTURE,
+            payload=plan_json,
+        ))
+        signal = next(
+            item for item in decision.signals
+            if item["name"] == "semantic_compute_scope_delete"
+        )
+        assert 35 <= signal["severity"] <= 45
+
+    def test_unclassified_resource_still_uses_low_weight_fallback(self) -> None:
+        plan_json = json.dumps({
+            "format_version": "1.2",
+            "terraform_version": "1.9.8",
+            "resource_changes": [
+                {
+                    "address": "local_file.scratch",
+                    "mode": "managed",
+                    "type": "local_file",
+                    "name": "scratch",
+                    "change": {"actions": ["delete"]},
+                }
+            ],
+        })
+        decision = evaluate_change(change(
+            change_type=ChangeType.TERRAFORM_APPLY,
+            surface=ActionSurface.INFRASTRUCTURE,
+            payload=plan_json,
+        ))
+        signal = next(
+            item for item in decision.signals
+            if item["name"] == "semantic_unclassified_delete"
+        )
+        assert signal["severity"] == 10
+
 
 class TestKubernetesSemanticParsing:
     def test_privileged_container_emits_high_baseline_signal(self) -> None:
