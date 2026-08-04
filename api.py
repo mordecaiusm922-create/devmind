@@ -41,6 +41,33 @@ from engines.infra_engine import evaluate_change
 from engines.release_gate import evaluate_release, SessionAudit, ArtifactScan
 from engines.audit_engine import SupabaseAuditEngine
 
+import time
+from collections import defaultdict
+from fastapi import Depends
+
+# -- Simple in-memory rate limiter (per-IP sliding window) --
+# Not distributed-safe (resets if the process restarts, and does not
+# share state across multiple Render instances) -- sufficient for a
+# single free-tier instance. Revisit with a shared store (Redis) if
+# this service ever scales to multiple processes.
+_rate_limit_buckets: dict[str, list[float]] = defaultdict(list)
+RATE_LIMIT_MAX_REQUESTS = 20
+RATE_LIMIT_WINDOW_SECONDS = 60
+
+
+async def rate_limit(request: Request) -> None:
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    bucket = _rate_limit_buckets[client_ip]
+    while bucket and now - bucket[0] > RATE_LIMIT_WINDOW_SECONDS:
+        bucket.pop(0)
+    if len(bucket) >= RATE_LIMIT_MAX_REQUESTS:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded: max {RATE_LIMIT_MAX_REQUESTS} requests per {RATE_LIMIT_WINDOW_SECONDS}s.",
+        )
+    bucket.append(now)
+
 # ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
@@ -55,6 +82,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 audit = SupabaseAuditEngine()
 
@@ -171,8 +199,8 @@ def health():
     return {"status": "ok", "service": "devmind-governance-api", "version": "1.0.0"}
 
 
-@app.post("/evaluate", response_model=DecisionResponse)
-async def evaluate(req: EvaluateActionRequest, request: Request):
+@app.post("/evaluate", response_model=DecisionResponse, dependencies=[Depends(rate_limit)])
+async def evaluate(request: Request, req: EvaluateActionRequest):
     """
     Evaluate an AgentAction against the policy engine.
 
@@ -218,8 +246,8 @@ async def evaluate(req: EvaluateActionRequest, request: Request):
     return _decision_response(decision, req.agent_id)
 
 
-@app.post("/evaluate-change", response_model=DecisionResponse)
-async def evaluate_infra_change(req: EvaluateChangeRequest, request: Request):
+@app.post("/evaluate-change", response_model=DecisionResponse, dependencies=[Depends(rate_limit)])
+async def evaluate_infra_change(request: Request, req: EvaluateChangeRequest):
     """
     Evaluate an infrastructure change (Terraform, K8s, Helm, DB) against the infra engine.
 
@@ -286,8 +314,8 @@ async def evaluate_infra_change(req: EvaluateChangeRequest, request: Request):
     return _decision_response(decision, req.agent_id)
 
 
-@app.post("/release-gate", response_model=DecisionResponse)
-async def release_gate(req: ReleaseGateRequest, request: Request):
+@app.post("/release-gate", response_model=DecisionResponse, dependencies=[Depends(rate_limit)])
+async def release_gate(request: Request, req: ReleaseGateRequest):
     """Run the release gate: evaluate_release derives SessionAudit + ArtifactScan internally."""
     resolved_org = await resolve_org_from_token(request)
     if resolved_org is not None:
