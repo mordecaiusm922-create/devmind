@@ -1,4 +1,4 @@
-﻿import sys, os
+import sys, os
 sys.path.insert(0, ".")
 
 # Simula el surface classifier

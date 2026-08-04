@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 SUPPORTED = ["python", "javascript", "typescript"]
 
 def get_ts_parser(lang: str):

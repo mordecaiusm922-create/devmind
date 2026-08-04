@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 from dataclasses import dataclass, field
 from parser import get_ts_parser, detect_language, get_functions, extract_calls, _clean_diff
 

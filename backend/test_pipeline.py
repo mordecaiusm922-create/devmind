@@ -1,4 +1,4 @@
-﻿import asyncio, sys
+import asyncio, sys
 sys.path.insert(0, ".")
 from pipeline import run_pipeline_from_json
 

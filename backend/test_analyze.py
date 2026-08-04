@@ -1,4 +1,4 @@
-﻿import sys, asyncio
+import sys, asyncio
 sys.path.insert(0, ".")
 import os
 os.environ.setdefault("GROQ_API_KEY", "test")
