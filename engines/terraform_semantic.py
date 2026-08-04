@@ -83,6 +83,22 @@ _CLUSTER_SCOPE_RESOURCES: frozenset[str] = frozenset({
     "helm_release",
 })
 
+# Resources representing individual compute or serverless workloads.
+# A "delete" here can take a production service offline as decisively
+# as deleting a database -- EC2 instances, Lambda functions, and ECS
+# services running production traffic are not "safer to delete" just
+# because they are not literally a database.
+_COMPUTE_SCOPE_RESOURCES: frozenset[str] = frozenset({
+    "aws_instance",
+    "aws_lambda_function",
+    "aws_ecs_service",
+    "aws_ecs_task_definition",
+    "aws_autoscaling_group",
+    "google_compute_instance",
+    "azurerm_linux_virtual_machine",
+    "azurerm_virtual_machine",
+})
+
 # Terraform plan action verbs that indicate destructive intent.
 _DESTRUCTIVE_ACTIONS: frozenset[str] = frozenset({"delete"})
 _REPLACE_ACTIONS: frozenset[str] = frozenset({"create", "delete"})  # replace = both
@@ -98,6 +114,8 @@ def _resource_category(resource_type: str) -> str | None:
         return "network_scope"
     if resource_type in _CLUSTER_SCOPE_RESOURCES:
         return "cluster_scope"
+    if resource_type in _COMPUTE_SCOPE_RESOURCES:
+        return "compute_scope"
     return None
 
 
@@ -172,6 +190,13 @@ def extract_semantic_signals(plan: dict[str, Any]) -> list[dict[str, Any]]:
                 "surface": "terraform",
                 "detail": f"{address} ({resource_type}) will be deleted -- cluster/compute scope resource",
             })
+        elif category == "compute_scope":
+            signals.append({
+                "name": "semantic_compute_scope_delete",
+                "severity": 40,
+                "surface": "terraform",
+                "detail": f"{address} ({resource_type}) will be deleted -- compute/serverless workload resource",
+            })
         else:
             # Unclassified but still destructive -- lower-weight generic signal,
             # so unknown resource types aren't silently ignored.
@@ -182,7 +207,7 @@ def extract_semantic_signals(plan: dict[str, Any]) -> list[dict[str, Any]]:
                 "detail": f"{address} ({resource_type}) will be deleted -- unclassified resource type",
             })
 
-        if is_replace and category in ("data_persistence", "cluster_scope"):
+        if is_replace and category in ("data_persistence", "cluster_scope", "compute_scope"):
             signals.append({
                 "name": "semantic_replace_destructive",
                 "severity": 15,
