@@ -86,10 +86,15 @@ app.add_middleware(
 
 audit = SupabaseAuditEngine()
 
-async def resolve_org_from_token(request: Request) -> str | None:
-    """Phase 1 permissive auth: use the real org_id from a valid Bearer
-    token if present; otherwise return None so callers fall back to the
-    body-supplied org_id (today's behavior), logged loudly for visibility.
+async def resolve_org_from_token(request: Request) -> tuple[str, str | None] | None:
+    """Phase 1 permissive auth: use the real org_id (and, if the
+    credential is scoped to one, the agent_id) from a valid Bearer
+    token if present; otherwise return None so callers fall back to
+    the body-supplied org_id (today's behavior), logged loudly for
+    visibility.
+
+    Returns (org_id, agent_id) where agent_id is None if the
+    credential is not scoped to a single agent (org-wide token).
     """
     auth_header = request.headers.get("authorization", "")
     if not auth_header.startswith("Bearer "):
@@ -103,7 +108,7 @@ async def resolve_org_from_token(request: Request) -> str | None:
     try:
         result = (
             audit._client.table("api_credentials")
-            .select("org_id, revoked_at")
+            .select("org_id, agent_id, revoked_at")
             .eq("token_hash", token_hash)
             .single()
             .execute()
@@ -119,7 +124,7 @@ async def resolve_org_from_token(request: Request) -> str | None:
         ).eq("token_hash", token_hash).execute()
     except Exception:
         pass
-    return result.data["org_id"]
+    return result.data["org_id"], result.data.get("agent_id")
 
 
 # ── Request schemas ───────────────────────────────────────────────────────────
@@ -213,9 +218,15 @@ async def evaluate(request: Request, req: EvaluateActionRequest):
             "affects_production": true
         }
     """
-    resolved_org = await resolve_org_from_token(request)
-    if resolved_org is not None:
+    resolved = await resolve_org_from_token(request)
+    if resolved is not None:
+        resolved_org, bound_agent_id = resolved
         req.org_id = resolved_org
+        if bound_agent_id is not None and bound_agent_id != req.agent_id:
+            raise HTTPException(
+                status_code=403,
+                detail=f"This credential is scoped to agent '{bound_agent_id}', not '{req.agent_id}'.",
+            )
 
     session_id = req.session_id or str(uuid.uuid4())
 
@@ -261,9 +272,15 @@ async def evaluate_infra_change(request: Request, req: EvaluateChangeRequest):
             "blast_radius": "org"
         }
     """
-    resolved_org = await resolve_org_from_token(request)
-    if resolved_org is not None:
+    resolved = await resolve_org_from_token(request)
+    if resolved is not None:
+        resolved_org, bound_agent_id = resolved
         req.org_id = resolved_org
+        if bound_agent_id is not None and bound_agent_id != req.agent_id:
+            raise HTTPException(
+                status_code=403,
+                detail=f"This credential is scoped to agent '{bound_agent_id}', not '{req.agent_id}'.",
+            )
     try:
         change_type = ChangeType(req.change_type.lower())
     except ValueError:
@@ -317,9 +334,15 @@ async def evaluate_infra_change(request: Request, req: EvaluateChangeRequest):
 @app.post("/release-gate", response_model=DecisionResponse, dependencies=[Depends(rate_limit)])
 async def release_gate(request: Request, req: ReleaseGateRequest):
     """Run the release gate: evaluate_release derives SessionAudit + ArtifactScan internally."""
-    resolved_org = await resolve_org_from_token(request)
-    if resolved_org is not None:
+    resolved = await resolve_org_from_token(request)
+    if resolved is not None:
+        resolved_org, bound_agent_id = resolved
         req.org_id = resolved_org
+        if bound_agent_id is not None and bound_agent_id != req.agent_id:
+            raise HTTPException(
+                status_code=403,
+                detail=f"This credential is scoped to agent '{bound_agent_id}', not '{req.agent_id}'.",
+            )
     try:
         change_type = ChangeType(req.change_type.lower())
     except ValueError:
