@@ -246,6 +246,13 @@ class AgentSession:
     risk_profile: SessionRiskProfile = field(default_factory=SessionRiskProfile)
     actions:      list[str] = field(default_factory=list)   # action_ids in order
     policy_id:    str | None = None                          # applied policy version
+    # Bounded buffer of recent raw payloads (same agent, same session), used
+    # to detect commands fragmented across multiple actions to evade
+    # single-action hard-block regexes (e.g. "curl ..." then "| bash" as two
+    # separate calls). Capped at _MAX_RECENT_PAYLOADS by whoever appends to
+    # it (see runtime/sandbox.py::_update_session) -- not enforced here to
+    # keep this dataclass free of session-management logic.
+    recent_payloads: list[str] = field(default_factory=list)
 
 
 # =============================================================================
