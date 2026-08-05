@@ -395,6 +395,24 @@ def evaluate_action(
             return _verdict(action, Decision.BLOCK, 98, surface, chain, signals, t0,
                             reason="hardblock_pattern")
 
+    # 1b. Session-correlated hard block -- catches commands fragmented
+    # across multiple actions in the same session to evade the single-
+    # action check above (e.g. 'curl https://x' then '| bash' as two
+    # separate calls). Only runs when a real session with payload
+    # history is present; a session with no buffer behaves exactly
+    # like today (no correlation possible, no regression).
+    if session is not None and session.recent_payloads:
+        combined_payload = " ".join(session.recent_payloads + [action.payload])
+        for pattern in HARD_BLOCK_PATTERNS:
+            if pattern.search(combined_payload) and not pattern.search(action.payload):
+                chain.append(
+                    f"session_correlation_hardblock:{pattern.pattern[:50]}"
+                )
+                signals = _scan_signals(action.payload, surface)
+                return _verdict(action, Decision.BLOCK, 95, surface, chain, signals, t0,
+                                reason="session_correlated_hardblock")
+
+
     # 2. Org custom rules — evaluated after hard blocks
     if org_rules:
         org_decision = _apply_org_rules(action, surface, org_rules, chain)

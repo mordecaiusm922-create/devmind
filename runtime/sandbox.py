@@ -269,6 +269,13 @@ class DevMindSandbox:
         rp.total_actions += 1
         session.actions.append(action.action_id)
 
+        # Keep a bounded window of recent raw payloads for cross-action
+        # correlation (session_correlation_hardblock in policy_engine.py).
+        # Capped at 5 to bound memory per session.
+        session.recent_payloads.append(action.payload)
+        if len(session.recent_payloads) > 5:
+            session.recent_payloads.pop(0)
+
         if decision.decision == Decision.BLOCK:
             rp.blocked_actions += 1
             rp.policy_violations += 1
