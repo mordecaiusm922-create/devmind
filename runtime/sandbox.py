@@ -63,9 +63,15 @@ class DevMindSandbox:
         org_id: str,
         audit_path: str | Path = "data/audit/devmind_audit.jsonl",
         org_rules: list[PolicyRule] | None = None,
+        audit_engine: Any = None,
     ) -> None:
         self.org_id = org_id
-        self.audit = AuditEngine(audit_path)
+        # If an external audit engine is provided (e.g. SupabaseAuditEngine,
+        # shared across sandboxes so decisions land in one persistent store
+        # instead of one ephemeral local JSONL file per sandbox instance),
+        # use it. Otherwise fall back to the local JSONL AuditEngine -- this
+        # keeps existing callers (e.g. devmind_server.py) working unchanged.
+        self.audit = audit_engine if audit_engine is not None else AuditEngine(audit_path)
         self.org_rules = org_rules or []
         self._sessions: dict[str, AgentSession] = {}
 

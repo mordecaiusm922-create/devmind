@@ -263,8 +263,14 @@ class GovernedSandbox(DevMindSandbox):
         audit_path: str = "data/audit/devmind_audit.jsonl",
         org_rules: list[PolicyRule] | None = None,
         llm_enabled: bool | None = None,
+        audit_engine: Any = None,
     ) -> None:
-        super().__init__(org_id=org_id, audit_path=audit_path, org_rules=org_rules)
+        super().__init__(
+            org_id=org_id,
+            audit_path=audit_path,
+            org_rules=org_rules,
+            audit_engine=audit_engine,
+        )
         self.llm_on = llm_enabled if llm_enabled is not None else LLM_ENABLED
 
     def intercept(

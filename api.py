@@ -86,6 +86,24 @@ app.add_middleware(
 
 audit = SupabaseAuditEngine()
 
+from runtime.backend_connector import GovernedSandbox
+
+# One GovernedSandbox per organization, created on first use and reused
+# after that. This is what gives the REST API real session memory across
+# requests (fragmented-command correlation, real risk_profile accumulation)
+# instead of building a throwaway AgentSession per request. Same caveat as
+# the rate limiter: in-memory, per-process -- resets on redeploy/restart,
+# and does not share state across multiple Render instances if this ever
+# scales beyond one process.
+_sandboxes: dict[str, GovernedSandbox] = {}
+
+
+def _get_sandbox(org_id: str | None) -> GovernedSandbox:
+    key = org_id or "default"
+    if key not in _sandboxes:
+        _sandboxes[key] = GovernedSandbox(org_id=key, audit_engine=audit)
+    return _sandboxes[key]
+
 async def resolve_org_from_token(request: Request) -> tuple[str, str | None] | None:
     """Phase 1 permissive auth: use the real org_id (and, if the
     credential is scoped to one, the agent_id) from a valid Bearer
@@ -228,31 +246,20 @@ async def evaluate(request: Request, req: EvaluateActionRequest):
                 detail=f"This credential is scoped to agent '{bound_agent_id}', not '{req.agent_id}'.",
             )
 
-    session_id = req.session_id or str(uuid.uuid4())
-
-    context = ActionContext(
-        user=req.user,
-        environment=req.environment,
-    )
-
-    action = AgentAction(
-        action_id=str(uuid.uuid4()),
-        session_id=session_id,
-        agent=req.agent_id,
-        tool=req.tool,
-        operation=req.operation,
-        payload=req.payload,
-        timestamp=datetime.now(timezone.utc),
-        context=context,
-    )
-    session = _make_session(req.agent_id, session_id, req.org_id)
+    sandbox = _get_sandbox(req.org_id)
 
     try:
-        decision = evaluate_action(action, session)
+        decision = sandbox.intercept(
+            agent=req.agent_id,
+            tool=req.tool,
+            operation=req.operation,
+            payload=req.payload,
+            session_id=req.session_id,
+            user=req.user,
+            environment=req.environment,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-    audit.record(action, decision, organization=req.org_id)
 
     return _decision_response(decision, req.agent_id)
 
@@ -309,24 +316,20 @@ async def evaluate_infra_change(request: Request, req: EvaluateChangeRequest):
                 detail=f"Invalid blast_radius: {req.blast_radius}. Valid: {[e.value for e in BlastRadius]}"
             )
 
-    change = AgentChange(
-        action_id=str(uuid.uuid4()),
-        session_id=req.session_id or str(uuid.uuid4()),
-        agent=req.agent_id,
-        change_type=change_type,
-        surface=surface,
-        payload=req.payload,
-        timestamp=datetime.now(timezone.utc),
-        impact=impact,
-        diff_summary=req.diff_summary,
-    )
+    sandbox = _get_sandbox(req.org_id)
 
     try:
-        decision = evaluate_change(change)
+        decision = sandbox.intercept_change(
+            agent=req.agent_id,
+            change_type=change_type,
+            surface=surface,
+            payload=req.payload,
+            session_id=req.session_id,
+            impact=impact,
+            diff_summary=req.diff_summary,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-    audit.record_change(change, decision, organization=req.org_id)
 
     return _decision_response(decision, req.agent_id)
 
@@ -351,41 +354,28 @@ async def release_gate(request: Request, req: ReleaseGateRequest):
             detail=f"Invalid change_type: {req.change_type}. Valid: release_publish, release_promote"
         )
 
-    change = AgentChange(
-        action_id=str(uuid.uuid4()),
-        session_id=req.session_id or str(uuid.uuid4()),
-        agent=req.agent_id,
-        change_type=change_type,
-        surface=ActionSurface.RELEASE,
-        payload=req.payload,
-        timestamp=datetime.now(timezone.utc),
-        impact=ChangeImpact(affects_production=req.affects_production),
-        diff_summary=req.diff_summary,
-        artifact_ref=req.artifact_ref,
-    )
+    sandbox = _get_sandbox(req.org_id)
+    session_id = req.session_id or str(uuid.uuid4())
 
-    session = AgentSession(
-        session_id=req.session_id or change.session_id,
-        agent=req.agent_id,
-        organization=req.org_id or "default",
-        user=None,
-        started_at=datetime.now(timezone.utc),
-        risk_profile=SessionRiskProfile(
-            total_actions=req.total_actions,
-            policy_violations=req.policy_violations,
-            blocked_actions=req.blocked_actions,
-            escalated_actions=req.escalated_actions,
-            cumulative_score=req.cumulative_score,
-            peak_score=req.peak_score,
-        ),
-    )
-
+    # NOTE: total_actions/policy_violations/blocked_actions/escalated_actions/
+    # cumulative_score/peak_score on ReleaseGateRequest are no longer read
+    # here -- the sandbox now derives real session risk from its own
+    # persistent session store instead of trusting a client-reported
+    # history. The fields remain in the request schema for backward
+    # compatibility with existing callers; they are simply ignored.
     try:
-        decision = evaluate_release(change, session)
+        decision = sandbox.intercept_release(
+            agent=req.agent_id,
+            version=req.artifact_ref or "unknown",
+            artifact=req.payload,
+            session_id=session_id,
+            environment=None,
+            change_type=change_type,
+            impact=ChangeImpact(affects_production=req.affects_production),
+            diff_summary=req.diff_summary,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-    audit.record_change(change, decision, organization=req.org_id)
 
     return _decision_response(decision, req.agent_id)
 
