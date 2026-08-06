@@ -371,9 +371,9 @@ def test_org_blast_radius_always_escalates():
 
 Stated plainly, because a governance tool that hides its own gaps isn't trustworthy:
 
-- **Pattern-based detection can be evaded by obfuscation.** Outside of Terraform plan JSON and Kubernetes manifests (which are now parsed structurally), signal matching is regex over the payload string. Commands split or obfuscated across multiple session actions can currently evade per-action checks. Closing this class of evasion (session-level payload correlation, broader semantic parsing) is on the roadmap, not solved today.
+- **Pattern-based detection can be evaded by obfuscation.** Outside of Terraform plan JSON and Kubernetes manifests (which are now parsed structurally), signal matching is regex over the payload string. Commands fragmented across multiple actions in the same session (e.g. `curl ...` then `| bash` as two separate calls) are now caught via session-level payload correlation -- the last 5 payloads in a session are checked jointly against the hard-block patterns, in both the MCP server and the REST API. This closes the most common fragmentation pattern but is not exhaustive: broader semantic parsing of multi-step attack chains is still on the roadmap.
 - **Semantic parsing covers Terraform and Kubernetes only.** Helm values, Pulumi, CloudFormation, and other IaC formats are still evaluated via regex signals, not structural parsing.
-- **MCP authentication is a shared bearer token**, not per-agent or per-user identity (see "Connect via remote MCP" above).
+- **MCP authentication is a shared bearer token**, not per-agent or per-user identity (see "Connect via remote MCP" above). The REST API now supports scoping a credential to a single `agent_id` (set at credential-creation time); a request whose declared `agent_id` doesn't match the credential's bound agent is rejected with 403. This is opt-in per credential -- the default remains an org-wide token, and the MCP server itself still uses a single shared token.
 - **The `/evaluate` endpoint's `context.environment` field must be explicitly set on the request** for production-aware policy signals to apply — it is not inferred from other fields. If your integration omits it, actions won't be evaluated as production traffic even if they target production infrastructure.
 
 ---
@@ -395,7 +395,8 @@ Stated plainly, because a governance tool that hides its own gaps isn't trustwor
 - [ ] PyPI package + CLI (`pip install devmind-agent`, `devmind serve`)
 - [ ] GitHub Action (`devmind-action`) — intercept agent PRs in CI/CD pipelines
 - [ ] Kubernetes Admission Webhook — `infra_engine` enforced at the cluster level
-- [ ] Per-agent MCP identity (beyond the current shared bearer token)
+- [x] Session-level payload correlation (fragmented hard-block detection)
+- [ ] Per-agent MCP identity (beyond the current shared bearer token) -- REST API has opt-in per-agent credential scoping; MCP server still shared-token only
 - [ ] Agent reputation system — cross-session trust scores persisted in Supabase
 - [ ] Compliance mapping (SOC2, ISO 27001, NIST AI RMF)
 - [ ] Governance dashboard — visualize session risk, blocked actions, audit trail
