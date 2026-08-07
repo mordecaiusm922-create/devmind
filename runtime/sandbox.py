@@ -87,7 +87,7 @@ class DevMindSandbox:
             return
         rp = session.risk_profile
         try:
-            client.table("agent_sessions").upsert({
+            _upsert_result = client.table("agent_sessions").upsert({
                 "session_id": session.session_id,
                 "org_id": self.org_id if self.org_id != "default" else None,
                 "agent": session.agent,
@@ -111,10 +111,9 @@ class DevMindSandbox:
                 "recent_payloads": session.recent_payloads,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }).execute()
+            print(f"SESSION PERSIST: upsert result data={_upsert_result.data!r}")
         except Exception as e:
-            # Persistence failure must never break a governance decision that
-            # already happened -- fail loudly to logs, not to the caller.
-            print(f"SESSION PERSIST: failed to save session {session.session_id}: {e}")
+            print(f"SESSION PERSIST: EXCEPTION for session {session.session_id}: {type(e).__name__}: {e}")
 
     # -------------------------------------------------------------------------
     # Primary entry point — AgentAction (tool calls)
