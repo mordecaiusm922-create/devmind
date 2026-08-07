@@ -319,6 +319,7 @@ class GovernedSandbox(DevMindSandbox):
 
         self.audit.record(action, final, organization=self.org_id)
         self._update_session(session, action, final)
+        self._persist_session(session)
         return final
 
     def _escalate_to_llm(
