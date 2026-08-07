@@ -75,6 +75,47 @@ class DevMindSandbox:
         self.org_rules = org_rules or []
         self._sessions: dict[str, AgentSession] = {}
 
+    def _supabase_client(self):
+        """Returns the Supabase client if self.audit is Supabase-backed, else None.
+        Session persistence is opt-in: with no Supabase client, sessions stay
+        in-memory only (same behavior as before this feature existed)."""
+        return getattr(self.audit, "_client", None)
+
+    def _persist_session(self, session: AgentSession) -> None:
+        client = self._supabase_client()
+        if client is None:
+            return
+        rp = session.risk_profile
+        try:
+            client.table("agent_sessions").upsert({
+                "session_id": session.session_id,
+                "org_id": self.org_id if self.org_id != "default" else None,
+                "agent": session.agent,
+                "user_id": session.user,
+                "state": session.state.value,
+                "started_at": session.started_at.isoformat(),
+                "total_actions": rp.total_actions,
+                "blocked_actions": rp.blocked_actions,
+                "reviewed_actions": rp.reviewed_actions,
+                "escalated_actions": rp.escalated_actions,
+                "policy_violations": rp.policy_violations,
+                "cumulative_score": rp.cumulative_score,
+                "peak_score": rp.peak_score,
+                "risk_trend": rp.risk_trend.value,
+                "surfaces_touched": rp.surfaces_touched,
+                "infra_changes": rp.infra_changes,
+                "k8s_changes": rp.k8s_changes,
+                "releases_attempted": rp.releases_attempted,
+                "releases_blocked": rp.releases_blocked,
+                "secrets_accessed": rp.secrets_accessed,
+                "recent_payloads": session.recent_payloads,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).execute()
+        except Exception as e:
+            # Persistence failure must never break a governance decision that
+            # already happened -- fail loudly to logs, not to the caller.
+            print(f"SESSION PERSIST: failed to save session {session.session_id}: {e}")
+
     # -------------------------------------------------------------------------
     # Primary entry point — AgentAction (tool calls)
     # -------------------------------------------------------------------------
@@ -127,6 +168,7 @@ class DevMindSandbox:
 
         self.audit.record(action, decision, organization=self.org_id)
         self._update_session(session, action, decision)
+        self._persist_session(session)
 
         return decision
 
@@ -188,6 +230,7 @@ class DevMindSandbox:
 
         self.audit.record_change(change, decision, organization=self.org_id)
         self._update_session_for_change(session, change, decision)
+        self._persist_session(session)
 
         return decision
 
@@ -241,6 +284,7 @@ class DevMindSandbox:
 
         self.audit.record_change(change, decision, organization=self.org_id)
         self._update_session_for_change(session, change, decision)
+        self._persist_session(session)
 
         return decision
 
@@ -251,16 +295,62 @@ class DevMindSandbox:
     def _get_or_create_session(
         self, session_id: str, agent: str, user: str | None
     ) -> AgentSession:
-        if session_id not in self._sessions:
-            from core.types import SessionRiskProfile
-            self._sessions[session_id] = AgentSession(
-                session_id=session_id,
-                agent=agent,
-                organization=self.org_id,
-                user=user,
-                started_at=datetime.now(timezone.utc),
-                risk_profile=SessionRiskProfile(),
-            )
+        if session_id in self._sessions:
+            return self._sessions[session_id]
+
+        from core.types import SessionRiskProfile, RiskTrend
+
+        client = self._supabase_client()
+        if client is not None:
+            try:
+                result = (
+                    client.table("agent_sessions")
+                    .select("*")
+                    .eq("session_id", session_id)
+                    .maybe_single()
+                    .execute()
+                )
+            except Exception as e:
+                print(f"SESSION LOAD: failed to query session {session_id}: {e}")
+                result = None
+            if result is not None and result.data:
+                row = result.data
+                session = AgentSession(
+                    session_id=session_id,
+                    agent=row.get("agent", agent),
+                    organization=self.org_id,
+                    user=row.get("user_id", user),
+                    started_at=datetime.fromisoformat(row["started_at"]),
+                    state=SessionState(row.get("state", "active")),
+                    risk_profile=SessionRiskProfile(
+                        total_actions=row.get("total_actions", 0),
+                        blocked_actions=row.get("blocked_actions", 0),
+                        reviewed_actions=row.get("reviewed_actions", 0),
+                        escalated_actions=row.get("escalated_actions", 0),
+                        policy_violations=row.get("policy_violations", 0),
+                        cumulative_score=row.get("cumulative_score", 0.0),
+                        peak_score=row.get("peak_score", 0),
+                        risk_trend=RiskTrend(row.get("risk_trend", "stable")),
+                        surfaces_touched=row.get("surfaces_touched") or [],
+                        infra_changes=row.get("infra_changes", 0),
+                        k8s_changes=row.get("k8s_changes", 0),
+                        releases_attempted=row.get("releases_attempted", 0),
+                        releases_blocked=row.get("releases_blocked", 0),
+                        secrets_accessed=row.get("secrets_accessed", 0),
+                    ),
+                    recent_payloads=row.get("recent_payloads") or [],
+                )
+                self._sessions[session_id] = session
+                return session
+
+        self._sessions[session_id] = AgentSession(
+            session_id=session_id,
+            agent=agent,
+            organization=self.org_id,
+            user=user,
+            started_at=datetime.now(timezone.utc),
+            risk_profile=SessionRiskProfile(),
+        )
         return self._sessions[session_id]
 
     def _update_session(
