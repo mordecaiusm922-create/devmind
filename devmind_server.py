@@ -595,6 +595,34 @@ if __name__ == "__main__":
 
         DEVMIND_MCP_TOKEN = os.getenv("DEVMIND_MCP_TOKEN")
 
+        import time as _time
+        from collections import defaultdict as _defaultdict
+
+        # Defense in depth: even with a valid token, cap request volume per
+        # client IP. Same in-memory, per-process pattern as api.py's rate
+        # limiter -- resets on restart, does not share state across multiple
+        # instances. Sufficient for a single free-tier instance.
+        _rate_buckets: dict[str, list[float]] = _defaultdict(list)
+        _RATE_MAX = 30
+        _RATE_WINDOW = 60
+
+        class RateLimitMiddleware(BaseHTTPMiddleware):
+            async def dispatch(self, request, call_next):
+                if request.url.path == "/health":
+                    return await call_next(request)
+                client_ip = request.client.host if request.client else "unknown"
+                now = _time.time()
+                bucket = _rate_buckets[client_ip]
+                while bucket and now - bucket[0] > _RATE_WINDOW:
+                    bucket.pop(0)
+                if len(bucket) >= _RATE_MAX:
+                    return JSONResponse(
+                        {"error": f"Rate limit exceeded: max {_RATE_MAX} requests per {_RATE_WINDOW}s."},
+                        status_code=429,
+                    )
+                bucket.append(now)
+                return await call_next(request)
+
         class TokenAuthMiddleware(BaseHTTPMiddleware):
             async def dispatch(self, request, call_next):
                 if request.url.path == "/health":
@@ -620,7 +648,8 @@ if __name__ == "__main__":
 
         if DEVMIND_MCP_TOKEN:
             app.add_middleware(TokenAuthMiddleware)
-            print(f"[DEVMIND] Running on streamable-http (AUTHENTICATED) | org={ORG_ID} | env={ENVIRONMENT} | port={port}", flush=True)
+            app.add_middleware(RateLimitMiddleware)
+            print(f"[DEVMIND] Running on streamable-http (AUTHENTICATED, RATE-LIMITED) | org={ORG_ID} | env={ENVIRONMENT} | port={port}", flush=True)
         else:
             print(f"[DEVMIND] WARNING: Running on streamable-http WITHOUT AUTH | org={ORG_ID} | env={ENVIRONMENT} | port={port}", flush=True)
 
