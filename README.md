@@ -4,9 +4,9 @@
 
 DevMind intercepts, evaluates, and audits every action an AI agent attempts to take — before it executes. Deterministic policy engine. No LLM in the decision path. Sub-50ms response time.
 
-**Live API:** [devmind-2cej.onrender.com/health](https://devmind-2cej.onrender.com/health)
-**Live MCP server:** [devmind-mcp.onrender.com/mcp](https://devmind-mcp.onrender.com/mcp)
-**182 invariant tests passing · CI green on every push**
+**Live MCP server:** [devmind-mcp.onrender.com/mcp](https://devmind-mcp.onrender.com/mcp) -- connect Claude Desktop, Claude Code, Cursor, Codex, or any MCP client directly to your agent's runtime.
+**Live REST API:** [devmind-2cej.onrender.com/health](https://devmind-2cej.onrender.com/health) -- for CI/CD pipelines and scripts that aren't MCP clients.
+**189 invariant tests passing · CI green on every push**
 
 ---
 
@@ -46,6 +46,124 @@ curl -X POST https://devmind-2cej.onrender.com/evaluate-change \
 ```
 
 No agent touched Railway. The decision returned before the call was ever made.
+
+---
+
+## Connect via remote MCP (no local install required)
+
+DevMind runs as a remote MCP server. Any MCP-compatible agent — Claude Desktop, Cursor, or any client supporting the Model Context Protocol — can connect directly over HTTP, with no local Python setup.
+
+**Live MCP endpoint:** `https://devmind-mcp.onrender.com/mcp`
+**Health check (no auth required):** `https://devmind-mcp.onrender.com/health`
+
+The remote server requires a bearer token — it evaluates real tool calls (`execute_command`, `write_file`, `delete_file`, `db_query`, `deploy`), so it is not left open to anonymous requests. **This is currently a single shared bearer token, not per-agent or per-user identity.** That's a deliberate trade-off for this stage — sufficient for single-tenant use and evaluation, but it does not yet give you per-identity audit attribution beyond the `agent_id`/`session_id` fields the caller supplies. Per-agent credentials are a natural next step once there's a real multi-tenant use case driving it. [Request a token by opening an issue](https://github.com/mordecaiusm922-create/devmind/issues/new?template=request_token.yml) — usually answered within a day or two — or run your own instance using the local setup below.
+
+### Supported actions
+
+DevMind provides one MCP tool per surface your agent can act on:
+
+| Surface | Tool | What it gates |
+|---|---|---|
+| Terminal | `execute_command` | Any shell command |
+| Filesystem | `read_file`, `write_file`, `delete_file` | File reads/writes/deletes |
+| Git | `git_operation` | Any git command (push, force-push, etc.) |
+| Network | `http_request` | Outbound HTTP calls |
+| Database | `db_query` | SQL queries |
+| Deployment | `deploy` | Deploys to any target/environment |
+| Infrastructure | `evaluate_terraform_plan`, `evaluate_k8s_manifest` | Terraform plans, Kubernetes manifests |
+| Release | `release_gate` | Release publish/promote |
+| Session | `session_status` | Inspect the current session's accumulated risk profile |
+
+### Example prompts
+
+Once connected, you don't call DevMind directly -- your agent calls these tools naturally as part of doing its job, and DevMind evaluates each call before it executes:
+
+- *"Delete the old staging database volume"* -- gated by `execute_command`/`db_query`, likely `REVIEW` or `BLOCK` depending on environment.
+- *"Push this hotfix directly to main"* -- gated by `git_operation`, matches the `no-direct-main-push` org rule.
+- *"Apply this Terraform plan to production"* -- gated by `evaluate_terraform_plan`, blast-radius and semantic parsing both apply.
+- *"Write my AWS key into the .env file so the script can read it"* -- gated by `write_file`, hard-blocked as a hardcoded secret regardless of environment.
+- *"Check the current session's risk profile"* -- calls `session_status` directly, no gating (read-only).
+
+### Claude Desktop
+
+Add to your MCP settings (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "devmind": {
+      "url": "https://devmind-mcp.onrender.com/mcp",
+      "transport": "streamable-http",
+      "headers": {
+        "Authorization": "Bearer YOUR_DEVMIND_MCP_TOKEN"
+      }
+    }
+  }
+}
+```
+
+### Cursor
+
+Add to `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "devmind": {
+      "url": "https://devmind-mcp.onrender.com/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_DEVMIND_MCP_TOKEN"
+      }
+    }
+  }
+}
+```
+
+### Codex
+
+Codex reads MCP config from `~/.codex/config.toml` (or a project-scoped `.codex/config.toml`). Add:
+
+```toml
+[mcp_servers.devmind]
+url = "https://devmind-mcp.onrender.com/mcp"
+bearer_token_env_var = "DEVMIND_MCP_TOKEN"
+```
+
+Then set the token as an environment variable before starting Codex, rather than pasting it into the file:
+
+```bash
+export DEVMIND_MCP_TOKEN="YOUR_DEVMIND_MCP_TOKEN"
+```
+
+### Any other MCP client
+
+DevMind speaks standard streamable-HTTP MCP -- any harness that supports a remote MCP server over HTTP with a bearer token works the same way: point it at `https://devmind-mcp.onrender.com/mcp` and set an `Authorization: Bearer YOUR_DEVMIND_MCP_TOKEN` header (or your client's equivalent, e.g. an env-var-based token reference). If your tool's config format isn't shown above, check its docs for "remote MCP server" or "streamable HTTP" setup -- the URL and token are all you need.
+
+Once connected, every `execute_command`, `write_file`, `delete_file`, `git_operation`, `http_request`, `db_query`, and `deploy` call your agent makes is evaluated by DevMind's policy engine before execution. `session_status` lets you inspect the current session's accumulated risk profile at any point.
+
+Requests without a valid token receive `401 Unauthorized` before reaching the governance engine. `/health` is exempt from this check, so external monitoring (uptime checks, load balancer health probes) can verify liveness without credentials.
+
+### Run it locally instead
+
+If you'd rather run the MCP server on your own machine (stdio transport, the default):
+
+```json
+{
+  "mcpServers": {
+    "devmind": {
+      "command": "python",
+      "args": ["/path/to/devmind_server.py"],
+      "env": {
+        "DEVMIND_ORG_ID": "your-org",
+        "DEVMIND_AUDIT_LOG": "data/audit/devmind_audit.jsonl",
+        "DEVMIND_ENV": "production"
+      }
+    }
+  }
+}
+```
+
+For the HTTP transport instead of stdio, set `DEVMIND_MCP_TRANSPORT=streamable-http` and `DEVMIND_MCP_TOKEN=<your-token>` before running.
 
 ---
 
@@ -94,78 +212,6 @@ Every evaluation produces exactly one `GovernanceDecision`:
 ## Audit trail
 
 Every decision made by `/evaluate`, `/evaluate-change`, and `/release-gate` is persisted to a Supabase-backed audit log (`audit_records` table) — not just returned in the response. Each record stores the agent, tool, operation, a SHA-256 hash of the payload (never the raw payload itself), the full decision, risk score, and why-chain, timestamped and queryable by session, agent, decision, or organization. This is what lets an organization answer "show me every time an agent tried to run `terraform destroy` against production last month" with an actual query, not a promise.
-
----
-
-## Connect via remote MCP (no local install required)
-
-DevMind runs as a remote MCP server. Any MCP-compatible agent — Claude Desktop, Cursor, or any client supporting the Model Context Protocol — can connect directly over HTTP, with no local Python setup.
-
-**Live MCP endpoint:** `https://devmind-mcp.onrender.com/mcp`
-**Health check (no auth required):** `https://devmind-mcp.onrender.com/health`
-
-The remote server requires a bearer token — it evaluates real tool calls (`execute_command`, `write_file`, `delete_file`, `db_query`, `deploy`), so it is not left open to anonymous requests. **This is currently a single shared bearer token, not per-agent or per-user identity.** That's a deliberate trade-off for this stage — sufficient for single-tenant use and evaluation, but it does not yet give you per-identity audit attribution beyond the `agent_id`/`session_id` fields the caller supplies. Per-agent credentials are a natural next step once there's a real multi-tenant use case driving it. [Request a token by opening an issue](https://github.com/mordecaiusm922-create/devmind/issues/new?template=request_token.yml) — usually answered within a day or two — or run your own instance using the local setup below.
-
-### Claude Desktop
-
-Add to your MCP settings (`claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "devmind": {
-      "url": "https://devmind-mcp.onrender.com/mcp",
-      "transport": "streamable-http",
-      "headers": {
-        "Authorization": "Bearer YOUR_DEVMIND_MCP_TOKEN"
-      }
-    }
-  }
-}
-```
-
-### Cursor
-
-Add to `.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "devmind": {
-      "url": "https://devmind-mcp.onrender.com/mcp",
-      "headers": {
-        "Authorization": "Bearer YOUR_DEVMIND_MCP_TOKEN"
-      }
-    }
-  }
-}
-```
-
-Once connected, every `execute_command`, `write_file`, `delete_file`, `git_operation`, `http_request`, `db_query`, and `deploy` call your agent makes is evaluated by DevMind's policy engine before execution. `session_status` lets you inspect the current session's accumulated risk profile at any point.
-
-Requests without a valid token receive `401 Unauthorized` before reaching the governance engine. `/health` is exempt from this check, so external monitoring (uptime checks, load balancer health probes) can verify liveness without credentials.
-
-### Run it locally instead
-
-If you'd rather run the MCP server on your own machine (stdio transport, the default):
-
-```json
-{
-  "mcpServers": {
-    "devmind": {
-      "command": "python",
-      "args": ["/path/to/devmind_server.py"],
-      "env": {
-        "DEVMIND_ORG_ID": "your-org",
-        "DEVMIND_AUDIT_LOG": "data/audit/devmind_audit.jsonl",
-        "DEVMIND_ENV": "production"
-      }
-    }
-  }
-}
-```
-
-For the HTTP transport instead of stdio, set `DEVMIND_MCP_TRANSPORT=streamable-http` and `DEVMIND_MCP_TOKEN=<your-token>` before running.
 
 ---
 
@@ -310,8 +356,8 @@ simulate_real_risks.py  — 28 real-world scenarios across fintech, healthcare,
 2. **Hard blocks** — deterministic, no override. IAM wildcards, hardcoded secrets, public S3 buckets, open security groups, privileged containers, `hostNetwork`/`hostPID`, cluster-admin bindings.
 3. **Blast radius gate** — `ORG` or `ACCOUNT` scope → `ESCALATE`, unconditionally. This is the invariant that would have caught PocketOS. If the caller didn't declare a blast radius and the payload was a parseable Terraform plan, it can be inferred here from the plan's own structure.
 4. **Production escalation** — a critical signal plus `affects_production=True` → `BLOCK`.
-5. **Signal-based risk scoring** — 25+ weighted regex signals across Terraform, Kubernetes, and generic surfaces.
-6. **Risk threshold decision** — probabilistic fallback when no hard rule fires (≥85 `BLOCK`, ≥50 `REVIEW`).
+5. **Signal-based risk scoring** — weighted regex signals across Terraform, Kubernetes, and generic surfaces (exact patterns and weights live in source, not reproduced here).
+6. **Risk threshold decision** — probabilistic fallback when no hard rule fires. Exact thresholds are intentionally not published here (they're visible in the source if you want to audit them) -- publishing the cutoff invites payloads tuned to land just under it.
 
 The policy engine (`policy_engine.py`) mirrors this ordering for tool-call actions, with its own signal library for terminal, filesystem, database, and cloud surfaces.
 
@@ -363,7 +409,7 @@ def test_org_blast_radius_always_escalates():
     assert decision.escalation_required == True
 ```
 
-182 tests, zero mocks on the decision logic itself. If someone weakens an invariant, CI fails before it reaches main.
+189 tests, zero mocks on the decision logic itself. If someone weakens an invariant, CI fails before it reaches main.
 
 ---
 
