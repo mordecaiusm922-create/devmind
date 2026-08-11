@@ -105,24 +105,35 @@ def _get_sandbox(org_id: str | None) -> GovernedSandbox:
     return _sandboxes[key]
 
 async def resolve_org_from_token(request: Request) -> tuple[str, str | None] | None:
-    """Phase 1 permissive auth: use the real org_id (and, if the
-    credential is scoped to one, the agent_id) from a valid Bearer
-    token if present; otherwise return None so callers fall back to
-    the body-supplied org_id (today's behavior), logged loudly for
-    visibility.
+    """Auth is fail-closed whenever this deployment has real credentials
+    configured (audit._client is not None). The ONLY case that still falls
+    back to the body-supplied org_id is a Supabase-less local dev setup
+    with zero credential infra -- never a missing/invalid token or a
+    broken lookup against a real backend.
 
     Returns (org_id, agent_id) where agent_id is None if the
     credential is not scoped to a single agent (org-wide token).
     """
+    auth_configured = audit._client is not None
     auth_header = request.headers.get("authorization", "")
+
     if not auth_header.startswith("Bearer "):
-        print("AUTH: no bearer token -- falling back to body org_id")
+        if auth_configured:
+            raise HTTPException(
+                status_code=401,
+                detail="Missing or malformed Authorization header",
+            )
+        print("AUTH: no bearer token, no Supabase client -- falling back to body org_id (local dev only)")
         return None
+
     raw_token = auth_header.removeprefix("Bearer ").strip()
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-    if audit._client is None:
-        print("AUTH: no Supabase client -- falling back to body org_id")
-        return None
+
+    if not auth_configured:
+        # A token was sent but there's nothing to validate it against.
+        # Fail closed instead of silently pretending it was checked.
+        raise HTTPException(status_code=503, detail="Auth backend not configured")
+
     try:
         result = (
             audit._client.table("api_credentials")
@@ -133,7 +144,7 @@ async def resolve_org_from_token(request: Request) -> tuple[str, str | None] | N
         )
     except Exception as e:
         print(f"AUTH: token lookup failed: {e}")
-        return None
+        raise HTTPException(status_code=503, detail="Auth backend temporarily unavailable") from e
     if not result.data or result.data.get("revoked_at") is not None:
         raise HTTPException(status_code=401, detail="Invalid or revoked token")
     try:
