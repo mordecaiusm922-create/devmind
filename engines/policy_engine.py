@@ -152,14 +152,26 @@ SIGNALS: tuple[Signal, ...] = (
            re.compile(r"curl\s+https?://[^\s]+\s*\|", re.I)),
     Signal("base64_decode_exec",    "critical", "terminal",
            re.compile(r"base64\s*(-d|--decode)\s*\|", re.I)),
+    Signal("fork_bomb",             "critical", "terminal",
+           re.compile(r":\(\)\s*\{[^}]*:\s*\|\s*:", re.I)),
+    Signal("reverse_shell",         "critical", "terminal",
+           re.compile(r"/dev/(tcp|udp)/|\bnc\s+-e\b|bash\s+-i\s*>&", re.I)),
+    Signal("dns_exfil_substitution","high",     "network",
+           re.compile(r"\b(nslookup|dig)\b[^\r\n]*\$\(", re.I)),
 
     # --- Filesystem ---
     Signal("sensitive_path_write",  "critical", "filesystem",
-           re.compile(r"/(etc/passwd|etc/shadow|etc/sudoers|proc/|sys/kernel)", re.I)),
+           re.compile(r"[>]\s*/(etc|boot|sys|proc)/|/(etc/passwd|etc/shadow|etc/sudoers|proc/|sys/kernel)", re.I)),
     Signal("home_secrets_write",    "high",     "filesystem",
            re.compile(r"\~/.ssh/|\.aws/credentials|\.netrc|\.pgpass", re.I)),
     Signal("recursive_delete",      "critical", "filesystem",
            re.compile(r"rm\s+-[rf]+\s+(\/|~|\*|\$HOME|\$PWD)", re.I)),
+    Signal("find_exec_delete",      "critical", "filesystem",
+           re.compile(r"\bfind\b[^\r\n]*(-exec\s+(rm|shred)\b|-delete\b)", re.I)),
+    Signal("raw_device_write",      "critical", "filesystem",
+           re.compile(r"\bdd\b[^\r\n]*\bof=/dev/", re.I)),
+    Signal("powershell_destructive","critical", "filesystem",
+           re.compile(r"Remove-Item\b[^\r\n]*(-Recurse|-Force)|\brd\s+/s\s+/q\b|\bdel\s+/f\s+/s\s+/q\b|\bFormat-Volume\b|\bClear-Content\b", re.I)),
 
     # --- Database ---
     Signal("sql_drop",              "critical", "*",
