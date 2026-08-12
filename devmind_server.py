@@ -59,13 +59,83 @@ from core.types import ActionSurface, ChangeImpact, ChangeType, Decision
 print("[DEVMIND] Governance MCP Server starting...", flush=True)
 
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.server.auth.provider import AccessToken, TokenVerifier
+from mcp.server.auth.settings import AuthSettings
+from pydantic import AnyHttpUrl
+import hashlib as _hashlib
+from datetime import datetime as _datetime, timezone as _timezone
+from engines.audit_engine import SupabaseAuditEngine
+
+MCP_RESOURCE_URL = os.getenv("DEVMIND_MCP_RESOURCE_URL", "https://devmind-mcp.onrender.com")
+
+
+class SupabaseTokenVerifier(TokenVerifier):
+    """Resource Server token validation for the MCP transport.
+
+    Reuses the same api_credentials table (and hashing scheme) that
+    api.py already validates REST tokens against -- one source of
+    truth for credentials across both DevMind backends. Enforces
+    Resource Indicators (RFC 8707): a token bound to a different
+    resource (or issued for the REST API specifically) is rejected
+    here, not silently accepted.
+    """
+
+    def __init__(self) -> None:
+        self._audit = SupabaseAuditEngine()
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        client = self._audit._client
+        if client is None:
+            print("[DEVMIND] AUTH: no Supabase client configured -- rejecting all MCP tokens", flush=True)
+            return None
+        token_hash = _hashlib.sha256(token.encode()).hexdigest()
+        try:
+            result = (
+                client.table("api_credentials")
+                .select("org_id, agent_id, resource, revoked_at")
+                .eq("token_hash", token_hash)
+                .single()
+                .execute()
+            )
+        except Exception as e:
+            print(f"[DEVMIND] AUTH: token lookup failed: {e}", flush=True)
+            return None
+        if not result.data or result.data.get("revoked_at") is not None:
+            return None
+        bound_resource = result.data.get("resource")
+        if bound_resource is not None and bound_resource != MCP_RESOURCE_URL:
+            print(f"[DEVMIND] AUTH: token bound to {bound_resource!r}, not this resource -- rejected", flush=True)
+            return None
+        try:
+            client.table("api_credentials").update(
+                {"last_used_at": _datetime.now(_timezone.utc).isoformat()}
+            ).eq("token_hash", token_hash).execute()
+        except Exception:
+            pass
+        return AccessToken(
+            token=token,
+            client_id=result.data.get("agent_id") or result.data["org_id"],
+            scopes=[],
+        )
+
 
 mcp = FastMCP(
     "DevMind Governance",
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
-        allowed_hosts=["devmind-mcp.onrender.com", "localhost", "127.0.0.1"],
+        allowed_hosts=[
+            "devmind-mcp.onrender.com",
+            "localhost", "127.0.0.1",
+            f"localhost:{os.getenv('PORT', '8000')}",
+            f"127.0.0.1:{os.getenv('PORT', '8000')}",
+        ],
         allowed_origins=["https://devmind-mcp.onrender.com", "http://localhost", "http://127.0.0.1"],
+    ),
+    token_verifier=SupabaseTokenVerifier(),
+    auth=AuthSettings(
+        issuer_url=AnyHttpUrl(MCP_RESOURCE_URL),
+        resource_server_url=AnyHttpUrl(MCP_RESOURCE_URL),
+        required_scopes=[],
     ),
 )
 
@@ -593,8 +663,6 @@ if __name__ == "__main__":
         from starlette.middleware.base import BaseHTTPMiddleware
         from starlette.responses import JSONResponse
 
-        DEVMIND_MCP_TOKEN = os.getenv("DEVMIND_MCP_TOKEN")
-
         import time as _time
         from collections import defaultdict as _defaultdict
 
@@ -623,17 +691,6 @@ if __name__ == "__main__":
                 bucket.append(now)
                 return await call_next(request)
 
-        class TokenAuthMiddleware(BaseHTTPMiddleware):
-            async def dispatch(self, request, call_next):
-                if request.url.path == "/health":
-                    return await call_next(request)
-                if DEVMIND_MCP_TOKEN:
-                    auth_header = request.headers.get("authorization", "")
-                    expected = f"Bearer {DEVMIND_MCP_TOKEN}"
-                    if auth_header != expected:
-                        return JSONResponse({"error": "Unauthorized"}, status_code=401)
-                return await call_next(request)
-
         port = int(os.getenv("PORT", "8000"))
         mcp.settings.host = "0.0.0.0"
         mcp.settings.port = port
@@ -646,12 +703,8 @@ if __name__ == "__main__":
             return _JSONResponse({"status": "ok", "service": "devmind-mcp"})
         app.router.routes.insert(0, Route("/health", _health, methods=["GET"]))
 
-        if DEVMIND_MCP_TOKEN:
-            app.add_middleware(TokenAuthMiddleware)
-            app.add_middleware(RateLimitMiddleware)
-            print(f"[DEVMIND] Running on streamable-http (AUTHENTICATED, RATE-LIMITED) | org={ORG_ID} | env={ENVIRONMENT} | port={port}", flush=True)
-        else:
-            print(f"[DEVMIND] WARNING: Running on streamable-http WITHOUT AUTH | org={ORG_ID} | env={ENVIRONMENT} | port={port}", flush=True)
+        app.add_middleware(RateLimitMiddleware)
+        print(f"[DEVMIND] Running on streamable-http (OAuth Resource Server, RATE-LIMITED) | org={ORG_ID} | env={ENVIRONMENT} | port={port} | resource={MCP_RESOURCE_URL}", flush=True)
 
         uvicorn.run(app, host="0.0.0.0", port=port)
     else:
