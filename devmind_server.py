@@ -652,6 +652,31 @@ def session_status() -> str:
     return json.dumps(stats, indent=2)
 
 
+@mcp.tool()
+def _debug_check_bwrap_capability() -> str:
+    """TEMPORARY diagnostic tool -- remove after use. Checks whether
+    this Render instance permits unprivileged user namespaces for
+    bubblewrap sandboxing. Read-only, harmless, no destructive action."""
+    import shutil as _shutil
+    if not _shutil.which("bwrap"):
+        return "[DIAG] bwrap binary not found on this instance -- would need to be installed via Dockerfile/build step."
+    try:
+        result = subprocess.run(
+            ["bwrap", "--unshare-all", "--ro-bind", "/usr", "/usr",
+             "--ro-bind", "/bin", "/bin", "--ro-bind", "/lib", "/lib",
+             "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
+             "--", "/bin/echo", "sandbox_ok"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return (
+            f"[DIAG] exit_code={result.returncode}\n"
+            f"stdout={result.stdout!r}\n"
+            f"stderr={result.stderr!r}"
+        )
+    except Exception as exc:
+        return f"[DIAG] exception: {exc!r}"
+
+
 # =============================================================================
 # Entry point
 # =============================================================================
