@@ -257,18 +257,23 @@ def execute_command(command: str, rationale: str) -> str:
         return message
 
     try:
-        result = subprocess.run(
-            command, shell=True, capture_output=True,
-            text=True, timeout=TIMEOUT,
-            encoding="utf-8", errors="replace",
-        )
-        return (
-            f"[DEVMIND ALLOW] Exit code: {result.returncode}\n"
-            f"STDOUT:\n{_trim(result.stdout)}\n"
-            f"STDERR:\n{_trim(result.stderr)}"
-        )
-    except subprocess.TimeoutExpired:
-        return f"[DEVMIND ERROR] Timeout: command exceeded {TIMEOUT}s."
+        from e2b_code_interpreter import Sandbox
+        from e2b.sandbox.commands.command_handle import CommandExitException
+
+        with Sandbox.create(allow_internet_access=False, timeout=TIMEOUT) as sbx:
+            try:
+                result = sbx.commands.run(command, timeout=TIMEOUT)
+                return (
+                    f"[DEVMIND ALLOW] Exit code: {result.exit_code}\n"
+                    f"STDOUT:\n{_trim(result.stdout)}\n"
+                    f"STDERR:\n{_trim(result.stderr)}"
+                )
+            except CommandExitException as e:
+                return (
+                    f"[DEVMIND ALLOW] Exit code: {e.exit_code}\n"
+                    f"STDOUT:\n{_trim(e.stdout)}\n"
+                    f"STDERR:\n{_trim(e.stderr)}"
+                )
     except Exception as exc:
         return f"[DEVMIND ERROR] {_redact(str(exc))}"
 
