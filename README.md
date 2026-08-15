@@ -51,12 +51,21 @@ No agent touched Railway. The decision returned before the call was ever made.
 
 ## Connect via remote MCP (no local install required)
 
-DevMind runs as a remote MCP server. Any MCP-compatible agent — Claude Desktop, Cursor, or any client supporting the Model Context Protocol — can connect directly over HTTP, with no local Python setup.
+DevMind runs as a remote MCP server. Any MCP-compatible agent — Claude Desktop, Cursor, Codex, OpenCode, or any client supporting the Model Context Protocol — can connect directly over HTTP, with no local Python setup.
 
 **Live MCP endpoint:** `https://devmind-mcp.onrender.com/mcp`
 **Health check (no auth required):** `https://devmind-mcp.onrender.com/health`
+**Protected Resource Metadata (RFC 9728):** `https://devmind-mcp.onrender.com/.well-known/oauth-protected-resource`
 
-The remote server requires a bearer token — it evaluates real tool calls (`execute_command`, `write_file`, `delete_file`, `db_query`, `deploy`), so it is not left open to anonymous requests. **This is currently a single shared bearer token, not per-agent or per-user identity.** That's a deliberate trade-off for this stage — sufficient for single-tenant use and evaluation, but it does not yet give you per-identity audit attribution beyond the `agent_id`/`session_id` fields the caller supplies. Per-agent credentials are a natural next step once there's a real multi-tenant use case driving it. [Request a token by opening an issue](https://github.com/mordecaiusm922-create/devmind/issues/new?template=request_token.yml) — usually answered within a day or two — or run your own instance using the local setup below.
+devmind-mcp is a spec-compliant **OAuth 2.1 Resource Server**. Every credential is scoped to a single agent/org **and** bound to a specific resource server (Resource Indicators, RFC 8707) — a token minted for `devmind-mcp` is rejected by the REST API and vice versa, and a token bound to one agent is rejected if used as another. Requests without a valid, correctly-scoped token receive a spec-correct `401` with a `WWW-Authenticate` header pointing back at the Protected Resource Metadata endpoint above, before reaching the governance engine. `/health` is exempt, so external monitoring (uptime checks, load balancer probes) can verify liveness without credentials.
+
+**Getting a token today:** there is no self-service interactive login yet (no Authorization Code + PKCE flow) — with a small number of known agent clients, credentials are issued directly via `scripts/issue_token.py`, backed by Supabase. [Request one by opening an issue](https://github.com/mordecaiusm922-create/devmind/issues/new?template=request_token.yml) and you'll get back a token scoped to your agent and to the MCP resource specifically. A full interactive OAuth flow is planned once third-party self-service distribution opens (see Roadmap).
+
+### Real containment, not just classification
+
+`execute_command` does not run shell commands against the host process. Every allowed command executes inside a disposable **E2B Firecracker microVM** — no internet access by default, fully separate filesystem, destroyed after each call. If a command evades the policy engine's classification, the blast radius is a throwaway VM, not the machine running DevMind's own governance logic. This exists because blocklist-style classification alone was proven insufficient in practice: `find -exec rm`, `dd` writes to raw devices, shell fork bombs, redirection-based truncation, and `/dev/tcp` reverse shells were all confirmed to evade pattern-based detection during isolated live testing before this containment layer existed.
+
+The terminal/filesystem surface is also mid-migration from a blocklist model (pattern-match known-bad commands — the original design) to an **allowlist model** (recognize known-safe SRE/platform-engineering vocabulary — diagnostic/investigation commands, approved remediations, capacity/SLO checks — and default-deny everything else to REVIEW). The allowlist currently runs in shadow mode: it logs what it *would* decide without changing real enforcement yet, while real usage data is collected before flipping to enforce mode.
 
 ### Supported actions
 
@@ -64,7 +73,7 @@ DevMind provides one MCP tool per surface your agent can act on:
 
 | Surface | Tool | What it gates |
 |---|---|---|
-| Terminal | `execute_command` | Any shell command |
+| Terminal | `execute_command` | Any shell command (runs in an E2B microVM sandbox) |
 | Filesystem | `read_file`, `write_file`, `delete_file` | File reads/writes/deletes |
 | Git | `git_operation` | Any git command (push, force-push, etc.) |
 | Network | `http_request` | Outbound HTTP calls |
@@ -135,13 +144,32 @@ Then set the token as an environment variable before starting Codex, rather than
 export DEVMIND_MCP_TOKEN="YOUR_DEVMIND_MCP_TOKEN"
 ```
 
+### OpenCode
+
+Add to `opencode.json` (project-level or `~/.config/opencode/opencode.json`):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "devmind": {
+      "type": "remote",
+      "url": "https://devmind-mcp.onrender.com/mcp",
+      "enabled": true,
+      "oauth": false,
+      "headers": {
+        "Authorization": "Bearer {env:DEVMIND_MCP_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+`"oauth": false` is required today since there's no interactive authorization server yet -- this tells OpenCode to use the static bearer token directly instead of attempting OAuth discovery.
+
 ### Any other MCP client
 
 DevMind speaks standard streamable-HTTP MCP -- any harness that supports a remote MCP server over HTTP with a bearer token works the same way: point it at `https://devmind-mcp.onrender.com/mcp` and set an `Authorization: Bearer YOUR_DEVMIND_MCP_TOKEN` header (or your client's equivalent, e.g. an env-var-based token reference). If your tool's config format isn't shown above, check its docs for "remote MCP server" or "streamable HTTP" setup -- the URL and token are all you need.
-
-Once connected, every `execute_command`, `write_file`, `delete_file`, `git_operation`, `http_request`, `db_query`, and `deploy` call your agent makes is evaluated by DevMind's policy engine before execution. `session_status` lets you inspect the current session's accumulated risk profile at any point.
-
-Requests without a valid token receive `401 Unauthorized` before reaching the governance engine. `/health` is exempt from this check, so external monitoring (uptime checks, load balancer health probes) can verify liveness without credentials.
 
 ### Run it locally instead
 
@@ -156,14 +184,19 @@ If you'd rather run the MCP server on your own machine (stdio transport, the def
       "env": {
         "DEVMIND_ORG_ID": "your-org",
         "DEVMIND_AUDIT_LOG": "data/audit/devmind_audit.jsonl",
-        "DEVMIND_ENV": "production"
+        "DEVMIND_ENV": "production",
+        "SUPABASE_URL": "your-supabase-url",
+        "SUPABASE_KEY": "your-supabase-service-key",
+        "E2B_API_KEY": "your-e2b-api-key"
       }
     }
   }
 }
 ```
 
-For the HTTP transport instead of stdio, set `DEVMIND_MCP_TRANSPORT=streamable-http` and `DEVMIND_MCP_TOKEN=<your-token>` before running.
+`SUPABASE_URL`/`SUPABASE_KEY` are required for token validation (the OAuth Resource Server checks credentials against Supabase, not a static shared secret). `E2B_API_KEY` is required for `execute_command` to run -- without it, that specific tool returns an error while every other tool still works.
+
+For the HTTP transport instead of stdio, set `DEVMIND_MCP_TRANSPORT=streamable-http` and issue yourself a token via `python scripts/issue_token.py <org_id> <label> --resource https://devmind-mcp.onrender.com` (or your local resource URL) before running.
 
 ---
 
@@ -227,10 +260,15 @@ Deployed at [`devmind-2cej.onrender.com`](https://devmind-2cej.onrender.com), ru
 | `/release-gate`      | POST   | Evaluate a release (`AgentChange` + `AgentSession`) via release gate |
 | `/simulate`          | GET    | Run the 28 real-world risk scenarios, return the report  |
 
+**Authentication is fail-closed whenever Supabase credentials are configured** (true in production): a missing or invalid `Authorization` header returns `401` before the request reaches the policy engine at all. Get a token via `python scripts/issue_token.py <org_id> <label>` (see the MCP section above for the full flow) -- a token scoped to `devmind-mcp` specifically will be rejected here; leave `--resource` unset for a token valid against both, or scope it to `https://devmind-2cej.onrender.com` for this API only.
+
 ```bash
+export DEVMIND_TOKEN="dvm_your_token_here"
+
 # IAM wildcard → BLOCK (hard signal, no override)
 curl -X POST https://devmind-2cej.onrender.com/evaluate-change \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $DEVMIND_TOKEN" \
   -d '{
     "agent_id": "my-agent",
     "change_type": "terraform_apply",
@@ -241,6 +279,7 @@ curl -X POST https://devmind-2cej.onrender.com/evaluate-change \
 # Tool call through the policy engine
 curl -X POST https://devmind-2cej.onrender.com/evaluate \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $DEVMIND_TOKEN" \
   -d '{
     "agent_id": "claude-code",
     "tool": "terminal",
@@ -251,6 +290,7 @@ curl -X POST https://devmind-2cej.onrender.com/evaluate \
 # Release with a dirty session + secret in the artifact → BLOCK
 curl -X POST https://devmind-2cej.onrender.com/release-gate \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $DEVMIND_TOKEN" \
   -d '{
     "agent_id": "release-bot",
     "change_type": "release_publish",
@@ -260,7 +300,7 @@ curl -X POST https://devmind-2cej.onrender.com/release-gate \
   }'
 ```
 
-Both return in well under 100ms — deterministic Python running in-process, not an LLM call.
+Both return in well under 100ms — deterministic Python running in-process, not an LLM call. Note that `/evaluate` and `/evaluate-change` return a governance *decision*, not an execution result -- unlike the MCP `execute_command` tool, this REST API does not itself run anything inside an E2B sandbox; it's the caller's responsibility to act (or not) on the verdict.
 
 ---
 
@@ -417,9 +457,10 @@ def test_org_blast_radius_always_escalates():
 
 Stated plainly, because a governance tool that hides its own gaps isn't trustworthy:
 
-- **Pattern-based detection can be evaded by obfuscation.** Outside of Terraform plan JSON and Kubernetes manifests (which are now parsed structurally), signal matching is regex over the payload string. Commands fragmented across multiple actions in the same session (e.g. `curl ...` then `| bash` as two separate calls) are now caught via session-level payload correlation -- the last 5 payloads in a session are checked jointly against the hard-block patterns, in both the MCP server and the REST API. This closes the most common fragmentation pattern but is not exhaustive: broader semantic parsing of multi-step attack chains is still on the roadmap.
+- **Pattern-based detection can still be evaded by novel syntax for a known-bad effect.** Outside of Terraform plan JSON and Kubernetes manifests (parsed structurally), most signal matching is regex over the payload string -- and during isolated live testing, `find -exec rm`, `dd` writes to raw devices, shell fork bombs, redirection-based truncation, and `/dev/tcp` reverse shells all evaded detection this way. Two things now limit the real-world impact of that gap: (1) `execute_command` runs inside a disposable E2B Firecracker microVM, not the host process, so an evaded command's blast radius is contained rather than executing against real infrastructure; (2) the terminal/filesystem surface is migrating from blocklist to an allowlist model (default-deny, only known-safe SRE/platform-engineering commands pass automatically), currently running in shadow mode alongside the existing signals while real usage data is collected before enforcement. Commands fragmented across multiple actions in the same session are caught via session-level payload correlation (the last 5 payloads are checked jointly against hard-block patterns) in both the MCP server and REST API -- this closes the most common fragmentation pattern but isn't exhaustive.
 - **Semantic parsing covers Terraform and Kubernetes only.** Helm values, Pulumi, CloudFormation, and other IaC formats are still evaluated via regex signals, not structural parsing.
-- **MCP authentication is a shared bearer token**, not per-agent or per-user identity (see "Connect via remote MCP" above). The REST API now supports scoping a credential to a single `agent_id` (set at credential-creation time); a request whose declared `agent_id` doesn't match the credential's bound agent is rejected with 403. This is opt-in per credential -- the default remains an org-wide token, and the MCP server itself still uses a single shared token.
+- **No self-service interactive OAuth flow yet.** devmind-mcp is a spec-compliant OAuth 2.1 Resource Server (RFC 9728 Protected Resource Metadata, RFC 8707 Resource Indicators) -- credentials are scoped per-agent and bound to a specific resource server (a token minted for the MCP server is rejected by the REST API and vice versa), backed by Supabase, not a shared secret. What's missing is an Authorization Code + PKCE flow for a human to click through a browser login -- with a small number of known agent clients today, tokens are issued directly via `scripts/issue_token.py`. This is the right tradeoff for the current stage, not the end state.
+- **The MCP server's audit trail is not yet durable.** `devmind_server.py` logs governance decisions to a local JSONL file, which does not survive a Render redeploy (ephemeral filesystem). The REST API (`api.py`) already writes to Supabase and survives redeploys -- the MCP server needs the same treatment. The Phase 2 allowlist shadow log is Supabase-backed already; the primary decision audit trail is not, yet.
 - **The `/evaluate` endpoint's `context.environment` field must be explicitly set on the request** for production-aware policy signals to apply — it is not inferred from other fields. If your integration omits it, actions won't be evaluated as production traffic even if they target production infrastructure.
 
 ---
@@ -436,13 +477,16 @@ Stated plainly, because a governance tool that hides its own gaps isn't trustwor
 
 - [x] Remote MCP server (`devmind-mcp.onrender.com`)
 - [x] Semantic parsing for Terraform plans and Kubernetes manifests
-- [x] Persistent audit trail (Supabase-backed, survives redeploys — previously write-only to a sandbox log, never reachable from the live API)
-- [ ] Session-level payload correlation (close the obfuscation/fragmentation gap above)
+- [x] Persistent audit trail for the REST API (Supabase-backed, survives redeploys)
+- [x] Session-level payload correlation (fragmented hard-block detection, both MCP and REST)
+- [x] OAuth 2.1 Resource Server for MCP (RFC 9728 Protected Resource Metadata + RFC 8707 Resource Indicators) — per-agent, per-resource scoped credentials, Supabase-backed
+- [x] Real containment for `execute_command` — E2B Firecracker microVMs, no host execution, no internet access by default
+- [ ] Terminal/filesystem allowlist enforcement — default-deny model built and tested, currently running in shadow mode alongside the existing blocklist signals while real usage data is collected
+- [ ] Durable audit trail for the MCP server (currently local JSONL, doesn't survive a Render redeploy — the REST API already has this)
+- [ ] Interactive OAuth login (Authorization Code + PKCE) — needed once third-party self-service distribution opens; today tokens are issued directly via `scripts/issue_token.py`
 - [ ] PyPI package + CLI (`pip install devmind-agent`, `devmind serve`)
 - [ ] GitHub Action (`devmind-action`) — intercept agent PRs in CI/CD pipelines
 - [ ] Kubernetes Admission Webhook — `infra_engine` enforced at the cluster level
-- [x] Session-level payload correlation (fragmented hard-block detection)
-- [ ] Per-agent MCP identity (beyond the current shared bearer token) -- REST API has opt-in per-agent credential scoping; MCP server still shared-token only
 - [ ] Agent reputation system — cross-session trust scores persisted in Supabase
 - [ ] Compliance mapping (SOC2, ISO 27001, NIST AI RMF)
 - [ ] Governance dashboard — visualize session risk, blocked actions, audit trail
