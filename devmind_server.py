@@ -269,6 +269,19 @@ def execute_command(command: str, rationale: str) -> str:
             f"command={_redact(command)[:200]!r}",
             flush=True,
         )
+        try:
+            _shadow_client = SupabaseAuditEngine()._client
+            if _shadow_client is not None:
+                _shadow_client.table("allowlist_shadow_log").insert({
+                    "session_id": _SESSION_ID,
+                    "command": _redact(command)[:2000],
+                    "blocklist_decision": blocklist_decision_name,
+                    "allowlist_allowed": allowlist_allowed,
+                    "allowlist_reason": allowlist_reason,
+                    "agreement": agreement,
+                }).execute()
+        except Exception as db_exc:
+            print(f"[SHADOW:allowlist] Supabase write failed (non-fatal): {db_exc!r}", flush=True)
     except Exception as shadow_exc:
         print(f"[SHADOW:allowlist] ERROR computing shadow decision: {shadow_exc!r}", flush=True)
 
