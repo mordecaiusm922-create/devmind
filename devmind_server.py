@@ -252,6 +252,26 @@ def execute_command(command: str, rationale: str) -> str:
         extra_context={"rationale": _redact(rationale)},
     )
 
+    # --- Phase 2 shadow mode: log what the allowlist WOULD have
+    # decided, without changing real enforcement yet. Stopgap
+    # print()-based logging -- not durable, replace with a Supabase
+    # table before relying on this for real rollout decisions.
+    try:
+        from engines.allowlist import is_allowlisted
+        allowlist_allowed, allowlist_reason = is_allowlisted(command)
+        blocklist_decision = getattr(decision, "decision", None)
+        blocklist_decision_name = getattr(blocklist_decision, "name", str(blocklist_decision))
+        agreement = "AGREE" if (allowlist_allowed == (blocklist_decision_name == "ALLOW")) else "DISAGREE"
+        print(
+            f"[SHADOW:allowlist] {agreement} | "
+            f"blocklist={blocklist_decision_name} | "
+            f"allowlist={'ALLOW' if allowlist_allowed else 'REVIEW'} ({allowlist_reason}) | "
+            f"command={_redact(command)[:200]!r}",
+            flush=True,
+        )
+    except Exception as shadow_exc:
+        print(f"[SHADOW:allowlist] ERROR computing shadow decision: {shadow_exc!r}", flush=True)
+
     proceed, message = _enforce(decision, command)
     if not proceed:
         return message
