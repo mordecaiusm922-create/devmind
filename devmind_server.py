@@ -146,10 +146,17 @@ AGENT_NAME  = os.getenv("DEVMIND_AGENT", "claude-code")
 TIMEOUT     = int(os.getenv("DEVMIND_TIMEOUT", "15"))
 OUTPUT_LIMIT = int(os.getenv("DEVMIND_OUTPUT_LIMIT", "12000"))
 
+_supabase_audit = SupabaseAuditEngine()
 sandbox = GovernedSandbox(
     org_id=ORG_ID,
     audit_path=AUDIT_LOG,
+    # Only use the Supabase-backed engine when credentials are actually
+    # configured -- otherwise fall through to GovernedSandbox's own
+    # default (local JSONL), instead of silently logging nothing.
+    audit_engine=_supabase_audit if _supabase_audit._client is not None else None,
 )
+if _supabase_audit._client is None:
+    print("[DEVMIND] WARNING: no Supabase credentials -- audit trail falling back to local JSONL (not durable across redeploys)", flush=True)
 
 # Active session — one per server process (one agent conversation)
 _SESSION_ID = str(uuid.uuid4())

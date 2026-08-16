@@ -6,7 +6,7 @@ DevMind intercepts, evaluates, and audits every action an AI agent attempts to t
 
 **Live MCP server:** [devmind-mcp.onrender.com/mcp](https://devmind-mcp.onrender.com/mcp) -- connect Claude Desktop, Claude Code, Cursor, Codex, or any MCP client directly to your agent's runtime.
 **Live REST API:** [devmind-2cej.onrender.com/health](https://devmind-2cej.onrender.com/health) -- for CI/CD pipelines and scripts that aren't MCP clients.
-**189 invariant tests passing · CI green on every push**
+**210 invariant tests passing · CI green on every push**
 
 ---
 
@@ -23,6 +23,7 @@ Try the exact scenario against the live API:
 ```bash
 curl -X POST https://devmind-2cej.onrender.com/evaluate-change \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $DEVMIND_TOKEN" \
   -d '{
     "agent_id": "cursor-agent",
     "change_type": "terraform_apply",
@@ -244,7 +245,7 @@ Every evaluation produces exactly one `GovernanceDecision`:
 
 ## Audit trail
 
-Every decision made by `/evaluate`, `/evaluate-change`, and `/release-gate` is persisted to a Supabase-backed audit log (`audit_records` table) — not just returned in the response. Each record stores the agent, tool, operation, a SHA-256 hash of the payload (never the raw payload itself), the full decision, risk score, and why-chain, timestamped and queryable by session, agent, decision, or organization. This is what lets an organization answer "show me every time an agent tried to run `terraform destroy` against production last month" with an actual query, not a promise.
+Every decision made by `/evaluate`, `/evaluate-change`, and `/release-gate` (REST) or `execute_command` and the other MCP tools (MCP server) is persisted to a Supabase-backed audit log (`audit_records` table) — not just returned in the response. The MCP server falls back to a local JSONL file only if `SUPABASE_URL`/`SUPABASE_KEY` aren't configured (a warning is printed at startup when this happens), so a local dev instance without Supabase still gets *some* audit trail instead of silently logging nothing. Each record stores the agent, tool, operation, a SHA-256 hash of the payload (never the raw payload itself), the full decision, risk score, and why-chain, timestamped and queryable by session, agent, decision, or organization. This is what lets an organization answer "show me every time an agent tried to run `terraform destroy` against production last month" with an actual query, not a promise.
 
 ---
 
@@ -310,7 +311,7 @@ Both return in well under 100ms — deterministic Python running in-process, not
 git clone https://github.com/mordecaiusm922-create/devmind
 cd devmind
 pip install -r requirements.txt
-python -m pytest tests/ -v          # 182 tests, deterministic, no mocks
+python -m pytest tests/ -v          # 210 tests, deterministic, no mocks
 python simulate_real_risks.py       # 28 real-world scenarios
 ```
 
@@ -372,12 +373,15 @@ engines/
   terraform_semantic.py — semantic parser for `terraform plan -json`
   k8s_semantic.py       — semantic parser for K8s Pod/Deployment manifests
   release_gate.py      — evaluate_release() — session + artifact release governance
-  audit_engine.py       — audit trail: JSONL (local/dev) and Supabase (production)
+  audit_engine.py       — audit trail: JSONL (local/dev fallback) and Supabase (production)
+  allowlist.py          — default-deny SRE-vocabulary allowlist for terminal/filesystem
+                           (Phase 2, currently running in shadow mode)
 
 tests/
   test_policy_engine.py
   test_infra_engine.py  — includes semantic parser coverage
-  test_release_gate.py  — 182 invariant tests total
+  test_release_gate.py
+  test_allowlist.py     — 210 invariant tests total
 
 api.py                  — FastAPI wrapper exposing all three engines over HTTP,
                            each call persisted to the Supabase audit trail
@@ -449,7 +453,7 @@ def test_org_blast_radius_always_escalates():
     assert decision.escalation_required == True
 ```
 
-189 tests, zero mocks on the decision logic itself. If someone weakens an invariant, CI fails before it reaches main.
+210 tests, zero mocks on the decision logic itself. If someone weakens an invariant, CI fails before it reaches main.
 
 ---
 
@@ -460,7 +464,7 @@ Stated plainly, because a governance tool that hides its own gaps isn't trustwor
 - **Pattern-based detection can still be evaded by novel syntax for a known-bad effect.** Outside of Terraform plan JSON and Kubernetes manifests (parsed structurally), most signal matching is regex over the payload string -- and during isolated live testing, `find -exec rm`, `dd` writes to raw devices, shell fork bombs, redirection-based truncation, and `/dev/tcp` reverse shells all evaded detection this way. Two things now limit the real-world impact of that gap: (1) `execute_command` runs inside a disposable E2B Firecracker microVM, not the host process, so an evaded command's blast radius is contained rather than executing against real infrastructure; (2) the terminal/filesystem surface is migrating from blocklist to an allowlist model (default-deny, only known-safe SRE/platform-engineering commands pass automatically), currently running in shadow mode alongside the existing signals while real usage data is collected before enforcement. Commands fragmented across multiple actions in the same session are caught via session-level payload correlation (the last 5 payloads are checked jointly against hard-block patterns) in both the MCP server and REST API -- this closes the most common fragmentation pattern but isn't exhaustive.
 - **Semantic parsing covers Terraform and Kubernetes only.** Helm values, Pulumi, CloudFormation, and other IaC formats are still evaluated via regex signals, not structural parsing.
 - **No self-service interactive OAuth flow yet.** devmind-mcp is a spec-compliant OAuth 2.1 Resource Server (RFC 9728 Protected Resource Metadata, RFC 8707 Resource Indicators) -- credentials are scoped per-agent and bound to a specific resource server (a token minted for the MCP server is rejected by the REST API and vice versa), backed by Supabase, not a shared secret. What's missing is an Authorization Code + PKCE flow for a human to click through a browser login -- with a small number of known agent clients today, tokens are issued directly via `scripts/issue_token.py`. This is the right tradeoff for the current stage, not the end state.
-- **The MCP server's audit trail is not yet durable.** `devmind_server.py` logs governance decisions to a local JSONL file, which does not survive a Render redeploy (ephemeral filesystem). The REST API (`api.py`) already writes to Supabase and survives redeploys -- the MCP server needs the same treatment. The Phase 2 allowlist shadow log is Supabase-backed already; the primary decision audit trail is not, yet.
+- **The MCP server's audit trail is durable when Supabase credentials are configured** (true in production), using the same `SupabaseAuditEngine` the REST API uses. It falls back to a local JSONL file (not durable across a Render redeploy) only when `SUPABASE_URL`/`SUPABASE_KEY` aren't set -- a startup warning makes this visible rather than silent.
 - **The `/evaluate` endpoint's `context.environment` field must be explicitly set on the request** for production-aware policy signals to apply — it is not inferred from other fields. If your integration omits it, actions won't be evaluated as production traffic even if they target production infrastructure.
 
 ---
@@ -482,7 +486,7 @@ Stated plainly, because a governance tool that hides its own gaps isn't trustwor
 - [x] OAuth 2.1 Resource Server for MCP (RFC 9728 Protected Resource Metadata + RFC 8707 Resource Indicators) — per-agent, per-resource scoped credentials, Supabase-backed
 - [x] Real containment for `execute_command` — E2B Firecracker microVMs, no host execution, no internet access by default
 - [ ] Terminal/filesystem allowlist enforcement — default-deny model built and tested, currently running in shadow mode alongside the existing blocklist signals while real usage data is collected
-- [ ] Durable audit trail for the MCP server (currently local JSONL, doesn't survive a Render redeploy — the REST API already has this)
+- [x] Durable audit trail for the MCP server (Supabase-backed, matching the REST API — falls back to local JSONL only when Supabase credentials aren't configured, with a startup warning)
 - [ ] Interactive OAuth login (Authorization Code + PKCE) — needed once third-party self-service distribution opens; today tokens are issued directly via `scripts/issue_token.py`
 - [ ] PyPI package + CLI (`pip install devmind-agent`, `devmind serve`)
 - [ ] GitHub Action (`devmind-action`) — intercept agent PRs in CI/CD pipelines
