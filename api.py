@@ -104,12 +104,20 @@ def _get_sandbox(org_id: str | None) -> GovernedSandbox:
         _sandboxes[key] = GovernedSandbox(org_id=key, audit_engine=audit)
     return _sandboxes[key]
 
+REST_RESOURCE_URL = os.getenv("DEVMIND_REST_RESOURCE_URL", "https://devmind-2cej.onrender.com")
+
+
 async def resolve_org_from_token(request: Request) -> tuple[str, str | None] | None:
     """Auth is fail-closed whenever this deployment has real credentials
     configured (audit._client is not None). The ONLY case that still falls
     back to the body-supplied org_id is a Supabase-less local dev setup
     with zero credential infra -- never a missing/invalid token or a
     broken lookup against a real backend.
+
+    Also enforces Resource Indicators (RFC 8707): a token bound to a
+    different resource (e.g. scoped specifically to devmind-mcp) is
+    rejected here, mirroring the check devmind-mcp's own
+    SupabaseTokenVerifier already does in the other direction.
 
     Returns (org_id, agent_id) where agent_id is None if the
     credential is not scoped to a single agent (org-wide token).
@@ -137,7 +145,7 @@ async def resolve_org_from_token(request: Request) -> tuple[str, str | None] | N
     try:
         result = (
             audit._client.table("api_credentials")
-            .select("org_id, agent_id, revoked_at")
+            .select("org_id, agent_id, resource, revoked_at")
             .eq("token_hash", token_hash)
             .single()
             .execute()
@@ -147,6 +155,12 @@ async def resolve_org_from_token(request: Request) -> tuple[str, str | None] | N
         raise HTTPException(status_code=503, detail="Auth backend temporarily unavailable") from e
     if not result.data or result.data.get("revoked_at") is not None:
         raise HTTPException(status_code=401, detail="Invalid or revoked token")
+    bound_resource = result.data.get("resource")
+    if bound_resource is not None and bound_resource != REST_RESOURCE_URL:
+        raise HTTPException(
+            status_code=401,
+            detail=f"Token is bound to a different resource ({bound_resource!r}), not this REST API.",
+        )
     try:
         audit._client.table("api_credentials").update(
             {"last_used_at": datetime.now(timezone.utc).isoformat()}
