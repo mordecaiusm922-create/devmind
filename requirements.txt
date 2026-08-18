@@ -13,3 +13,4 @@ mcp==1.27.2
 supabase>=2.0.0
 slowapi
 e2b-code-interpreter>=1.0.0
+pytest-asyncio>=0.24.0
