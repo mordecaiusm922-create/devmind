@@ -146,16 +146,24 @@ AGENT_NAME  = os.getenv("DEVMIND_AGENT", "claude-code")
 TIMEOUT     = int(os.getenv("DEVMIND_TIMEOUT", "15"))
 OUTPUT_LIMIT = int(os.getenv("DEVMIND_OUTPUT_LIMIT", "12000"))
 
+def _select_audit_engine(candidate: Any) -> Any | None:
+    """Use `candidate` (a Supabase-backed audit engine) only when it
+    actually has a live Supabase client configured -- otherwise
+    return None so GovernedSandbox falls through to its own default
+    (local JSONL) instead of silently logging nothing. Extracted as
+    a standalone function so this decision is unit-testable without
+    reloading the whole module under different env vars."""
+    return candidate if getattr(candidate, "_client", None) is not None else None
+
+
 _supabase_audit = SupabaseAuditEngine()
+_selected_audit_engine = _select_audit_engine(_supabase_audit)
 sandbox = GovernedSandbox(
     org_id=ORG_ID,
     audit_path=AUDIT_LOG,
-    # Only use the Supabase-backed engine when credentials are actually
-    # configured -- otherwise fall through to GovernedSandbox's own
-    # default (local JSONL), instead of silently logging nothing.
-    audit_engine=_supabase_audit if _supabase_audit._client is not None else None,
+    audit_engine=_selected_audit_engine,
 )
-if _supabase_audit._client is None:
+if _selected_audit_engine is None:
     print("[DEVMIND] WARNING: no Supabase credentials -- audit trail falling back to local JSONL (not durable across redeploys)", flush=True)
 
 # Active session — one per server process (one agent conversation)
