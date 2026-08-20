@@ -271,9 +271,13 @@ def execute_command(command: str, rationale: str) -> str:
     # decided, without changing real enforcement yet. Stopgap
     # print()-based logging -- not durable, replace with a Supabase
     # table before relying on this for real rollout decisions.
+    # Also feeds the REVIEW message below (allowlist_context) so the
+    # classification isn't computed twice.
+    allowlist_context: tuple[bool, str] | None = None
     try:
         from engines.allowlist import is_allowlisted
         allowlist_allowed, allowlist_reason = is_allowlisted(command)
+        allowlist_context = (allowlist_allowed, allowlist_reason)
         blocklist_decision = getattr(decision, "decision", None)
         blocklist_decision_name = getattr(blocklist_decision, "name", str(blocklist_decision))
         agreement = "AGREE" if (allowlist_allowed == (blocklist_decision_name == "ALLOW")) else "DISAGREE"
@@ -302,6 +306,22 @@ def execute_command(command: str, rationale: str) -> str:
 
     proceed, message = _enforce(decision, command)
     if not proceed:
+        decision_name = getattr(getattr(decision, "decision", None), "name", None)
+        if allowlist_context is not None and decision_name == "REVIEW":
+            ctx_allowed, ctx_reason = allowlist_context
+            if ctx_allowed:
+                message += (
+                    f"\n\nAllowlist context: this command matches the known-safe "
+                    f"'{ctx_reason}' category. The review is coming from a different "
+                    f"policy signal, not from unrecognized command syntax -- see Reason above."
+                )
+            else:
+                message += (
+                    f"\n\nAllowlist context: this command isn't recognized as belonging to "
+                    f"any known-safe SRE category (diagnostic investigation, approved "
+                    f"remediation, or capacity/SLO checks). If it should be, that's useful "
+                    f"signal for expanding DevMind's allowlist."
+                )
         return message
 
     try:
