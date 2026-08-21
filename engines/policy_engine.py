@@ -175,25 +175,27 @@ SIGNALS: tuple[Signal, ...] = (
 
     # --- Database ---
     Signal("sql_drop",              "critical", "*",
-           re.compile(r"\b(drop\s+table|drop\s+database|truncate\s+table)\b", re.I)),
+           re.compile(r"\b(drop(?:\s|/\*.*?\*/)+table|drop(?:\s|/\*.*?\*/)+database|truncate(?:\s|/\*.*?\*/)+table)\b", re.I)),
     Signal("sql_injection_pattern", "critical", "database",
            re.compile(r"execute\s*\([^,\n]*(\+|%|\.format\(|f['\"])", re.I)),
     Signal("mass_delete",           "critical", "*",
            re.compile(r"delete\s+from\s+\w+", re.I)),
     Signal("truncate_any",          "critical", "*",
-           re.compile(r"\btruncate\s+(table\s+)?\w+", re.I)),
+           re.compile(r"\btruncate(?:\s|/\*.*?\*/)+(table(?:\s|/\*.*?\*/)+)?\w+", re.I)),
 
     # --- Cloud / Infrastructure ---
     Signal("terraform_destroy_cli", "critical", "terminal",
-           re.compile(r"\bterraform\b[^\r\n]*\bdestroy\b", re.I)),
+           re.compile(r"\bterraform\b[\s\S]*?\bdestroy\b", re.I)),
     Signal("terraform_auto_approve_destructive", "critical", "terminal",
-           re.compile(r"\bterraform\b[^\r\n]*\b(destroy|apply)\b[^\r\n]*-auto-approve\b", re.I)),
+           re.compile(r"\bterraform\b[\s\S]*?\b(destroy|apply)\b[\s\S]*?-auto-approve\b", re.I)),
     Signal("kubectl_delete_cli",     "critical", "terminal",
            re.compile(r"\bkubectl\b[^\r\n]*\bdelete\b", re.I)),
     Signal("helm_uninstall_cli",     "critical", "terminal",
            re.compile(r"\bhelm\b[^\r\n]*\buninstall\b", re.I)),
     Signal("iam_wildcard",          "critical", "cloud",
            re.compile(r"['\"]?[Aa]ction['\"]?\s*[:=]\s*['\"]?\*['\"]?|['\"]?[Rr]esource['\"]?\s*[:=]\s*['\"]?\*['\"]?|\*:\*", re.I)),
+    Signal("iam_service_wildcard",  "high",     "cloud",
+           re.compile(r"['\"]?[Aa]ction['\"]?\s*[:=]\s*['\"]?[\w-]+:\*", re.I)),
     Signal("public_cloud_resource", "critical", "*",
            re.compile(r"publicly.accessible\s*[=:]\s*true|0\.0\.0\.0/0|public-read|acl\s*[=:]\s*['\"]?public", re.I)),
     Signal("force_destroy",         "critical", "cloud",
@@ -211,9 +213,9 @@ SIGNALS: tuple[Signal, ...] = (
 
     # --- Git ---
     Signal("force_push",            "high",     "git",
-           re.compile(r"--force|--force-with-lease|-f\s+origin", re.I)),
+           re.compile(r"--force|--force-with-lease|(?:^|\s)-f(?:\s|$)", re.I)),
     Signal("main_branch_direct",    "medium",   "git",
-           re.compile(r"push\s+origin\s+(main|master|release|production)\b", re.I)),
+           re.compile(r"push\s+origin\b[\s\S]*?[:\s](main|master|release|production)\b", re.I)),
 
     # --- Network exfiltration ---
     Signal("external_data_post",    "high",     "network",

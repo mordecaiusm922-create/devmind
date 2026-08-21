@@ -48,6 +48,8 @@ _SIGNALS: tuple[tuple[str, int, str, re.Pattern[str]], ...] = (
     # ---- Terraform ----------------------------------------------------
     ("iam_wildcard_action", 40, "terraform",
         re.compile(r'"Action"\s*:\s*"\*"|Action\s*=\s*(\["\*"\]|"\*")', re.IGNORECASE)),
+    ("iam_service_wildcard_action", 30, "terraform",
+        re.compile(r'"Action"\s*:\s*"[\w-]+:\*"|Action\s*=\s*(\["[\w-]+:\*"\]|"[\w-]+:\*")', re.IGNORECASE)),
     ("iam_wildcard_resource", 35, "terraform",
         re.compile(r'"Resource"\s*:\s*"\*"|Resource\s*=\s*(\["\*"\]|"\*")', re.IGNORECASE)),
     ("iam_admin_policy", 45, "terraform",
