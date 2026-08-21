@@ -90,12 +90,24 @@ def _post(endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _review(action: AgentAction, local_decision: GovernanceDecision) -> LLMVerdict:
+def _review(action: AgentAction, local_decision: GovernanceDecision, session: AgentSession | None = None) -> LLMVerdict:
     """
     Call /review on the Render backend.
-    Used for fast semantic evaluation of a single AgentAction.
+    Used for fast semantic evaluation of a single AgentAction --
+    but the prompt includes recent session history so the model can
+    judge composition (do several individually-permitted actions add
+    up to an escalation pattern?), not just this action in isolation.
     """
     t0 = time.perf_counter()
+
+    recent = (session.recent_payloads[-5:] if session is not None else [])
+    session_context = (
+        f"Recent actions in this session, oldest to newest (may include this one): {recent!r}\n"
+        f"Consider composition: individually-permitted actions can still combine into "
+        f"something dangerous (e.g. reading a secret, then a separate action exfiltrating "
+        f"it) -- weigh the sequence above, not only the single payload below, in isolation.\n\n"
+        if recent else ""
+    )
 
     prompt = (
         f"Agent governance decision required.\n\n"
@@ -104,6 +116,7 @@ def _review(action: AgentAction, local_decision: GovernanceDecision) -> LLMVerdi
         f"Operation: {action.operation}\n"
         f"Environment: {action.context.environment or 'unknown'}\n"
         f"Payload: {action.payload[:500]}\n\n"
+        f"{session_context}"
         f"Local policy engine flagged this as REVIEW.\n"
         f"Local signals: {[s['name'] for s in local_decision.signals]}\n"
         f"Local risk score: {local_decision.risk_score}/100\n"
@@ -315,7 +328,7 @@ class GovernedSandbox(DevMindSandbox):
         # Step 2: LLM escalation only for REVIEW
         final = local
         if local.decision == Decision.REVIEW and self.llm_on:
-            final = self._escalate_to_llm(action, local)
+            final = self._escalate_to_llm(action, local, session)
 
         self.audit.record(action, final, organization=self.org_id)
         self._update_session(session, action, final)
@@ -326,10 +339,11 @@ class GovernedSandbox(DevMindSandbox):
         self,
         action: AgentAction,
         local: GovernanceDecision,
+        session: AgentSession | None = None,
     ) -> GovernanceDecision:
         """Call Render backend and merge verdict with local decision."""
         try:
-            verdict = _review(action, local)
+            verdict = _review(action, local, session)
         except urllib.error.URLError as e:
             # Backend unreachable — fail safe: keep local REVIEW
             local.why_chain.append(f"llm_unreachable:{e} → keep_local_review")
