@@ -242,8 +242,45 @@ def _enforce(decision_obj: Any, payload: str) -> tuple[bool, str]:
 # Tools
 # =============================================================================
 
+def _log_break_glass_override(command: str, decision: Any, justification: str) -> None:
+    """Dedicated, maximum-severity audit record for a break-glass
+    override -- separate from the normal decision audit trail so it
+    can never be missed or confused with a routine ALLOW. Stopgap:
+    non-fatal on write failure (print() always fires so this is
+    visible in Render logs even if the Supabase write fails)."""
+    decision_name = getattr(getattr(decision, "decision", None), "name", "UNKNOWN")
+    reason = getattr(decision, "reason", None)
+    risk_score = getattr(decision, "risk_score", None)
+    print(
+        f"[BREAK-GLASS OVERRIDE] session={_SESSION_ID} agent={AGENT_NAME} "
+        f"original_decision={decision_name} risk_score={risk_score} "
+        f"command={_redact(command)[:300]!r} "
+        f"justification={_redact(justification)[:300]!r}",
+        flush=True,
+    )
+    try:
+        client = _supabase_audit._client
+        if client is not None:
+            client.table("break_glass_log").insert({
+                "session_id": _SESSION_ID,
+                "agent": AGENT_NAME,
+                "command": _redact(command)[:2000],
+                "original_decision": decision_name,
+                "original_reason": reason,
+                "risk_score": risk_score,
+                "justification": _redact(justification)[:2000],
+            }).execute()
+    except Exception as db_exc:
+        print(f"[BREAK-GLASS OVERRIDE] Supabase write failed (non-fatal): {db_exc!r}", flush=True)
+
+
 @mcp.tool()
-def execute_command(command: str, rationale: str) -> str:
+def execute_command(
+    command: str,
+    rationale: str,
+    break_glass: bool = False,
+    break_glass_justification: str = "",
+) -> str:
     """
     Execute a shell command through DevMind governance.
 
@@ -256,6 +293,15 @@ def execute_command(command: str, rationale: str) -> str:
     Args:
         command:   The exact shell command to run.
         rationale: Why the agent needs to run this command.
+        break_glass: Set True only during a genuine emergency to
+            override a BLOCK or REVIEW verdict. Requires
+            break_glass_justification. Logged with maximum audit
+            severity and flagged for mandatory post-incident review --
+            this is not a quiet bypass. Does NOT override ESCALATE
+            (irrecoverable, org/account-wide blast radius) under any
+            circumstances.
+        break_glass_justification: Required, non-empty, when
+            break_glass=True. Explain the specific emergency.
     """
     decision = sandbox.intercept(
         agent=AGENT_NAME,
@@ -322,7 +368,24 @@ def execute_command(command: str, rationale: str) -> str:
                     f"remediation, or capacity/SLO checks). If it should be, that's useful "
                     f"signal for expanding DevMind's allowlist."
                 )
-        return message
+
+        if decision_name == "ESCALATE":
+            return message + (
+                "\n\nbreak_glass cannot override ESCALATE -- irrecoverable, "
+                "org/account-wide blast radius requires a real human security "
+                "checkpoint under all circumstances, no exceptions."
+            )
+
+        if break_glass:
+            if not break_glass_justification.strip():
+                return message + (
+                    "\n\n[DEVMIND] break_glass=True requires a non-empty "
+                    "break_glass_justification explaining the emergency. Refusing "
+                    "to override without one."
+                )
+            _log_break_glass_override(command, decision, break_glass_justification)
+        else:
+            return message
 
     try:
         from e2b_code_interpreter import Sandbox
