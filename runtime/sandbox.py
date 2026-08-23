@@ -81,6 +81,20 @@ class DevMindSandbox:
         in-memory only (same behavior as before this feature existed)."""
         return getattr(self.audit, "_client", None)
 
+    @staticmethod
+    def _is_org_id_a_valid_uuid(value: str) -> bool:
+        """org_id in Supabase's agent_sessions table is typed UUID.
+        Non-UUID sentinel defaults (e.g. "devmind-default") must be
+        sent as NULL, not the raw string, or every write fails
+        silently. Checked by actually parsing, not by matching a
+        specific known-bad string -- catches any future non-UUID
+        default too, not just the ones already known."""
+        try:
+            uuid.UUID(str(value))
+            return True
+        except (ValueError, AttributeError, TypeError):
+            return False
+
     def _persist_session(self, session: AgentSession) -> None:
         client = self._supabase_client()
         if client is None:
@@ -89,7 +103,7 @@ class DevMindSandbox:
         try:
             _upsert_result = client.table("agent_sessions").upsert({
                 "session_id": session.session_id,
-                "org_id": self.org_id if self.org_id != "default" else None,
+                "org_id": self.org_id if self._is_org_id_a_valid_uuid(self.org_id) else None,
                 "agent": session.agent,
                 "user_id": session.user,
                 "state": session.state.value,
