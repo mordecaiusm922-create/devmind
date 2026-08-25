@@ -6,7 +6,7 @@ DevMind intercepts, evaluates, and audits every action an AI agent attempts to t
 
 **Live MCP server:** [devmind-mcp.onrender.com/mcp](https://devmind-mcp.onrender.com/mcp) -- connect Claude Desktop, Claude Code, Cursor, Codex, or any MCP client directly to your agent's runtime.
 **Live REST API:** [devmind-2cej.onrender.com/health](https://devmind-2cej.onrender.com/health) -- for CI/CD pipelines and scripts that aren't MCP clients.
-**210 invariant tests passing · CI green on every push**
+**240 invariant tests passing · CI green on every push**
 
 ---
 
@@ -311,7 +311,7 @@ Both return in well under 100ms — deterministic Python running in-process, not
 git clone https://github.com/mordecaiusm922-create/devmind
 cd devmind
 pip install -r requirements.txt
-python -m pytest tests/ -v          # 210 tests, deterministic, no mocks
+python -m pytest tests/ -v          # 240 tests, deterministic, no mocks
 python simulate_real_risks.py       # 28 real-world scenarios
 ```
 
@@ -381,7 +381,7 @@ tests/
   test_policy_engine.py
   test_infra_engine.py  — includes semantic parser coverage
   test_release_gate.py
-  test_allowlist.py     — 210 invariant tests total
+  test_allowlist.py     — 240 invariant tests total
 
 api.py                  — FastAPI wrapper exposing all three engines over HTTP,
                            each call persisted to the Supabase audit trail
@@ -453,7 +453,7 @@ def test_org_blast_radius_always_escalates():
     assert decision.escalation_required == True
 ```
 
-210 tests, zero mocks on the decision logic itself. If someone weakens an invariant, CI fails before it reaches main.
+240 tests, zero mocks on the decision logic itself. If someone weakens an invariant, CI fails before it reaches main.
 
 ---
 
@@ -486,6 +486,10 @@ Stated plainly, because a governance tool that hides its own gaps isn't trustwor
 - [x] OAuth 2.1 Resource Server for MCP (RFC 9728 Protected Resource Metadata + RFC 8707 Resource Indicators) — per-agent, per-resource scoped credentials, Supabase-backed
 - [x] Real containment for `execute_command` — E2B Firecracker microVMs, no host execution, no internet access by default
 - [ ] Terminal/filesystem allowlist enforcement — default-deny model built and tested, currently running in shadow mode alongside the existing blocklist signals while real usage data is collected
+- [x] Evasion audit of SQL, Terraform, IAM, and git signals (same methodology as the terminal allowlist work) -- 6 confirmed gaps closed, including an undocumented duplication found between policy_engine.py and infra_engine.py's independent signal lists (tracked as tech debt)
+- [x] Session-composition context in LLM escalation -- REVIEW verdicts are now judged against recent session history (last 5 payloads), not just the isolated action, closing a gap where individually-permitted actions could combine into an unrecognized attack pattern
+- [x] Break-glass override for BLOCK/REVIEW verdicts -- requires explicit justification, logged to a dedicated Supabase table with maximum audit severity. Does not override ESCALATE (irrecoverable, org/account-wide blast radius) under any circumstances, following real-world break-glass design patterns
+- [x] Fixed a silent session-persistence failure -- agent_sessions writes were failing on every request due to a non-UUID org_id default; replaced a brittle string comparison with real UUID validation
 - [x] Durable audit trail for the MCP server (Supabase-backed, matching the REST API — falls back to local JSONL only when Supabase credentials aren't configured, with a startup warning)
 - [ ] Interactive OAuth login (Authorization Code + PKCE) — needed once third-party self-service distribution opens; today tokens are issued directly via `scripts/issue_token.py`
 - [ ] PyPI package + CLI (`pip install devmind-agent`, `devmind serve`)
