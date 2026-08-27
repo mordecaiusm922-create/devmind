@@ -388,3 +388,78 @@ def test_terraform_destroy_cli_blocks_in_production() -> None:
     assert d.risk_score >= 85, (
         f"REGRESSION: risk_score must be >= 85, got {d.risk_score}"
     )
+
+
+# =============================================================================
+# REGRESSION: 330962a — 6 confirmed evasion gaps closed in SQL/Terraform/git,
+# plus new iam_service_wildcard coverage. Each of these payloads was
+# confirmed ALLOW/uncaught before the fix. If any of these regress to ALLOW
+# with no matching signal, the evasion gap has reopened.
+# =============================================================================
+
+def _fired(d, signal_name: str) -> bool:
+    return any(s["name"] == signal_name for s in d.signals)
+
+
+class TestEvasionRegressions330962a:
+
+    def test_sql_drop_comment_whitespace_evasion(self) -> None:
+        """DROP/**/TABLE evaded the literal \\s+ requirement between keywords."""
+        d = evaluate_action(action(tool="database", operation="execute",
+                                    payload="DROP/**/TABLE customers"))
+        assert _fired(d, "sql_drop"), f"REGRESSION: sql_drop did not fire, why_chain={d.why_chain}"
+        assert d.decision in (Decision.BLOCK, Decision.REVIEW), d.decision
+
+    def test_truncate_any_comment_whitespace_evasion(self) -> None:
+        """TRUNCATE/**/TABLE evaded the literal \\s+ requirement between keywords."""
+        d = evaluate_action(action(tool="database", operation="execute",
+                                    payload="TRUNCATE/**/TABLE orders"))
+        assert _fired(d, "truncate_any"), f"REGRESSION: truncate_any did not fire, why_chain={d.why_chain}"
+        assert d.decision in (Decision.BLOCK, Decision.REVIEW), d.decision
+
+    def test_terraform_destroy_cli_line_fragmentation_evasion(self) -> None:
+        """Fragmenting 'terraform ... destroy' across lines evaded the
+        same-line-only [^\\r\\n]* requirement."""
+        payload = "terraform \\\n  destroy \\\n  -target=aws_instance.web"
+        d = evaluate_action(action(tool="bash", operation="execute",
+                                    payload=payload, environment="production"))
+        assert _fired(d, "terraform_destroy_cli"), f"REGRESSION: terraform_destroy_cli did not fire, why_chain={d.why_chain}"
+        assert d.decision == Decision.BLOCK, (
+            f"REGRESSION: fragmented terraform destroy must BLOCK in production, got {d.decision}"
+        )
+        assert d.risk_score >= 85
+
+    def test_terraform_auto_approve_destructive_line_fragmentation_evasion(self) -> None:
+        """Fragmenting 'terraform ... apply ... -auto-approve' across lines
+        evaded the same-line-only requirement."""
+        payload = "terraform \\\n  apply \\\n  -target=aws_instance.web \\\n  -auto-approve"
+        d = evaluate_action(action(tool="bash", operation="execute",
+                                    payload=payload, environment="production"))
+        assert _fired(d, "terraform_auto_approve_destructive"), (
+            f"REGRESSION: terraform_auto_approve_destructive did not fire, why_chain={d.why_chain}"
+        )
+        assert d.decision == Decision.BLOCK, d.decision
+
+    def test_force_push_non_origin_remote_evasion(self) -> None:
+        """'-f upstream' (any remote, not just origin) evaded the
+        '-f origin'-only pattern."""
+        d = evaluate_action(action(tool="git", operation="push",
+                                    payload="git push -f upstream feature-branch"))
+        assert _fired(d, "force_push"), f"REGRESSION: force_push did not fire, why_chain={d.why_chain}"
+
+    def test_main_branch_direct_refspec_evasion(self) -> None:
+        """'origin HEAD:main' refspec syntax evaded the 'origin main'
+        adjacency requirement."""
+        d = evaluate_action(action(tool="git", operation="push",
+                                    payload="git push origin HEAD:main"))
+        assert _fired(d, "main_branch_direct"), f"REGRESSION: main_branch_direct did not fire, why_chain={d.why_chain}"
+
+    def test_iam_service_wildcard_coverage(self) -> None:
+        """Service-scoped IAM wildcards (e.g. s3:*) had zero coverage --
+        iam_wildcard only matched a bare '*' as the entire Action value."""
+        d = evaluate_action(action(tool="cloud", operation="deploy",
+                                    payload='Action = "s3:*"'))
+        assert _fired(d, "iam_service_wildcard"), (
+            f"REGRESSION: iam_service_wildcard did not fire, why_chain={d.why_chain}"
+        )
+        assert d.decision in (Decision.BLOCK, Decision.REVIEW), d.decision

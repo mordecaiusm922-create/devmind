@@ -576,3 +576,54 @@ class TestDecisionInvariants:
         decision = evaluate_change(c)
         assert decision.decision == Decision.ALLOW
         assert decision.band in (RiskBand.LOW, RiskBand.MINIMAL)
+
+
+# =============================================================================
+# REGRESSION: 330962a — iam_service_wildcard_action in infra_engine.py.
+# infra_engine.py maintains its own SEPARATE _SIGNALS tuple from
+# policy_engine.py (undocumented duplication, tracked as tech debt) --
+# this signal was independently missing here even after policy_engine.py's
+# equivalent (iam_service_wildcard) was fixed, since this file never shared
+# the fix. Service-scoped IAM wildcards (e.g. s3:*) previously had zero
+# coverage in this engine.
+# =============================================================================
+
+class TestIamServiceWildcardActionRegression330962a:
+
+    def test_service_scoped_wildcard_fires_on_terraform_json(self) -> None:
+        c = change(
+            change_type=ChangeType.TERRAFORM_APPLY,
+            surface=ActionSurface.INFRASTRUCTURE,
+            payload='"Action": "s3:*"',
+        )
+        decision = evaluate_change(c)
+        signal_names = [s["name"] for s in decision.signals]
+        assert "iam_service_wildcard_action" in signal_names, (
+            f"REGRESSION: iam_service_wildcard_action did not fire, signals={decision.signals}"
+        )
+        assert decision.decision in (Decision.BLOCK, Decision.REVIEW), decision.decision
+
+    def test_service_scoped_wildcard_fires_on_terraform_hcl(self) -> None:
+        c = change(
+            change_type=ChangeType.TERRAFORM_APPLY,
+            surface=ActionSurface.INFRASTRUCTURE,
+            payload='Action = "s3:*"',
+        )
+        decision = evaluate_change(c)
+        signal_names = [s["name"] for s in decision.signals]
+        assert "iam_service_wildcard_action" in signal_names, (
+            f"REGRESSION: iam_service_wildcard_action did not fire, signals={decision.signals}"
+        )
+
+    def test_bare_wildcard_still_fires_iam_wildcard_action_not_confused_with_service_scoped(self) -> None:
+        """A bare Action = "*" should still fire the pre-existing
+        iam_wildcard_action signal (not silently replaced by the new one)."""
+        c = change(
+            change_type=ChangeType.TERRAFORM_APPLY,
+            surface=ActionSurface.INFRASTRUCTURE,
+            payload='Action = "*"',
+        )
+        decision = evaluate_change(c)
+        signal_names = [s["name"] for s in decision.signals]
+        assert "iam_wildcard_action" in signal_names
+        assert "iam_service_wildcard_action" not in signal_names
