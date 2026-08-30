@@ -7,6 +7,18 @@ succeeds for BLOCK/REVIEW with justification, fails without
 justification, never applies to ESCALATE, logs correctly to
 break_glass_log."
 
+Also covers point 5 (org-level break-glass-prohibited flag, added
+after point 4 shipped): _is_break_glass_prohibited_for_org() fails
+CLOSED -- invalid/unrecognized org_id, no Supabase client, no matching
+row, or a raising query are all treated as prohibited. This means
+every point-4 "override succeeds" test below must now explicitly mock
+_is_break_glass_prohibited_for_org to return False (the org allows
+it) -- otherwise the fail-closed default refuses every override
+before the justification check is even reached, since the test env's
+org_id ("devmind-default" in these tests, matching production before
+the DEVMIND_ORG_ID env var is updated to a real organizations.id UUID)
+is not a valid UUID.
+
 Design note: break-glass enforcement lives inline inside
 execute_command() in devmind_server.py, not as a separate testable
 unit -- @mcp.tool() (FastMCP) leaves the function directly callable as
@@ -56,6 +68,15 @@ def make_decision(
         reason=reason,
         signals=[],
     )
+
+
+def org_allows_break_glass():
+    """Patch context: the org's break_glass_prohibited flag reads as
+    False, i.e. break-glass is permitted. Needed for every test below
+    that expects an override to actually succeed, since the fail-closed
+    default treats an unverifiable org (no client, invalid org_id) as
+    prohibited."""
+    return patch.object(devmind_server, "_is_break_glass_prohibited_for_org", return_value=False)
 
 
 def make_e2b_mocks():
@@ -115,6 +136,77 @@ class TestLogBreakGlassOverride:
 
 
 # =============================================================================
+# Layer 1b -- _is_break_glass_prohibited_for_org(), point 5
+# =============================================================================
+
+class TestIsBreakGlassProhibitedForOrg:
+
+    def test_invalid_org_id_fails_closed(self) -> None:
+        """The exact production case today: ORG_ID="devmind-default" is
+        not a UUID at all -- must fail closed regardless of Supabase
+        state."""
+        assert devmind_server._is_break_glass_prohibited_for_org("devmind-default") is True
+
+    def test_no_supabase_client_fails_closed(self) -> None:
+        import uuid as uuid_module
+        real_org_id = str(uuid_module.uuid4())
+        with patch.object(devmind_server._supabase_audit, "_client", None):
+            assert devmind_server._is_break_glass_prohibited_for_org(real_org_id) is True
+
+    def test_no_matching_org_row_fails_closed(self) -> None:
+        import uuid as uuid_module
+        real_org_id = str(uuid_module.uuid4())
+        client = MagicMock()
+        client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = \
+            MagicMock(data=[])
+        with patch.object(devmind_server._supabase_audit, "_client", client):
+            assert devmind_server._is_break_glass_prohibited_for_org(real_org_id) is True
+
+    def test_query_exception_fails_closed(self) -> None:
+        import uuid as uuid_module
+        real_org_id = str(uuid_module.uuid4())
+        client = MagicMock()
+        client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.side_effect = \
+            RuntimeError("db down")
+        with patch.object(devmind_server._supabase_audit, "_client", client):
+            assert devmind_server._is_break_glass_prohibited_for_org(real_org_id) is True
+
+    def test_org_row_with_flag_true_is_prohibited(self) -> None:
+        import uuid as uuid_module
+        real_org_id = str(uuid_module.uuid4())
+        client = MagicMock()
+        client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = \
+            MagicMock(data=[{"break_glass_prohibited": True}])
+        with patch.object(devmind_server._supabase_audit, "_client", client):
+            assert devmind_server._is_break_glass_prohibited_for_org(real_org_id) is True
+
+    def test_org_row_with_flag_false_is_allowed(self) -> None:
+        import uuid as uuid_module
+        real_org_id = str(uuid_module.uuid4())
+        client = MagicMock()
+        client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = \
+            MagicMock(data=[{"break_glass_prohibited": False}])
+        with patch.object(devmind_server._supabase_audit, "_client", client):
+            assert devmind_server._is_break_glass_prohibited_for_org(real_org_id) is False
+
+    def test_queries_correct_table_and_column(self) -> None:
+        """Confirms the query targets organizations.id / .break_glass_prohibited
+        -- not a typo'd table/column name that would silently always
+        fail closed in production."""
+        import uuid as uuid_module
+        real_org_id = str(uuid_module.uuid4())
+        client = MagicMock()
+        client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = \
+            MagicMock(data=[{"break_glass_prohibited": False}])
+        with patch.object(devmind_server._supabase_audit, "_client", client):
+            devmind_server._is_break_glass_prohibited_for_org(real_org_id)
+
+        client.table.assert_called_once_with("organizations")
+        client.table.return_value.select.assert_called_once_with("break_glass_prohibited")
+        client.table.return_value.select.return_value.eq.assert_called_once_with("id", real_org_id)
+
+
+# =============================================================================
 # Layer 2 -- execute_command()'s break-glass enforcement decision table
 # =============================================================================
 
@@ -125,7 +217,8 @@ class TestBreakGlassOverridesBlock:
         e2b_mock = make_e2b_mocks()
 
         with patch.object(devmind_server.sandbox, "intercept", return_value=decision), \
-             patch("e2b_code_interpreter.Sandbox.create", return_value=e2b_mock) as create:
+             patch("e2b_code_interpreter.Sandbox.create", return_value=e2b_mock) as create, \
+             org_allows_break_glass():
             result = devmind_server.execute_command(
                 command="DROP TABLE customers",
                 rationale="emergency cleanup",
@@ -142,6 +235,7 @@ class TestBreakGlassOverridesBlock:
 
         with patch.object(devmind_server.sandbox, "intercept", return_value=decision), \
              patch("e2b_code_interpreter.Sandbox.create", return_value=e2b_mock), \
+             org_allows_break_glass(), \
              patch.object(devmind_server, "_log_break_glass_override") as log_mock:
             devmind_server.execute_command(
                 command="rm -rf /data",
@@ -164,7 +258,8 @@ class TestBreakGlassOverridesReview:
         e2b_mock = make_e2b_mocks()
 
         with patch.object(devmind_server.sandbox, "intercept", return_value=decision), \
-             patch("e2b_code_interpreter.Sandbox.create", return_value=e2b_mock) as create:
+             patch("e2b_code_interpreter.Sandbox.create", return_value=e2b_mock) as create, \
+             org_allows_break_glass():
             result = devmind_server.execute_command(
                 command="some-unrecognized-command --flag",
                 rationale="test",
@@ -179,10 +274,15 @@ class TestBreakGlassOverridesReview:
 class TestBreakGlassRequiresJustification:
 
     def test_block_with_break_glass_true_but_empty_justification_fails(self) -> None:
+        """org_allows_break_glass() isolates this test to the
+        justification check specifically -- without it, the new
+        org-prohibited fail-closed check (point 5) would refuse first
+        and this test would pass for the wrong reason."""
         decision = make_decision(Decision.BLOCK)
 
         with patch.object(devmind_server.sandbox, "intercept", return_value=decision), \
-             patch("e2b_code_interpreter.Sandbox.create") as create:
+             patch("e2b_code_interpreter.Sandbox.create") as create, \
+             org_allows_break_glass():
             result = devmind_server.execute_command(
                 command="DROP TABLE customers",
                 rationale="test",
@@ -200,7 +300,8 @@ class TestBreakGlassRequiresJustification:
         decision = make_decision(Decision.REVIEW)
 
         with patch.object(devmind_server.sandbox, "intercept", return_value=decision), \
-             patch("e2b_code_interpreter.Sandbox.create") as create:
+             patch("e2b_code_interpreter.Sandbox.create") as create, \
+             org_allows_break_glass():
             result = devmind_server.execute_command(
                 command="risky-thing",
                 rationale="test",
@@ -222,6 +323,69 @@ class TestBreakGlassRequiresJustification:
 
         assert not create.called
         assert "[DEVMIND REVIEW REQUIRED]" in result
+
+
+class TestBreakGlassOrgProhibited:
+    """Point 5's actual acceptance test: an org that has explicitly
+    prohibited break-glass must refuse the override regardless of how
+    good the justification is -- and must never touch E2B or write to
+    break_glass_log for a refusal."""
+
+    def test_org_prohibited_refuses_block_override_even_with_good_justification(self) -> None:
+        decision = make_decision(Decision.BLOCK)
+
+        with patch.object(devmind_server.sandbox, "intercept", return_value=decision), \
+             patch("e2b_code_interpreter.Sandbox.create") as create, \
+             patch.object(devmind_server, "_is_break_glass_prohibited_for_org", return_value=True), \
+             patch.object(devmind_server, "_log_break_glass_override") as log_mock:
+            result = devmind_server.execute_command(
+                command="DROP TABLE customers",
+                rationale="test",
+                break_glass=True,
+                break_glass_justification="VP-approved, ticket INC-4471, verified emergency",
+            )
+
+        assert not create.called, (
+            "REGRESSION: an org-prohibited break-glass still reached execution"
+        )
+        assert not log_mock.called, (
+            "REGRESSION: a refused override was still written to break_glass_log"
+        )
+        assert "disabled for this organization" in result
+        assert "[DEVMIND BLOCK]" in result
+
+    def test_org_prohibited_refuses_review_override_even_with_good_justification(self) -> None:
+        decision = make_decision(Decision.REVIEW)
+
+        with patch.object(devmind_server.sandbox, "intercept", return_value=decision), \
+             patch("e2b_code_interpreter.Sandbox.create") as create, \
+             patch.object(devmind_server, "_is_break_glass_prohibited_for_org", return_value=True):
+            result = devmind_server.execute_command(
+                command="risky-thing",
+                rationale="test",
+                break_glass=True,
+                break_glass_justification="on-call approved",
+            )
+
+        assert not create.called
+        assert "disabled for this organization" in result
+
+    def test_org_check_is_bypassed_entirely_when_break_glass_is_false(self) -> None:
+        """A routine (non-override) BLOCK shouldn't even call the org
+        lookup -- it's irrelevant when nobody asked to override
+        anything."""
+        decision = make_decision(Decision.BLOCK)
+
+        with patch.object(devmind_server.sandbox, "intercept", return_value=decision), \
+             patch("e2b_code_interpreter.Sandbox.create") as create, \
+             patch.object(devmind_server, "_is_break_glass_prohibited_for_org") as org_check:
+            result = devmind_server.execute_command(command="DROP TABLE customers", rationale="test")
+
+        assert not create.called
+        assert not org_check.called, (
+            "the org-prohibited check should only run when break_glass=True is actually requested"
+        )
+        assert "[DEVMIND BLOCK]" in result
 
 
 class TestBreakGlassNeverAppliesToEscalate:

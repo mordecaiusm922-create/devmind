@@ -241,6 +241,63 @@ def _enforce(decision_obj: Any, payload: str) -> tuple[bool, str]:
 # =============================================================================
 # Tools
 # =============================================================================
+def _is_break_glass_prohibited_for_org(org_id: str) -> bool:
+    """Org-level kill switch for break-glass overrides (point 5,
+    2026-08-23 snapshot). Looks up organizations.break_glass_prohibited
+    in Supabase by org_id.
+
+    Fails CLOSED: if org_id isn't a valid UUID, if there's no Supabase
+    client, if the org has no matching row, or if the query raises for
+    any reason -- treat break-glass as prohibited. This is an
+    access-control decision (not an audit-log write), so it follows
+    the same fail-closed precedent as SupabaseTokenVerifier rather
+    than the fail-open precedent used by the audit trail helpers in
+    this file. A Supabase outage means break-glass is unavailable
+    until it's back, by design -- see the point-5 design discussion
+    in the project history for the explicit trade-off this makes
+    against emergency availability.
+    """
+    if not GovernedSandbox._is_org_id_a_valid_uuid(org_id):
+        print(
+            f"[BREAK-GLASS] org_id={org_id!r} is not a valid UUID -- "
+            f"failing closed, treating break-glass as prohibited.",
+            flush=True,
+        )
+        return True
+
+    client = _supabase_audit._client
+    if client is None:
+        print(
+            "[BREAK-GLASS] no Supabase client available -- failing closed, "
+            "treating break-glass as prohibited.",
+            flush=True,
+        )
+        return True
+
+    try:
+        result = (
+            client.table("organizations")
+            .select("break_glass_prohibited")
+            .eq("id", org_id)
+            .limit(1)
+            .execute()
+        )
+        rows = result.data or []
+        if not rows:
+            print(
+                f"[BREAK-GLASS] org_id={org_id!r} has no matching row in "
+                f"organizations -- failing closed, treating break-glass as "
+                f"prohibited.",
+                flush=True,
+            )
+            return True
+        return bool(rows[0].get("break_glass_prohibited", True))
+    except Exception as exc:
+        print(
+            f"[BREAK-GLASS] organizations lookup failed (failing closed): {exc!r}",
+            flush=True,
+        )
+        return True
 
 def _log_break_glass_override(command: str, decision: Any, justification: str) -> None:
     """Dedicated, maximum-severity audit record for a break-glass
@@ -374,6 +431,12 @@ def execute_command(
                 "\n\nbreak_glass cannot override ESCALATE -- irrecoverable, "
                 "org/account-wide blast radius requires a real human security "
                 "checkpoint under all circumstances, no exceptions."
+            )
+
+        if break_glass and _is_break_glass_prohibited_for_org(ORG_ID):
+            return message + (
+                "\n\nbreak_glass is disabled for this organization. Contact "
+                "your DevMind administrator if this is a genuine emergency."
             )
 
         if break_glass:
