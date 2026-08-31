@@ -1,0 +1,29 @@
+# Version control / CI, not needed at runtime
+.git
+.github
+.gitignore
+
+# Legacy pre-MCP-pivot code (backend/ = old FastAPI+Groq service,
+# frontend/ = its React UI) -- devmind_server.py does not import
+# from either; confirmed via grep before excluding.
+backend
+frontend
+
+# Dev/test artifacts
+tests
+.pytest_cache
+__pycache__
+*.pyc
+benchmark
+simulate_real_risks.py
+
+# Runtime state -- must not be baked into the image; these are
+# written to at runtime (local JSONL audit fallback, memory files),
+# not read as static app code.
+data
+memory_store
+
+# Local/editor cruft
+.vscode
+.idea
+*.md
