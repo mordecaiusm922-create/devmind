@@ -63,8 +63,11 @@ from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from pydantic import AnyHttpUrl
 import hashlib as _hashlib
+import hmac as _hmac
+import time as _time_module
 from datetime import datetime as _datetime, timezone as _timezone
 from engines.audit_engine import SupabaseAuditEngine
+import requests as _requests
 
 MCP_RESOURCE_URL = os.getenv("DEVMIND_MCP_RESOURCE_URL", "https://devmind-mcp.onrender.com")
 
@@ -299,6 +302,214 @@ def _is_break_glass_prohibited_for_org(org_id: str) -> bool:
         )
         return True
 
+SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "")
+SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "")
+SLACK_REVIEW_CHANNEL = os.getenv("SLACK_REVIEW_CHANNEL", "")
+REVIEW_REQUEST_TTL_MINUTES = int(os.getenv("DEVMIND_REVIEW_TTL_MINUTES", "60"))
+
+
+def _slack_post_message(blocks: list[dict], text_fallback: str) -> dict | None:
+    """Low-level Slack chat.postMessage call. Non-fatal on any failure --
+    a missing/misconfigured Slack integration must never break command
+    execution or the REVIEW flow itself; it only means the human-review
+    channel isn't reachable, which is surfaced to the agent via the
+    review-request-created message instead.
+
+    Returns the parsed Slack API response (contains "ts"/"channel" for
+    later message edits) on success, or None.
+    """
+    if not SLACK_BOT_TOKEN or not SLACK_REVIEW_CHANNEL:
+        print(
+            "[SLACK] SLACK_BOT_TOKEN or SLACK_REVIEW_CHANNEL not configured -- "
+            "skipping notification.",
+            flush=True,
+        )
+        return None
+    try:
+        resp = _requests.post(
+            "https://slack.com/api/chat.postMessage",
+            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+            json={"channel": SLACK_REVIEW_CHANNEL, "blocks": blocks, "text": text_fallback},
+            timeout=10,
+        )
+        data = resp.json()
+        if not data.get("ok"):
+            print(f"[SLACK] postMessage failed (non-fatal): {data}", flush=True)
+            return None
+        return data
+    except Exception as exc:
+        print(f"[SLACK] postMessage exception (non-fatal): {exc!r}", flush=True)
+        return None
+
+
+def _create_review_request(
+    command: str, rationale: str, decision: Any, org_id: str
+) -> int | None:
+    """Creates a pending review_requests row for a REVIEW-verdict
+    command. Returns the new row's id, or None if there's no Supabase
+    client available (in which case the human-approval channel simply
+    isn't usable for this call -- the caller must communicate that
+    plainly rather than pretend a request was created)."""
+    client = _supabase_audit._client
+    if client is None:
+        return None
+    from datetime import timedelta
+    now = _datetime.now(_timezone.utc)
+    row = {
+        "session_id": _SESSION_ID,
+        "org_id": org_id if GovernedSandbox._is_org_id_a_valid_uuid(org_id) else None,
+        "agent": AGENT_NAME,
+        "command": _redact(command)[:2000],
+        "rationale": _redact(rationale)[:2000],
+        "reason": getattr(decision, "reason", None),
+        "risk_score": getattr(decision, "risk_score", None),
+        "decision": getattr(getattr(decision, "decision", None), "name", "REVIEW"),
+        "status": "pending",
+        "expires_at": (now + timedelta(minutes=REVIEW_REQUEST_TTL_MINUTES)).isoformat(),
+    }
+    try:
+        result = client.table("review_requests").insert(row).execute()
+        data = result.data or []
+        if not data:
+            return None
+        return data[0]["id"]
+    except Exception as exc:
+        print(f"[REVIEW] failed to create review_requests row (non-fatal): {exc!r}", flush=True)
+        return None
+
+
+def _send_slack_review_notification(
+    request_id: int, command: str, rationale: str, decision: Any
+) -> None:
+    risk_score = getattr(decision, "risk_score", "?")
+    reason = getattr(decision, "reason", "unknown")
+    text_fallback = f"DevMind REVIEW request #{request_id}: {_redact(command)[:200]}"
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*DevMind REVIEW request #{request_id}*\n"
+                    f"*Command:* `{_redact(command)[:500]}`\n"
+                    f"*Rationale:* {_redact(rationale)[:500]}\n"
+                    f"*Reason:* {reason}\n"
+                    f"*Risk score:* {risk_score}/100"
+                ),
+            },
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Approve"},
+                    "style": "primary",
+                    "action_id": "approve_review",
+                    "value": str(request_id),
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Reject"},
+                    "style": "danger",
+                    "action_id": "reject_review",
+                    "value": str(request_id),
+                },
+            ],
+        },
+    ]
+    _slack_post_message(blocks, text_fallback)
+
+
+def _check_review_approval(approval_id: str, command: str) -> tuple[str, dict | None]:
+    """Looks up a review_requests row by id. Returns a status string:
+    "approved", "rejected", "pending", "expired", "command_mismatch",
+    or "not_found" -- plus the row (or None).
+
+    command_mismatch: the approval is bound to the exact command that
+    was originally submitted for review, per the point-6 design
+    decision (strict, not fuzzy) -- running a different command always
+    requires its own fresh approval.
+    """
+    client = _supabase_audit._client
+    if client is None:
+        return "not_found", None
+    try:
+        result = (
+            client.table("review_requests")
+            .select("*")
+            .eq("id", approval_id)
+            .limit(1)
+            .execute()
+        )
+        rows = result.data or []
+        if not rows:
+            return "not_found", None
+        row = rows[0]
+        if _redact(row.get("command", ""))[:2000] != _redact(command)[:2000]:
+            return "command_mismatch", row
+        expires_at = row.get("expires_at")
+        if expires_at:
+            expires_dt = _datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if _datetime.now(_timezone.utc) > expires_dt:
+                return "expired", row
+        return row.get("status", "pending"), row
+    except Exception as exc:
+        print(f"[REVIEW] failed to check review_requests row (non-fatal): {exc!r}", flush=True)
+        return "not_found", None
+
+
+def _verify_slack_signature(raw_body: bytes, timestamp: str, signature: str) -> bool:
+    """Verifies a Slack request per Slack's documented v0 signing
+    scheme (HMAC-SHA256 over "v0:{timestamp}:{body}", using the app's
+    signing secret). Also rejects stale requests (>5 minutes old) as
+    replay-attack protection. Approving/rejecting a REVIEW request is
+    a security-relevant action -- this must be cryptographically
+    verified, not merely gated by an unguessable URL.
+    """
+    if not SLACK_SIGNING_SECRET or not timestamp or not signature:
+        return False
+    try:
+        ts = int(timestamp)
+    except ValueError:
+        return False
+    if abs(_time_module.time() - ts) > 60 * 5:
+        return False
+    basestring = f"v0:{timestamp}:".encode() + raw_body
+    computed = "v0=" + _hmac.new(
+        SLACK_SIGNING_SECRET.encode(), basestring, _hashlib.sha256
+    ).hexdigest()
+    return _hmac.compare_digest(computed, signature)
+
+
+def _resolve_review_request(request_id: str, new_status: str, resolver: str) -> bool:
+    """Updates a review_requests row to approved/rejected -- but ONLY
+    if it's still "pending" (optimistic-concurrency guard via the
+    .eq("status", "pending") clause), so a double-click or an
+    Approve-then-Reject race can't silently overwrite an
+    already-resolved decision. Returns True if the update actually
+    applied to a row."""
+    client = _supabase_audit._client
+    if client is None:
+        return False
+    try:
+        result = (
+            client.table("review_requests")
+            .update({
+                "status": new_status,
+                "resolved_by": resolver,
+                "resolved_at": _datetime.now(_timezone.utc).isoformat(),
+            })
+            .eq("id", request_id)
+            .eq("status", "pending")
+            .execute()
+        )
+        return bool(result.data)
+    except Exception as exc:
+        print(f"[REVIEW] failed to resolve review_requests row (non-fatal): {exc!r}", flush=True)
+        return False
+
+
 def _log_break_glass_override(command: str, decision: Any, justification: str) -> None:
     """Dedicated, maximum-severity audit record for a break-glass
     override -- separate from the normal decision audit trail so it
@@ -337,6 +548,7 @@ def execute_command(
     rationale: str,
     break_glass: bool = False,
     break_glass_justification: str = "",
+    approval_id: str = "",
 ) -> str:
     """
     Execute a shell command through DevMind governance.
@@ -359,6 +571,11 @@ def execute_command(
             circumstances.
         break_glass_justification: Required, non-empty, when
             break_glass=True. Explain the specific emergency.
+        approval_id: For a REVIEW verdict, DevMind posts to Slack for
+            human approval and returns a request id. Once approved,
+            call execute_command again with the SAME command and
+            approval_id=<that id>. Approval is bound to the exact
+            command text -- a different command needs its own request.
     """
     decision = sandbox.intercept(
         agent=AGENT_NAME,
@@ -433,22 +650,80 @@ def execute_command(
                 "checkpoint under all circumstances, no exceptions."
             )
 
-        if break_glass and _is_break_glass_prohibited_for_org(ORG_ID):
-            return message + (
-                "\n\nbreak_glass is disabled for this organization. Contact "
-                "your DevMind administrator if this is a genuine emergency."
-            )
-
-        if break_glass:
-            if not break_glass_justification.strip():
+        if decision_name == "REVIEW":
+            # Point 6: REVIEW now goes exclusively through human approval via
+            # Slack -- break_glass has no effect here (deliberate: if
+            # break_glass could still bypass REVIEW, the approval channel
+            # would have no teeth, since an agent could always self-serve
+            # past it). break_glass remains available for BLOCK only.
+            if approval_id:
+                approval_status, _approval_row = _check_review_approval(approval_id, command)
+                if approval_status == "approved":
+                    pass  # falls through to execution below
+                elif approval_status == "rejected":
+                    return message + (
+                        f"\n\nDevMind REVIEW request #{approval_id} was rejected "
+                        "by your team. This command will not run."
+                    )
+                elif approval_status == "expired":
+                    return message + (
+                        f"\n\nDevMind REVIEW request #{approval_id} has expired. "
+                        "Submit a new request by calling execute_command again "
+                        "without approval_id."
+                    )
+                elif approval_status == "command_mismatch":
+                    return message + (
+                        f"\n\nDevMind REVIEW request #{approval_id} was approved "
+                        "for a different command. Approvals are bound to the exact "
+                        "command text -- submit a new request for this one."
+                    )
+                elif approval_status == "pending":
+                    return message + (
+                        f"\n\nDevMind REVIEW request #{approval_id} is still "
+                        "pending approval. Check back once your team has "
+                        "responded in the review channel."
+                    )
+                else:  # not_found
+                    return message + (
+                        f"\n\nDevMind couldn't find REVIEW request #{approval_id}. "
+                        "Double-check the id, or submit a new request by calling "
+                        "execute_command again without approval_id."
+                    )
+            else:
+                request_id = _create_review_request(command, rationale, decision, ORG_ID)
+                if request_id is None:
+                    return message + (
+                        "\n\nDevMind couldn't create a review request (no audit "
+                        "database configured). Contact your DevMind administrator."
+                    )
+                _send_slack_review_notification(request_id, command, rationale, decision)
                 return message + (
-                    "\n\n[DEVMIND] break_glass=True requires a non-empty "
-                    "break_glass_justification explaining the emergency. Refusing "
-                    "to override without one."
+                    f"\n\nDevMind REVIEW request #{request_id} created and posted "
+                    "to your team's review channel. Once approved, call "
+                    "execute_command again with the SAME command and "
+                    f'approval_id="{request_id}".'
                 )
-            _log_break_glass_override(command, decision, break_glass_justification)
+
         else:
-            return message
+            # Only BLOCK reaches break_glass now -- REVIEW is fully handled
+            # above (always returns, except when approved, which continues
+            # here) and ESCALATE already returned.
+            if break_glass and _is_break_glass_prohibited_for_org(ORG_ID):
+                return message + (
+                    "\n\nbreak_glass is disabled for this organization. Contact "
+                    "your DevMind administrator if this is a genuine emergency."
+                )
+
+            if break_glass:
+                if not break_glass_justification.strip():
+                    return message + (
+                        "\n\n[DEVMIND] break_glass=True requires a non-empty "
+                        "break_glass_justification explaining the emergency. Refusing "
+                        "to override without one."
+                    )
+                _log_break_glass_override(command, decision, break_glass_justification)
+            else:
+                return message
 
     try:
         from e2b_code_interpreter import Sandbox
@@ -875,7 +1150,7 @@ if __name__ == "__main__":
 
         class RateLimitMiddleware(BaseHTTPMiddleware):
             async def dispatch(self, request, call_next):
-                if request.url.path == "/health":
+                if request.url.path in ("/health", "/slack/interactivity"):
                     return await call_next(request)
                 client_ip = request.client.host if request.client else "unknown"
                 now = _time.time()
@@ -898,9 +1173,74 @@ if __name__ == "__main__":
 
         from starlette.routing import Route
         from starlette.responses import JSONResponse as _JSONResponse
+
         async def _health(request):
             return _JSONResponse({"status": "ok", "service": "devmind-mcp"})
+
+        async def _slack_interactivity(request):
+            """Handles a click on the Approve/Reject buttons DevMind posts
+            to Slack for a REVIEW request. Not gated by the MCP OAuth
+            bearer-token auth (Slack's caller has no such token) --
+            instead verified via Slack's own HMAC request signature.
+            """
+            raw_body = await request.body()
+            timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
+            signature = request.headers.get("X-Slack-Signature", "")
+
+            if not _verify_slack_signature(raw_body, timestamp, signature):
+                return _JSONResponse({"error": "invalid signature"}, status_code=401)
+
+            form = await request.form()
+            payload_raw = form.get("payload", "")
+            try:
+                payload = json.loads(payload_raw)
+            except Exception:
+                return _JSONResponse({"error": "malformed payload"}, status_code=400)
+
+            if payload.get("type") != "block_actions":
+                return _JSONResponse({"ok": True})
+
+            actions = payload.get("actions") or []
+            if not actions:
+                return _JSONResponse({"ok": True})
+
+            action = actions[0]
+            action_id = action.get("action_id")
+            if action_id not in ("approve_review", "reject_review"):
+                return _JSONResponse({"ok": True})
+
+            request_id = action.get("value")
+            user = payload.get("user") or {}
+            resolver = user.get("username") or user.get("id") or "unknown"
+            response_url = payload.get("response_url")
+
+            new_status = "approved" if action_id == "approve_review" else "rejected"
+            updated = _resolve_review_request(request_id, new_status, resolver)
+
+            if response_url:
+                verdict_text = "Approved" if new_status == "approved" else "Rejected"
+                suffix = "" if updated else " (already resolved or not found)"
+                try:
+                    _requests.post(
+                        response_url,
+                        json={
+                            "text": (
+                                f"*{verdict_text}* by <@{user.get('id', '?')}> -- "
+                                f"request #{request_id}{suffix}"
+                            ),
+                            "replace_original": True,
+                        },
+                        timeout=5,
+                    )
+                except Exception as exc:
+                    print(f"[SLACK] failed to update original message (non-fatal): {exc!r}", flush=True)
+
+            return _JSONResponse({"ok": True})
+
         app.router.routes.insert(0, Route("/health", _health, methods=["GET"]))
+        app.router.routes.insert(
+            0, Route("/slack/interactivity", _slack_interactivity, methods=["POST"])
+        )
 
         app.add_middleware(RateLimitMiddleware)
         print(f"[DEVMIND] Running on streamable-http (OAuth Resource Server, RATE-LIMITED) | org={ORG_ID} | env={ENVIRONMENT} | port={port} | resource={MCP_RESOURCE_URL}", flush=True)
