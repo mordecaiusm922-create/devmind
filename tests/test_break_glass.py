@@ -481,3 +481,121 @@ class TestBreakGlassInertOnAllow:
         assert not log_mock.called, (
             "break_glass audit trail must only fire for an actual override, not a routine ALLOW"
         )
+
+
+# =============================================================================
+# _send_slack_block_notification() -- informational-only awareness ping for
+# BLOCK, no buttons, nothing to approve. Point 6 follow-up.
+# =============================================================================
+
+class TestSendSlackBlockNotification:
+
+    def test_posts_no_action_buttons(self) -> None:
+        """Confirms this is purely informational -- unlike the REVIEW
+        notification, there must be no 'actions' block (no buttons to
+        click), since there's nothing to approve here."""
+        decision = make_decision(Decision.BLOCK, reason="hardblock_pattern", risk_score=98)
+        with patch.object(devmind_server, "_slack_post_message") as post_mock:
+            devmind_server._send_slack_block_notification(
+                "rm -rf /", "test", decision, overridden=False
+            )
+
+        assert post_mock.called
+        blocks = post_mock.call_args[0][0]
+        assert not any(b.get("type") == "actions" for b in blocks)
+
+    def test_plain_block_message_has_no_justification_line(self) -> None:
+        decision = make_decision(Decision.BLOCK, reason="hardblock_pattern", risk_score=98)
+        with patch.object(devmind_server, "_slack_post_message") as post_mock:
+            devmind_server._send_slack_block_notification(
+                "rm -rf /", "test", decision, overridden=False
+            )
+
+        section_text = post_mock.call_args[0][0][0]["text"]["text"]
+        assert "Justification" not in section_text
+        assert "overridden" not in section_text.lower()
+
+    def test_overridden_block_message_includes_justification(self) -> None:
+        decision = make_decision(Decision.BLOCK, reason="hardblock_pattern", risk_score=98)
+        with patch.object(devmind_server, "_slack_post_message") as post_mock:
+            devmind_server._send_slack_block_notification(
+                "rm -rf /", "test", decision, overridden=True,
+                justification="prod down, emergency rollback",
+            )
+
+        section_text = post_mock.call_args[0][0][0]["text"]["text"]
+        assert "overridden" in section_text.lower()
+        assert "prod down, emergency rollback" in section_text
+
+    def test_message_includes_command_and_risk_score(self) -> None:
+        decision = make_decision(Decision.BLOCK, reason="hardblock_pattern", risk_score=98)
+        with patch.object(devmind_server, "_slack_post_message") as post_mock:
+            devmind_server._send_slack_block_notification(
+                "rm -rf /", "cleanup", decision, overridden=False
+            )
+
+        section_text = post_mock.call_args[0][0][0]["text"]["text"]
+        assert "rm -rf /" in section_text
+        assert "98" in section_text
+
+
+class TestExecuteCommandSendsBlockNotification:
+
+    def test_plain_block_sends_notification_not_overridden(self) -> None:
+        decision = make_decision(Decision.BLOCK)
+        with patch.object(devmind_server.sandbox, "intercept", return_value=decision), \
+             patch("e2b_code_interpreter.Sandbox.create") as create, \
+             patch.object(devmind_server, "_send_slack_block_notification") as notify:
+            devmind_server.execute_command(command="rm -rf /", rationale="test")
+
+        assert not create.called
+        notify.assert_called_once()
+        call_kwargs = notify.call_args.kwargs
+        assert call_kwargs.get("overridden") is False
+
+    def test_overridden_block_sends_notification_overridden_true(self) -> None:
+        decision = make_decision(Decision.BLOCK)
+        e2b_mock = make_e2b_mocks()
+        with patch.object(devmind_server.sandbox, "intercept", return_value=decision), \
+             patch("e2b_code_interpreter.Sandbox.create", return_value=e2b_mock), \
+             org_allows_break_glass(), \
+             patch.object(devmind_server, "_send_slack_block_notification") as notify:
+            devmind_server.execute_command(
+                command="rm -rf /", rationale="test",
+                break_glass=True, break_glass_justification="emergency",
+            )
+
+        notify.assert_called_once()
+        call_kwargs = notify.call_args.kwargs
+        assert call_kwargs.get("overridden") is True
+        assert call_kwargs.get("justification") == "emergency"
+
+    def test_org_prohibited_refusal_does_not_send_block_notification(self) -> None:
+        """The org-prohibited refusal path returns before ever reaching
+        break_glass handling -- it must not send a BLOCK notification
+        either, since nothing was actually blocked-and-executed or
+        blocked-and-refused at that point, just a break-glass attempt
+        that was itself rejected up front."""
+        decision = make_decision(Decision.BLOCK)
+        with patch.object(devmind_server.sandbox, "intercept", return_value=decision), \
+             patch("e2b_code_interpreter.Sandbox.create") as create, \
+             patch.object(devmind_server, "_is_break_glass_prohibited_for_org", return_value=True), \
+             patch.object(devmind_server, "_send_slack_block_notification") as notify:
+            devmind_server.execute_command(
+                command="rm -rf /", rationale="test",
+                break_glass=True, break_glass_justification="emergency",
+            )
+
+        assert not create.called
+        assert not notify.called
+
+    def test_review_verdict_never_sends_block_notification(self) -> None:
+        decision = make_decision(Decision.REVIEW)
+        with patch.object(devmind_server.sandbox, "intercept", return_value=decision), \
+             patch("e2b_code_interpreter.Sandbox.create"), \
+             patch.object(devmind_server, "_create_review_request", return_value=1), \
+             patch.object(devmind_server, "_send_slack_review_notification"), \
+             patch.object(devmind_server, "_send_slack_block_notification") as notify:
+            devmind_server.execute_command(command="risky-thing", rationale="test")
+
+        assert not notify.called

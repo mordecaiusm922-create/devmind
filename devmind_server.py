@@ -421,6 +421,51 @@ def _send_slack_review_notification(
     _slack_post_message(blocks, text_fallback)
 
 
+def _send_slack_block_notification(
+    command: str, rationale: str, decision: Any, overridden: bool, justification: str = ""
+) -> None:
+    """Informational-only Slack notification for a BLOCK verdict --
+    no buttons, nothing to click, nothing to approve. This is
+    awareness, not access control: the team should know in real time
+    that an agent hit a hard block (and, separately, whether it was
+    then overridden via break-glass), rather than finding out only if
+    someone later goes looking in the audit trail. Non-fatal on
+    failure, same as every other Slack/Supabase call in this file --
+    a missing/misconfigured Slack integration must never affect
+    whether the command itself succeeds or fails.
+    """
+    risk_score = getattr(decision, "risk_score", "?")
+    reason = getattr(decision, "reason", "unknown")
+    redacted_command = _redact(command)[:500]
+
+    if overridden:
+        header = ":warning: *DevMind BLOCK overridden via break-glass*"
+        text_fallback = f"DevMind BLOCK overridden (break-glass): {redacted_command[:200]}"
+        extra = f"\n*Justification:* {_redact(justification)[:500]}"
+    else:
+        header = ":no_entry: *DevMind BLOCK*"
+        text_fallback = f"DevMind BLOCK: {redacted_command[:200]}"
+        extra = ""
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"{header}\n"
+                    f"*Command:* `{redacted_command}`\n"
+                    f"*Rationale:* {_redact(rationale)[:500]}\n"
+                    f"*Reason:* {reason}\n"
+                    f"*Risk score:* {risk_score}/100"
+                    f"{extra}"
+                ),
+            },
+        },
+    ]
+    _slack_post_message(blocks, text_fallback)
+
+
 def _check_review_approval(approval_id: str, command: str) -> tuple[str, dict | None]:
     """Looks up a review_requests row by id. Returns a status string:
     "approved", "rejected", "pending", "expired", "command_mismatch",
@@ -722,7 +767,12 @@ def execute_command(
                         "to override without one."
                     )
                 _log_break_glass_override(command, decision, break_glass_justification)
+                _send_slack_block_notification(
+                    command, rationale, decision, overridden=True,
+                    justification=break_glass_justification,
+                )
             else:
+                _send_slack_block_notification(command, rationale, decision, overridden=False)
                 return message
 
     try:
