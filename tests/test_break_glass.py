@@ -251,15 +251,24 @@ class TestBreakGlassOverridesBlock:
         assert call_args[2] == "justified"
 
 
-class TestBreakGlassOverridesReview:
+class TestBreakGlassNoLongerAppliesToReview:
+    """Point 6 (2026-08-30): REVIEW now goes exclusively through the
+    Slack human-approval channel (tests/test_review_approval.py).
+    break_glass has no effect on REVIEW anymore -- this is a
+    deliberate behavior change from point 4: if break_glass could
+    still bypass REVIEW, the approval channel would have no teeth,
+    since an agent could always self-serve past it with a fabricated
+    justification. break_glass remains available for BLOCK only."""
 
-    def test_override_with_justification_reaches_execution(self) -> None:
+    def test_break_glass_true_on_review_is_ignored_creates_review_request_instead(self) -> None:
         decision = make_decision(Decision.REVIEW, reason="risk_threshold_review", risk_score=30)
         e2b_mock = make_e2b_mocks()
 
         with patch.object(devmind_server.sandbox, "intercept", return_value=decision), \
              patch("e2b_code_interpreter.Sandbox.create", return_value=e2b_mock) as create, \
-             org_allows_break_glass():
+             org_allows_break_glass(), \
+             patch.object(devmind_server, "_create_review_request", return_value=99) as create_req, \
+             patch.object(devmind_server, "_send_slack_review_notification") as notify:
             result = devmind_server.execute_command(
                 command="some-unrecognized-command --flag",
                 rationale="test",
@@ -267,8 +276,35 @@ class TestBreakGlassOverridesReview:
                 break_glass_justification="on-call approved via Slack thread #incidents",
             )
 
-        assert create.called, "REGRESSION: break_glass override on REVIEW never reached E2B execution"
-        assert result.startswith("[DEVMIND ALLOW]"), result
+        assert not create.called, (
+            "REGRESSION: break_glass=True bypassed REVIEW directly, skipping human approval"
+        )
+        assert create_req.called, "a review request should still be created even with break_glass=True"
+        assert notify.called
+        assert "#99" in result
+
+    def test_org_prohibited_check_never_runs_for_review(self) -> None:
+        """The point-5 org-level kill switch only makes sense for
+        BLOCK's break_glass path now -- it must not even be consulted
+        for a REVIEW decision."""
+        decision = make_decision(Decision.REVIEW)
+
+        with patch.object(devmind_server.sandbox, "intercept", return_value=decision), \
+             patch("e2b_code_interpreter.Sandbox.create") as create, \
+             patch.object(devmind_server, "_is_break_glass_prohibited_for_org") as org_check, \
+             patch.object(devmind_server, "_create_review_request", return_value=1), \
+             patch.object(devmind_server, "_send_slack_review_notification"):
+            devmind_server.execute_command(
+                command="risky-thing",
+                rationale="test",
+                break_glass=True,
+                break_glass_justification="on-call approved",
+            )
+
+        assert not create.called
+        assert not org_check.called, (
+            "REGRESSION: the BLOCK-only org-prohibited check ran for a REVIEW decision"
+        )
 
 
 class TestBreakGlassRequiresJustification:
@@ -296,8 +332,10 @@ class TestBreakGlassRequiresJustification:
 
     def test_whitespace_only_justification_fails(self) -> None:
         """.strip() is used in the real guard -- confirm whitespace-only
-        text doesn't count as a real justification."""
-        decision = make_decision(Decision.REVIEW)
+        text doesn't count as a real justification. Uses BLOCK: since
+        point 6, break_glass no longer reaches this guard at all for
+        REVIEW (see TestBreakGlassNoLongerAppliesToReview)."""
+        decision = make_decision(Decision.BLOCK)
 
         with patch.object(devmind_server.sandbox, "intercept", return_value=decision), \
              patch("e2b_code_interpreter.Sandbox.create") as create, \
@@ -314,7 +352,12 @@ class TestBreakGlassRequiresJustification:
 
     def test_review_without_break_glass_at_all_is_blocked_normally(self) -> None:
         """Baseline: break_glass defaults to False -- a REVIEW verdict
-        with no override attempt must not execute."""
+        with no override attempt must not execute. Since point 6, this
+        also attempts to create a review request; with no Supabase
+        client configured in the test env, that attempt fails
+        gracefully (returns None) and the base REVIEW message is
+        still returned intact -- see test_review_approval.py for the
+        full request-creation path with a mocked client."""
         decision = make_decision(Decision.REVIEW)
 
         with patch.object(devmind_server.sandbox, "intercept", return_value=decision), \
@@ -355,20 +398,11 @@ class TestBreakGlassOrgProhibited:
         assert "[DEVMIND BLOCK]" in result
 
     def test_org_prohibited_refuses_review_override_even_with_good_justification(self) -> None:
-        decision = make_decision(Decision.REVIEW)
-
-        with patch.object(devmind_server.sandbox, "intercept", return_value=decision), \
-             patch("e2b_code_interpreter.Sandbox.create") as create, \
-             patch.object(devmind_server, "_is_break_glass_prohibited_for_org", return_value=True):
-            result = devmind_server.execute_command(
-                command="risky-thing",
-                rationale="test",
-                break_glass=True,
-                break_glass_justification="on-call approved",
-            )
-
-        assert not create.called
-        assert "disabled for this organization" in result
+        pytest.skip(
+            "Obsolete since point 6: break_glass no longer applies to REVIEW at "
+            "all, so the org-prohibited check is never reached for it. See "
+            "TestBreakGlassNoLongerAppliesToReview.test_org_prohibited_check_never_runs_for_review."
+        )
 
     def test_org_check_is_bypassed_entirely_when_break_glass_is_false(self) -> None:
         """A routine (non-override) BLOCK shouldn't even call the org
