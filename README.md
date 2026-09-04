@@ -6,7 +6,7 @@ DevMind intercepts, evaluates, and audits every action an AI agent attempts to t
 
 **Live MCP server:** [devmind-mcp.onrender.com/mcp](https://devmind-mcp.onrender.com/mcp) -- connect Claude Desktop, Claude Code, Cursor, Codex, or any MCP client directly to your agent's runtime.
 **Live REST API:** [devmind-2cej.onrender.com/health](https://devmind-2cej.onrender.com/health) -- for CI/CD pipelines and scripts that aren't MCP clients.
-**334 invariant tests passing · CI green on every push**
+**342 invariant tests passing · CI green on every push**
 
 ---
 
@@ -314,7 +314,7 @@ Both return in well under 100ms — deterministic Python running in-process, not
 git clone https://github.com/mordecaiusm922-create/devmind
 cd devmind
 pip install -r requirements.txt
-python -m pytest tests/ -v          # 334 tests, deterministic, no mocks
+python -m pytest tests/ -v          # 342 tests, deterministic, no mocks
 python simulate_real_risks.py       # 28 real-world scenarios
 ```
 
@@ -388,7 +388,7 @@ tests/
   test_sandbox.py        — session-persistence UUID handling
   test_break_glass.py    — BLOCK-only break-glass override, org-level kill switch
   test_review_approval.py — human-review-via-Slack channel for REVIEW verdicts
-                           — 334 invariant tests total
+                           — 342 invariant tests total
 
 api.py                  — FastAPI wrapper exposing all three engines over HTTP,
                            each call persisted to the Supabase audit trail
@@ -460,7 +460,7 @@ def test_org_blast_radius_always_escalates():
     assert decision.escalation_required == True
 ```
 
-334 tests, zero mocks on the decision logic itself. If someone weakens an invariant, CI fails before it reaches main.
+342 tests, zero mocks on the decision logic itself. If someone weakens an invariant, CI fails before it reaches main.
 
 ---
 
@@ -502,6 +502,7 @@ Stated plainly, because a governance tool that hides its own gaps isn't trustwor
 - [x] Human-review-via-Slack channel for REVIEW verdicts -- REVIEW now posts to Slack with Approve/Reject buttons instead of being a dead end; approval is bound to the exact command text (a different command needs a fresh request), request signature verified via Slack's HMAC scheme with replay protection, and an already-resolved request can't be silently overwritten by a double-click
 - [x] Informational Slack notification for BLOCK verdicts -- no buttons, nothing to approve, just real-time awareness for the team when an agent hits a hard block or overrides one via break-glass, instead of only finding out via the audit trail
 - [x] Dockerfile for containerized deploy -- a drop-in alternative to Render's native Python buildpack (same Python version, same start command), for teams that need to self-host rather than use the hosted MCP server
+- [x] Synthetic SRE-command stress test (`scripts/allowlist_stress_test.py`) -- allowlist_shadow_log had only 8 rows, all the founder's own smoke-test commands, nowhere near enough real usage data to make an informed enforce-mode decision. Built a broader, realistic corpus to surface gaps ahead of real usage. Found and fixed: `force_push`/`main_branch_direct` were scoped to the `git` MCP tool's surface only and never fired for the identical command typed as a raw shell string through `execute_command`; two brand-new signals for world-writable `chmod` and `iptables -F` (neither had any prior coverage at all). Still open, tracked as a separate follow-up: allowlist prefix-matching gaps (`sudo`/`time`/`watch` prefixes defeat the match) and several legitimate SRE verbs with no allowlist category yet (`kubectl scale/cordon/drain/top`, `crontab`, `netstat`/`ss`, `terraform apply`)
 - [ ] Interactive OAuth login (Authorization Code + PKCE) — needed once third-party self-service distribution opens; today tokens are issued directly via `scripts/issue_token.py`
 - [ ] PyPI package + CLI (`pip install devmind-agent`, `devmind serve`)
 - [ ] GitHub Action (`devmind-action`) — intercept agent PRs in CI/CD pipelines
