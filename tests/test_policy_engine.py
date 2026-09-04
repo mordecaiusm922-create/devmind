@@ -463,3 +463,87 @@ class TestEvasionRegressions330962a:
             f"REGRESSION: iam_service_wildcard did not fire, why_chain={d.why_chain}"
         )
         assert d.decision in (Decision.BLOCK, Decision.REVIEW), d.decision
+
+
+# =============================================================================
+# REGRESSION: surface-scoping gap found via a synthetic SRE-command stress
+# test (Sept 2026, scripts/allowlist_stress_test.py). force_push and
+# main_branch_direct were scoped to surface="git" only -- meaning they
+# never fired for the exact same command typed as a raw shell string
+# through execute_command (surface=terminal), which a real agent is at
+# least as likely to do as using the dedicated git_operation tool.
+# world_writable_chmod and firewall_flush are brand new signals -- these
+# two commands had ZERO coverage anywhere in SIGNALS before this fix and
+# scored ALLOW (risk=8) in isolation.
+# =============================================================================
+
+class TestSurfaceScopingGapsSept2026:
+
+    def test_force_push_fires_on_terminal_surface_not_just_git(self) -> None:
+        """The exact gap: this used to only fire for tool='git'. A real
+        agent running the identical command through execute_command
+        (tool='terminal') got zero signal coverage."""
+        d = evaluate_action(action(tool="terminal", operation="execute",
+                                    payload="git push --force origin main"))
+        assert _fired(d, "force_push"), (
+            f"REGRESSION: force_push did not fire on terminal surface, why_chain={d.why_chain}"
+        )
+
+    def test_main_branch_direct_fires_on_terminal_surface(self) -> None:
+        d = evaluate_action(action(tool="terminal", operation="execute",
+                                    payload="git push origin main"))
+        assert _fired(d, "main_branch_direct"), (
+            f"REGRESSION: main_branch_direct did not fire on terminal surface, why_chain={d.why_chain}"
+        )
+
+    def test_force_push_widened_surface_does_not_false_positive_on_unrelated_dash_f(self) -> None:
+        """Widening force_push to surface='*' must not turn every -f flag
+        on every tool into a false force-push signal -- the pattern itself
+        requires 'git push' context, not just a bare -f."""
+        for payload in ("rm -f file.txt", "curl -f https://example.com",
+                         "tar -xf archive.tar", "docker build -f Dockerfile ."):
+            d = evaluate_action(action(tool="terminal", operation="execute", payload=payload))
+            assert not _fired(d, "force_push"), (
+                f"REGRESSION: force_push false-positived on {payload!r}, why_chain={d.why_chain}"
+            )
+
+    def test_main_branch_direct_widened_surface_does_not_false_positive(self) -> None:
+        d = evaluate_action(action(tool="terminal", operation="execute",
+                                    payload="docker push origin/myimage:main-branch-tag"))
+        assert not _fired(d, "main_branch_direct"), (
+            f"REGRESSION: main_branch_direct false-positived on a docker push, why_chain={d.why_chain}"
+        )
+
+    def test_world_writable_chmod_blocks_in_production(self) -> None:
+        d = evaluate_action(action(tool="terminal", operation="execute",
+                                    payload="chmod -R 777 /etc", environment="production"))
+        assert _fired(d, "world_writable_chmod"), (
+            f"REGRESSION: world_writable_chmod did not fire, why_chain={d.why_chain}"
+        )
+        assert d.decision == Decision.BLOCK, (
+            f"REGRESSION: world-writable chmod in production must BLOCK, got {d.decision}"
+        )
+
+    def test_world_writable_chmod_does_not_false_positive_on_routine_chmod(self) -> None:
+        for payload in ("chmod 644 file.txt", "chmod +x script.sh", "chmod -R 755 /var/www"):
+            d = evaluate_action(action(tool="terminal", operation="execute", payload=payload))
+            assert not _fired(d, "world_writable_chmod"), (
+                f"REGRESSION: world_writable_chmod false-positived on {payload!r}, why_chain={d.why_chain}"
+            )
+
+    def test_firewall_flush_blocks_in_production(self) -> None:
+        d = evaluate_action(action(tool="terminal", operation="execute",
+                                    payload="iptables -F", environment="production"))
+        assert _fired(d, "firewall_flush"), (
+            f"REGRESSION: firewall_flush did not fire, why_chain={d.why_chain}"
+        )
+        assert d.decision == Decision.BLOCK, (
+            f"REGRESSION: flushing all firewall rules in production must BLOCK, got {d.decision}"
+        )
+
+    def test_firewall_flush_does_not_false_positive_on_routine_iptables(self) -> None:
+        for payload in ("iptables -L", "iptables -A INPUT -p tcp --dport 22 -j ACCEPT"):
+            d = evaluate_action(action(tool="terminal", operation="execute", payload=payload))
+            assert not _fired(d, "firewall_flush"), (
+                f"REGRESSION: firewall_flush false-positived on {payload!r}, why_chain={d.why_chain}"
+            )

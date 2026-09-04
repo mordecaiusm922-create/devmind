@@ -173,6 +173,21 @@ SIGNALS: tuple[Signal, ...] = (
     Signal("powershell_destructive","critical", "filesystem",
            re.compile(r"Remove-Item\b[^\r\n]*(-Recurse|-Force)|\brd\s+/s\s+/q\b|\bdel\s+/f\s+/s\s+/q\b|\bFormat-Volume\b|\bClear-Content\b", re.I)),
 
+    # --- Permissions & firewall ---
+    # Found via a synthetic SRE-command stress test of the allowlist
+    # (Sept 2026): chmod granting world-writable perms and flushing all
+    # firewall rules both scored ALLOW (risk=8) with zero prior coverage
+    # anywhere in SIGNALS. surface="*" + critical is deliberate here (not
+    # just widened from a narrower scope like force_push/main_branch_direct
+    # above) -- chmod/iptables have no dedicated structured MCP tool the
+    # way git does (git_operation), so there's no "narrow legitimate
+    # surface" to scope this to in the first place; a raw shell command is
+    # the only way either of these is ever actually run.
+    Signal("world_writable_chmod",  "critical", "*",
+           re.compile(r"\bchmod\b[^\r\n]*(-R\b[^\r\n]*)?\b(777|a\+w|o\+w|ugo\+w)\b", re.I)),
+    Signal("firewall_flush",        "critical", "*",
+           re.compile(r"\biptables\b[^\r\n]*(-F\b|--flush\b)", re.I)),
+
     # --- Database ---
     Signal("sql_drop",              "critical", "*",
            re.compile(r"\b(drop(?:\s|/\*.*?\*/)+table|drop(?:\s|/\*.*?\*/)+database|truncate(?:\s|/\*.*?\*/)+table)\b", re.I)),
@@ -212,10 +227,18 @@ SIGNALS: tuple[Signal, ...] = (
            re.compile(r"curl\s+-X\s+POST\s+https?://", re.I)),
 
     # --- Git ---
-    Signal("force_push",            "high",     "git",
-           re.compile(r"--force|--force-with-lease|(?:^|\s)-f(?:\s|$)", re.I)),
-    Signal("main_branch_direct",    "medium",   "git",
-           re.compile(r"push\s+origin\b[\s\S]*?[:\s](main|master|release|production)\b", re.I)),
+    # surface="*" (not "git"-only) -- these must fire regardless of which
+    # MCP tool routed the command. execute_command (surface=terminal) is
+    # how a real agent is at least as likely to run a raw git command as
+    # the dedicated git_operation tool; a signal scoped only to "git"
+    # never even gets evaluated on that path. Patterns are anchored on
+    # "git push" specifically (not just "-f"/"push origin") so widening
+    # the surface doesn't also widen false positives onto unrelated
+    # tools' -f flags (rm -f, curl -f, tar -xf, docker build -f, ...).
+    Signal("force_push",            "high",     "*",
+           re.compile(r"\bgit\s+push\b[^\r\n]*(--force\b|--force-with-lease\b|\s-f\b)", re.I)),
+    Signal("main_branch_direct",    "medium",   "*",
+           re.compile(r"\bgit\s+push\s+origin\b[\s\S]*?[:\s](main|master|release|production)\b", re.I)),
 
     # --- Network exfiltration ---
     Signal("external_data_post",    "high",     "network",
