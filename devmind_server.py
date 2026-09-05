@@ -36,6 +36,7 @@ Usage (Claude Desktop / claude.ai):
 from __future__ import annotations
 
 import json
+import dataclasses
 import os
 import re
 import subprocess
@@ -146,6 +147,7 @@ ORG_ID      = os.getenv("DEVMIND_ORG_ID", "devmind-default")
 AUDIT_LOG   = os.getenv("DEVMIND_AUDIT_LOG", "data/audit/devmind_audit.jsonl")
 ENVIRONMENT = os.getenv("DEVMIND_ENV", "local")
 AGENT_NAME  = os.getenv("DEVMIND_AGENT", "claude-code")
+ALLOWLIST_ENFORCE = os.getenv("DEVMIND_ALLOWLIST_ENFORCE", "false").lower() == "true"
 TIMEOUT     = int(os.getenv("DEVMIND_TIMEOUT", "15"))
 OUTPUT_LIMIT = int(os.getenv("DEVMIND_OUTPUT_LIMIT", "12000"))
 
@@ -668,6 +670,27 @@ def execute_command(
             print(f"[SHADOW:allowlist] Supabase write failed (non-fatal): {db_exc!r}", flush=True)
     except Exception as shadow_exc:
         print(f"[SHADOW:allowlist] ERROR computing shadow decision: {shadow_exc!r}", flush=True)
+
+    # --- Allowlist enforce mode (off by default -- DEVMIND_ALLOWLIST_ENFORCE):
+    # only upgrades REVIEW -> ALLOW, and only when the allowlist actually
+    # recognized the command. Never touches BLOCK or ESCALATE -- those are
+    # the blocklist's hard denials and a session-level "something is wrong"
+    # signal respectively; being on the allowlist must never silently
+    # override either. The override is recorded in why_chain so the audit
+    # trail always shows it happened, not a silent swap.
+    if ALLOWLIST_ENFORCE and allowlist_context is not None:
+        _allowlist_allowed, _allowlist_reason = allowlist_context
+        if _allowlist_allowed and getattr(decision.decision, "name", None) == "REVIEW":
+            decision = dataclasses.replace(
+                decision,
+                decision=Decision.ALLOW,
+                why_chain=decision.why_chain + [f"allowlist_override:{_allowlist_reason}"],
+            )
+            print(
+                f"[ALLOWLIST ENFORCE] upgraded REVIEW -> ALLOW | category={_allowlist_reason} | "
+                f"command={_redact(command)[:200]!r}",
+                flush=True,
+            )
 
     proceed, message = _enforce(decision, command)
     if not proceed:
