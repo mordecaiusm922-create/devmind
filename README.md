@@ -6,7 +6,7 @@ DevMind intercepts, evaluates, and audits every action an AI agent attempts to t
 
 **Live MCP server:** [devmind-mcp.onrender.com/mcp](https://devmind-mcp.onrender.com/mcp) -- connect Claude Desktop, Claude Code, Cursor, Codex, or any MCP client directly to your agent's runtime.
 **Live REST API:** [devmind-2cej.onrender.com/health](https://devmind-2cej.onrender.com/health) -- for CI/CD pipelines and scripts that aren't MCP clients.
-**342 invariant tests passing · CI green on every push**
+**350 invariant tests passing · CI green on every push**
 
 ---
 
@@ -314,7 +314,7 @@ Both return in well under 100ms — deterministic Python running in-process, not
 git clone https://github.com/mordecaiusm922-create/devmind
 cd devmind
 pip install -r requirements.txt
-python -m pytest tests/ -v          # 342 tests, deterministic, no mocks
+python -m pytest tests/ -v          # 350 tests, deterministic, no mocks
 python simulate_real_risks.py       # 28 real-world scenarios
 ```
 
@@ -388,7 +388,7 @@ tests/
   test_sandbox.py        — session-persistence UUID handling
   test_break_glass.py    — BLOCK-only break-glass override, org-level kill switch
   test_review_approval.py — human-review-via-Slack channel for REVIEW verdicts
-                           — 342 invariant tests total
+                           — 350 invariant tests total
 
 api.py                  — FastAPI wrapper exposing all three engines over HTTP,
                            each call persisted to the Supabase audit trail
@@ -460,7 +460,7 @@ def test_org_blast_radius_always_escalates():
     assert decision.escalation_required == True
 ```
 
-342 tests, zero mocks on the decision logic itself. If someone weakens an invariant, CI fails before it reaches main.
+350 tests, zero mocks on the decision logic itself. If someone weakens an invariant, CI fails before it reaches main.
 
 ---
 
@@ -492,7 +492,7 @@ Stated plainly, because a governance tool that hides its own gaps isn't trustwor
 - [x] Session-level payload correlation (fragmented hard-block detection, both MCP and REST)
 - [x] OAuth 2.1 Resource Server for MCP (RFC 9728 Protected Resource Metadata + RFC 8707 Resource Indicators) — per-agent, per-resource scoped credentials, Supabase-backed
 - [x] Real containment for `execute_command` — E2B Firecracker microVMs, no host execution, no internet access by default
-- [ ] Terminal/filesystem allowlist enforcement — default-deny model built and tested, currently running in shadow mode alongside the existing blocklist signals while real usage data is collected
+- [ ] Terminal/filesystem allowlist enforcement — the upgrade mechanism itself is built and tested (`DEVMIND_ALLOWLIST_ENFORCE`, off by default -- only ever upgrades REVIEW to ALLOW for an allowlisted command, never touches BLOCK or ESCALATE, recorded in the audit trail), but not yet turned on in production. Still open before it should be: closing the allowlist gaps the synthetic stress test found (prefix-matching, missing SRE verbs) and/or real usage data
 - [x] Evasion audit of SQL, Terraform, IAM, and git signals (same methodology as the terminal allowlist work) -- 6 confirmed gaps closed, including an undocumented duplication found between policy_engine.py and infra_engine.py's independent signal lists (tracked as tech debt)
 - [x] Session-composition context in LLM escalation -- REVIEW verdicts are now judged against recent session history (last 5 payloads), not just the isolated action, closing a gap where individually-permitted actions could combine into an unrecognized attack pattern
 - [x] Break-glass override for BLOCK verdicts -- requires explicit justification, logged to a dedicated Supabase table with maximum audit severity. Does not override ESCALATE (irrecoverable, org/account-wide blast radius) under any circumstances. As of the human-review-via-Slack channel below, break_glass no longer applies to REVIEW at all (only BLOCK) -- if it still could, the Slack approval channel would have no teeth, since an agent could always self-serve past REVIEW with a fabricated justification
