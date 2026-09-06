@@ -162,8 +162,19 @@ SIGNALS: tuple[Signal, ...] = (
     # --- Filesystem ---
     Signal("sensitive_path_write",  "critical", "filesystem",
            re.compile(r"[>]\s*/(etc|boot|sys|proc)/|/(etc/passwd|etc/shadow|etc/sudoers|proc/|sys/kernel)", re.I)),
-    Signal("home_secrets_write",    "high",     "filesystem",
-           re.compile(r"\~/.ssh/|\.aws/credentials|\.netrc|\.pgpass", re.I)),
+    Signal("secret_file_exfiltration", "critical", "*",
+           re.compile(
+               r"\b(cat|head|tail|less|more|strings|xxd|od|base64|cp|scp|rsync)\b[^\r\n]*"
+               r"(\.aws/credentials\b|\.aws/config\b|\.netrc\b|\.pgpass\b|\.kube/config\b|"
+               r"\bid_rsa\b|\bid_dsa\b|\bid_ecdsa\b|\bid_ed25519\b|\.pem\b)(?!\S*\.pub)",
+               re.I,
+           )),
+    Signal("ssh_key_persistence",   "critical", "*",
+           re.compile(
+               r"(>{1,2}|tee\s+(-a\s+)?)\s*[\"']?(~|\$HOME)?/?\.ssh/authorized_keys|"
+               r"(>{1,2}|tee\s+(-a\s+)?)\s*[\"']?(~|\$HOME)?/?\.aws/credentials\b",
+               re.I,
+           )),
     Signal("recursive_delete",      "critical", "filesystem",
            re.compile(r"rm\s+-[rf]+\s+(\/|~|\*|\$HOME|\$PWD)", re.I)),
     Signal("find_exec_delete",      "critical", "filesystem",
