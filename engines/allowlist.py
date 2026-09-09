@@ -80,6 +80,72 @@ _ALL_CATEGORIES: tuple[tuple[str, frozenset[tuple[str, ...]]], ...] = (
 # Longest prefix we bother checking (covers e.g. "aws s3 ls" = 3 tokens).
 _MAX_PREFIX_LEN = 4
 
+# --- Prefix-matching normalization (Sept 2026) -----------------------------
+# is_allowlisted() only ever produces a fail-safe outcome when it gets this
+# wrong: a false negative just falls through to the normal REVIEW path (the
+# existing default), never a false ALLOW. That asymmetry is what makes it
+# safe to be pragmatic/heuristic here, unlike the blocklist signal patterns
+# in policy_engine.py, which need to be precise since a false negative
+# there really does mean something dangerous slips through.
+#
+# Found via a synthetic SRE-command stress test
+# (scripts/allowlist_stress_test.py): a `sudo` prefix, a `time`/`watch`
+# wrapper, a leading env-var assignment (KUBECONFIG=... kubectl ...), or a
+# tool's own flag appearing between the base command and its verb
+# (`kubectl -n production get pods`, `git --no-pager log`) all defeated the
+# purely-positional prefix match even though the underlying command was
+# identical to one already on the list.
+_LEADING_WRAPPERS = {"sudo", "nohup", "nice", "ionice", "time"}
+_ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_VALUE_TAKING_LONG_FLAGS = {"--namespace", "--context", "--kubeconfig", "--interval", "--tail"}
+# Only tools whose OWN category entries actually use a multi-token
+# (base command + verb) shape need "skip flags before the verb" handling.
+# Single-word entries (ls, cat, df, ps, ...) have no verb position to find,
+# so leaving their own flags alone (df -h, ps aux) is both correct and
+# avoids any needless transformation of tokens that already match fine.
+_SUBCOMMAND_TOOLS = frozenset(
+    prefix[0] for _, category_set in _ALL_CATEGORIES for prefix in category_set if len(prefix) > 1
+)
+
+
+def _normalize_tokens(tokens: list[str]) -> list[str]:
+    """Strips benign wrapper prefixes and in-between flags that a real
+    SRE routinely types but which would otherwise defeat an
+    otherwise-exact allowlist match. See the module-level comment
+    above for the safety argument (fail-safe by construction)."""
+    tokens = list(tokens)
+
+    changed = True
+    while changed and tokens:
+        changed = False
+        if tokens[0] in _LEADING_WRAPPERS:
+            tokens.pop(0)
+            changed = True
+        elif _ENV_ASSIGNMENT.match(tokens[0]):
+            tokens.pop(0)
+            changed = True
+
+    if tokens and tokens[0] == "watch":
+        tokens.pop(0)
+        while tokens and tokens[0].startswith("-"):
+            flag = tokens.pop(0)
+            if flag in ("-n", "--interval") and tokens:
+                tokens.pop(0)
+
+    if len(tokens) > 1 and tokens[0] in _SUBCOMMAND_TOOLS:
+        i = 1
+        while i < len(tokens) and tokens[i].startswith("-"):
+            flag = tokens[i]
+            i += 1
+            is_short_flag = re.fullmatch(r"-[a-zA-Z]", flag) is not None
+            takes_value = (is_short_flag or flag in _VALUE_TAKING_LONG_FLAGS) and "=" not in flag
+            if takes_value and i < len(tokens) and not tokens[i].startswith("-"):
+                i += 1
+        if i > 1:
+            tokens = [tokens[0]] + tokens[i:]
+
+    return tokens
+
 
 def is_allowlisted(command: str) -> tuple[bool, str]:
     """
@@ -102,6 +168,10 @@ def is_allowlisted(command: str) -> tuple[bool, str]:
 
     if not tokens:
         return False, "empty command after parsing"
+
+    tokens = _normalize_tokens(tokens)
+    if not tokens:
+        return False, "empty command after normalization"
 
     for length in range(min(_MAX_PREFIX_LEN, len(tokens)), 0, -1):
         prefix = tuple(tokens[:length])

@@ -142,3 +142,80 @@ class TestUnknownCommands:
     def test_whitespace_only_not_allowed(self):
         allowed, reason = is_allowlisted("   ")
         assert allowed is False
+
+
+class TestPrefixNormalizationSept2026:
+    """Found via a synthetic SRE-command stress test
+    (scripts/allowlist_stress_test.py): benign wrapper prefixes and
+    flags between a tool and its verb defeated the purely-positional
+    prefix match even though the underlying command was identical to
+    one already on the list. is_allowlisted() only ever fails safe
+    when normalization gets something wrong (falls through to the
+    existing REVIEW default), so these are heuristic on purpose --
+    the assertions here lock in the specific cases actually found,
+    not an exhaustive theory of every possible shell invocation."""
+
+    def test_sudo_prefix_does_not_defeat_match(self):
+        allowed, reason = is_allowlisted("sudo systemctl restart nginx")
+        assert allowed is True
+        assert reason == "approved_remediation"
+
+    def test_sudo_prefix_on_diagnostic_command(self):
+        allowed, reason = is_allowlisted("sudo kubectl get pods -n production")
+        assert allowed is True
+        assert reason == "diagnostic_investigation"
+
+    def test_time_wrapper_does_not_defeat_match(self):
+        allowed, reason = is_allowlisted("time terraform plan")
+        assert allowed is True
+
+    def test_leading_env_var_assignment_does_not_defeat_match(self):
+        allowed, reason = is_allowlisted(
+            "KUBECONFIG=/home/sre/.kube/prod-config kubectl get pods"
+        )
+        assert allowed is True
+        assert reason == "diagnostic_investigation"
+
+    def test_watch_wrapper_with_interval_flag_does_not_defeat_match(self):
+        allowed, reason = is_allowlisted("watch -n 2 kubectl get pods -n production")
+        assert allowed is True
+
+    def test_git_global_flag_before_subcommand_does_not_defeat_match(self):
+        """--no-pager is a git global flag that can appear before the
+        subcommand -- must not be confused with a value-taking flag
+        that consumes 'log' as its argument."""
+        allowed, reason = is_allowlisted("git --no-pager log -20")
+        assert allowed is True
+        assert reason == "diagnostic_investigation"
+
+    def test_kubectl_namespace_flag_before_verb_does_not_defeat_match(self):
+        allowed, reason = is_allowlisted("kubectl -n production get pods")
+        assert allowed is True
+        assert reason == "diagnostic_investigation"
+
+    def test_combined_sudo_watch_and_flag_before_verb(self):
+        """All three normalization steps composing together in one
+        realistic command."""
+        allowed, reason = is_allowlisted("sudo watch -n 2 kubectl -n production get pods")
+        assert allowed is True
+
+    def test_single_token_commands_own_flags_are_left_alone(self):
+        """ls/df/ps/... have no verb position to find -- their own
+        flags must never be stripped or reinterpreted as
+        'flags before a verb', since there is no verb."""
+        for cmd in ("ls -la /var/log", "df -h", "ps aux"):
+            allowed, reason = is_allowlisted(cmd)
+            assert allowed is True, f"{cmd!r} should still match, got reason={reason!r}"
+
+    def test_unrelated_dash_f_flag_is_not_mistaken_for_a_wrapper(self):
+        """Sanity check that normalization doesn't over-fire on
+        ordinary flags unrelated to any of the wrapper patterns."""
+        allowed, reason = is_allowlisted("kubectl get pods --all-namespaces -o wide")
+        assert allowed is True
+        assert reason == "diagnostic_investigation"
+
+    def test_not_allowlisted_command_with_sudo_still_not_allowlisted(self):
+        """Normalization strips the wrapper but must not turn an
+        otherwise-unrecognized command into a false allow."""
+        allowed, reason = is_allowlisted("sudo some-random-tool --do-something")
+        assert allowed is False
