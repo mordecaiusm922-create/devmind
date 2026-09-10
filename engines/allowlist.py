@@ -56,6 +56,11 @@ DIAGNOSTIC_INVESTIGATION: frozenset[tuple[str, ...]] = frozenset({
     ("helm", "list"), ("helm", "status"), ("helm", "get"),
     ("docker", "ps"), ("docker", "logs"), ("docker", "inspect"),
     ("aws", "s3", "ls"), ("aws", "ec2", "describe-instances"),
+    # Added Sept 2026 -- found via the synthetic SRE-command stress
+    # test (scripts/allowlist_stress_test.py): plausible, purely
+    # read-only diagnostic commands with no allowlist coverage at all.
+    ("crontab", "-l"),
+    ("netstat",), ("ss",),
 })
 
 # --- Approved remediation: known, bounded-effect operational actions ---
@@ -64,11 +69,27 @@ APPROVED_REMEDIATION: frozenset[tuple[str, ...]] = frozenset({
     ("kubectl", "rollout", "restart"),
     ("git", "pull"), ("git", "fetch"),
     ("docker", "restart"),
+    # Added Sept 2026 -- found via the synthetic SRE-command stress
+    # test. Deliberately NOT adding "terraform apply" here even though
+    # the same stress test flagged it as plausible-but-unlisted: unlike
+    # every entry below (and unlike terraform plan/show, already in
+    # DIAGNOSTIC_INVESTIGATION), apply's actual blast radius depends
+    # entirely on the plan's contents -- it could be a harmless tag
+    # change or a destroy, and the allowlist has no way to tell those
+    # apart at the verb-prefix level. It continues to require REVIEW.
+    ("kubectl", "scale"),
+    ("kubectl", "rollout", "undo"),
+    ("kubectl", "cordon"), ("kubectl", "drain"),
+    ("nginx", "-s", "reload"),
+    ("systemctl", "daemon-reload"),
 })
 
 # --- Capacity / SLO: read-only resource and capacity inspection ---
 CAPACITY_SLO: frozenset[tuple[str, ...]] = frozenset({
     ("free",), ("top",), ("vmstat",), ("iostat",), ("nproc",),
+    # Added Sept 2026 -- same stress test; these are the Kubernetes
+    # equivalent of `top`/`free`, purely read-only resource inspection.
+    ("kubectl", "top", "pods"), ("kubectl", "top", "nodes"),
 })
 
 _ALL_CATEGORIES: tuple[tuple[str, frozenset[tuple[str, ...]]], ...] = (
@@ -99,12 +120,19 @@ _LEADING_WRAPPERS = {"sudo", "nohup", "nice", "ionice", "time"}
 _ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _VALUE_TAKING_LONG_FLAGS = {"--namespace", "--context", "--kubeconfig", "--interval", "--tail"}
 # Only tools whose OWN category entries actually use a multi-token
-# (base command + verb) shape need "skip flags before the verb" handling.
-# Single-word entries (ls, cat, df, ps, ...) have no verb position to find,
-# so leaving their own flags alone (df -h, ps aux) is both correct and
-# avoids any needless transformation of tokens that already match fine.
+# (base command + verb) shape need "skip flags before the verb"
+# handling -- and only when that second token is a genuine verb word,
+# not itself a flag (nginx's "-s reload" and crontab's "-l" ARE the
+# meaningful operation identity, not scaffolding to skip past; curl's
+# only entry, "-I", has the same shape). Single-word entries (ls, cat,
+# df, ps, ...) have no verb position to find at all, so leaving their
+# own flags alone (df -h, ps aux) is both correct and avoids any
+# needless transformation of tokens that already match fine.
 _SUBCOMMAND_TOOLS = frozenset(
-    prefix[0] for _, category_set in _ALL_CATEGORIES for prefix in category_set if len(prefix) > 1
+    prefix[0]
+    for _, category_set in _ALL_CATEGORIES
+    for prefix in category_set
+    if len(prefix) > 1 and not prefix[1].startswith("-")
 )
 
 

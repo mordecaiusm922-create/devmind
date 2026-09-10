@@ -219,3 +219,84 @@ class TestPrefixNormalizationSept2026:
         otherwise-unrecognized command into a false allow."""
         allowed, reason = is_allowlisted("sudo some-random-tool --do-something")
         assert allowed is False
+
+
+class TestNewCategoryEntriesSept2026:
+    """Verbs found via the synthetic SRE-command stress test that
+    genuinely belong on the allowlist, added with judgment rather than
+    mechanically -- see the deliberate exclusion of terraform apply
+    below for the one candidate that did NOT get added."""
+
+    def test_kubectl_scale_is_approved_remediation(self):
+        allowed, reason = is_allowlisted(
+            "kubectl scale deployment/payments-api --replicas=5 -n production"
+        )
+        assert allowed is True
+        assert reason == "approved_remediation"
+
+    def test_kubectl_rollout_undo_is_approved_remediation(self):
+        allowed, reason = is_allowlisted("kubectl rollout undo deployment/payments-api -n production")
+        assert allowed is True
+        assert reason == "approved_remediation"
+
+    def test_kubectl_cordon_and_drain_are_approved_remediation(self):
+        for cmd in ("kubectl cordon node-7", "kubectl drain node-7 --ignore-daemonsets"):
+            allowed, reason = is_allowlisted(cmd)
+            assert allowed is True, cmd
+            assert reason == "approved_remediation"
+
+    def test_systemctl_daemon_reload_is_approved_remediation(self):
+        allowed, reason = is_allowlisted("systemctl daemon-reload")
+        assert allowed is True
+        assert reason == "approved_remediation"
+
+    def test_nginx_reload_is_approved_remediation(self):
+        allowed, reason = is_allowlisted("nginx -s reload")
+        assert allowed is True
+        assert reason == "approved_remediation"
+
+    def test_nginx_stop_is_not_allowlisted(self):
+        """The allowlist entry is specifically ("nginx", "-s", "reload")
+        -- a graceful, non-disruptive config reload. "-s stop" and "-s
+        quit" actually stop the server and must not match just because
+        they share the -s flag."""
+        for cmd in ("nginx -s stop", "nginx -s quit"):
+            allowed, reason = is_allowlisted(cmd)
+            assert allowed is False, f"{cmd!r} should not be allowlisted"
+
+    def test_crontab_list_is_diagnostic(self):
+        allowed, reason = is_allowlisted("crontab -l")
+        assert allowed is True
+        assert reason == "diagnostic_investigation"
+
+    def test_crontab_edit_or_remove_is_not_allowlisted(self):
+        """-l (list) is read-only. -e (edit) and -r (remove) actually
+        change what's scheduled and must not match just because they
+        share the crontab base command."""
+        for cmd in ("crontab -e", "crontab -r"):
+            allowed, reason = is_allowlisted(cmd)
+            assert allowed is False, f"{cmd!r} should not be allowlisted"
+
+    def test_netstat_and_ss_are_diagnostic(self):
+        for cmd in ("netstat -tulpn", "ss -tulpn"):
+            allowed, reason = is_allowlisted(cmd)
+            assert allowed is True, cmd
+            assert reason == "diagnostic_investigation"
+
+    def test_kubectl_top_is_capacity_slo(self):
+        for cmd in ("kubectl top pods -n production", "kubectl top nodes"):
+            allowed, reason = is_allowlisted(cmd)
+            assert allowed is True, cmd
+            assert reason == "capacity_slo"
+
+    def test_terraform_apply_deliberately_not_allowlisted(self):
+        """Unlike every entry actually added, apply's blast radius
+        depends entirely on the plan's contents -- it could be a
+        harmless tag change or a destroy, and the allowlist has no way
+        to tell those apart at the verb-prefix level. Must continue to
+        require REVIEW, unlike terraform plan/show which are read-only
+        and already allowlisted."""
+        allowed, reason = is_allowlisted("terraform apply tfplan")
+        assert allowed is False
+        allowed, reason = is_allowlisted("terraform apply -auto-approve")
+        assert allowed is False
