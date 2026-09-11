@@ -132,7 +132,7 @@ class TestCreateReviewRequest:
     def test_no_supabase_client_returns_none(self) -> None:
         decision = make_decision()
         with patch.object(devmind_server._supabase_audit, "_client", None):
-            result = devmind_server._create_review_request("echo hi", "test", decision, "org-1")
+            result = devmind_server._create_review_request("echo hi", "test", decision, "org-1", "sess-1")
         assert result is None
 
     def test_writes_expected_row_and_returns_id(self) -> None:
@@ -144,7 +144,7 @@ class TestCreateReviewRequest:
 
         with patch.object(devmind_server._supabase_audit, "_client", client):
             result = devmind_server._create_review_request(
-                "echo hi", "diagnostic check", decision, "devmind-default"
+                "echo hi", "diagnostic check", decision, "devmind-default", "sess-1"
             )
 
         assert result == 42
@@ -157,7 +157,7 @@ class TestCreateReviewRequest:
         assert row["decision"] == "REVIEW"
         assert row["status"] == "pending"
         assert row["agent"] == devmind_server.AGENT_NAME
-        assert row["session_id"] == devmind_server._SESSION_ID
+        assert row["session_id"] == "sess-1"
         assert "expires_at" in row
 
     def test_invalid_org_id_stored_as_none(self) -> None:
@@ -170,7 +170,7 @@ class TestCreateReviewRequest:
         )
         decision = make_decision()
         with patch.object(devmind_server._supabase_audit, "_client", client):
-            devmind_server._create_review_request("echo hi", "test", decision, "devmind-default")
+            devmind_server._create_review_request("echo hi", "test", decision, "devmind-default", "sess-1")
 
         row = client.table.return_value.insert.call_args[0][0]
         assert row["org_id"] is None
@@ -184,7 +184,7 @@ class TestCreateReviewRequest:
         )
         decision = make_decision()
         with patch.object(devmind_server._supabase_audit, "_client", client):
-            devmind_server._create_review_request("echo hi", "test", decision, real_org_id)
+            devmind_server._create_review_request("echo hi", "test", decision, real_org_id, "sess-1")
 
         row = client.table.return_value.insert.call_args[0][0]
         assert row["org_id"] == real_org_id
@@ -194,7 +194,7 @@ class TestCreateReviewRequest:
         client.table.return_value.insert.return_value.execute.side_effect = RuntimeError("db down")
         decision = make_decision()
         with patch.object(devmind_server._supabase_audit, "_client", client):
-            result = devmind_server._create_review_request("echo hi", "test", decision, "org-1")
+            result = devmind_server._create_review_request("echo hi", "test", decision, "org-1", "sess-1")
         assert result is None
 
 

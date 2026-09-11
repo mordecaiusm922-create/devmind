@@ -49,7 +49,7 @@ from typing import Any
 # Ensure local packages are importable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Context
 from runtime.backend_connector import GovernedSandbox
 from core.types import ActionSurface, ChangeImpact, ChangeType, Decision
 
@@ -171,10 +171,28 @@ sandbox = GovernedSandbox(
 if _selected_audit_engine is None:
     print("[DEVMIND] WARNING: no Supabase credentials -- audit trail falling back to local JSONL (not durable across redeploys)", flush=True)
 
-# Active session — one per server process (one agent conversation)
+# Fallback session id when no authenticated caller context is available
+# (e.g. local/dev runs without OAuth configured). Real governed calls use
+# _resolve_session_id(ctx) instead -- see below. Kept as a process-lifetime
+# constant only for that fallback and for session_status()'s default view.
 _SESSION_ID = str(uuid.uuid4())
 
 print(f"[DEVMIND] org={ORG_ID} env={ENVIRONMENT} session={_SESSION_ID}", flush=True)
+
+
+def _resolve_session_id(ctx: Context | None) -> str:
+    """Scopes governance session state to the authenticated caller
+    (ctx.client_id, from the bearer token's agent_id/org_id), not to
+    the server process. Found Sept 2026: _SESSION_ID used to be shared
+    by every single call across every caller for the server's entire
+    uptime -- one action scoring high enough to set the session
+    RESTRICTED (peak_score>=90) permanently escalated every OTHER
+    caller's every subsequent action too, with no way to clear it
+    short of a redeploy. Falls back to the process-lifetime constant
+    only when there's genuinely no authenticated context (local/dev
+    runs without OAuth configured)."""
+    client_id = getattr(ctx, "client_id", None) if ctx is not None else None
+    return client_id or _SESSION_ID
 
 # =============================================================================
 # Secret redaction — applied to all output returned to the agent
@@ -345,7 +363,7 @@ def _slack_post_message(blocks: list[dict], text_fallback: str) -> dict | None:
 
 
 def _create_review_request(
-    command: str, rationale: str, decision: Any, org_id: str
+    command: str, rationale: str, decision: Any, org_id: str, session_id: str
 ) -> int | None:
     """Creates a pending review_requests row for a REVIEW-verdict
     command. Returns the new row's id, or None if there's no Supabase
@@ -358,7 +376,7 @@ def _create_review_request(
     from datetime import timedelta
     now = _datetime.now(_timezone.utc)
     row = {
-        "session_id": _SESSION_ID,
+        "session_id": session_id,
         "org_id": org_id if GovernedSandbox._is_org_id_a_valid_uuid(org_id) else None,
         "agent": AGENT_NAME,
         "command": _redact(command)[:2000],
@@ -557,7 +575,7 @@ def _resolve_review_request(request_id: str, new_status: str, resolver: str) -> 
         return False
 
 
-def _log_break_glass_override(command: str, decision: Any, justification: str) -> None:
+def _log_break_glass_override(command: str, decision: Any, justification: str, session_id: str) -> None:
     """Dedicated, maximum-severity audit record for a break-glass
     override -- separate from the normal decision audit trail so it
     can never be missed or confused with a routine ALLOW. Stopgap:
@@ -567,7 +585,7 @@ def _log_break_glass_override(command: str, decision: Any, justification: str) -
     reason = getattr(decision, "reason", None)
     risk_score = getattr(decision, "risk_score", None)
     print(
-        f"[BREAK-GLASS OVERRIDE] session={_SESSION_ID} agent={AGENT_NAME} "
+        f"[BREAK-GLASS OVERRIDE] session={session_id} agent={AGENT_NAME} "
         f"original_decision={decision_name} risk_score={risk_score} "
         f"command={_redact(command)[:300]!r} "
         f"justification={_redact(justification)[:300]!r}",
@@ -577,7 +595,7 @@ def _log_break_glass_override(command: str, decision: Any, justification: str) -
         client = _supabase_audit._client
         if client is not None:
             client.table("break_glass_log").insert({
-                "session_id": _SESSION_ID,
+                "session_id": session_id,
                 "agent": AGENT_NAME,
                 "command": _redact(command)[:2000],
                 "original_decision": decision_name,
@@ -596,6 +614,7 @@ def execute_command(
     break_glass: bool = False,
     break_glass_justification: str = "",
     approval_id: str = "",
+    ctx: Context = None,
 ) -> str:
     """
     Execute a shell command through DevMind governance.
@@ -624,12 +643,13 @@ def execute_command(
             approval_id=<that id>. Approval is bound to the exact
             command text -- a different command needs its own request.
     """
+    session_id = _resolve_session_id(ctx)
     decision = sandbox.intercept(
         agent=AGENT_NAME,
         tool="terminal",
         operation="execute",
         payload=command,
-        session_id=_SESSION_ID,
+        session_id=session_id,
         environment=ENVIRONMENT,
         extra_context={"rationale": _redact(rationale)},
     )
@@ -659,7 +679,7 @@ def execute_command(
             _shadow_client = SupabaseAuditEngine()._client
             if _shadow_client is not None:
                 _shadow_client.table("allowlist_shadow_log").insert({
-                    "session_id": _SESSION_ID,
+                    "session_id": session_id,
                     "command": _redact(command)[:2000],
                     "blocklist_decision": blocklist_decision_name,
                     "allowlist_allowed": allowlist_allowed,
@@ -758,7 +778,7 @@ def execute_command(
                         "execute_command again without approval_id."
                     )
             else:
-                request_id = _create_review_request(command, rationale, decision, ORG_ID)
+                request_id = _create_review_request(command, rationale, decision, ORG_ID, session_id)
                 if request_id is None:
                     return message + (
                         "\n\nDevMind couldn't create a review request (no audit "
@@ -789,7 +809,7 @@ def execute_command(
                         "break_glass_justification explaining the emergency. Refusing "
                         "to override without one."
                     )
-                _log_break_glass_override(command, decision, break_glass_justification)
+                _log_break_glass_override(command, decision, break_glass_justification, session_id)
                 _send_slack_block_notification(
                     command, rationale, decision, overridden=True,
                     justification=break_glass_justification,
@@ -821,19 +841,20 @@ def execute_command(
 
 
 @mcp.tool()
-def read_file(path: str) -> str:
+def read_file(path: str, ctx: Context = None) -> str:
     """
     Read a file through DevMind governance.
 
     Args:
         path: Absolute or relative path to the file.
     """
+    session_id = _resolve_session_id(ctx)
     decision = sandbox.intercept(
         agent=AGENT_NAME,
         tool="filesystem",
         operation="read",
         payload=path,
-        session_id=_SESSION_ID,
+        session_id=session_id,
         environment=ENVIRONMENT,
     )
 
@@ -851,7 +872,7 @@ def read_file(path: str) -> str:
 
 
 @mcp.tool()
-def write_file(path: str, content: str, rationale: str) -> str:
+def write_file(path: str, content: str, rationale: str, ctx: Context = None) -> str:
     """
     Write content to a file through DevMind governance.
 
@@ -860,6 +881,7 @@ def write_file(path: str, content: str, rationale: str) -> str:
         content:   Content to write.
         rationale: Why this file needs to be written.
     """
+    session_id = _resolve_session_id(ctx)
     payload = f"write:{path}\n{content[:500]}"   # path + preview for evaluation
 
     decision = sandbox.intercept(
@@ -867,7 +889,7 @@ def write_file(path: str, content: str, rationale: str) -> str:
         tool="filesystem",
         operation="write",
         payload=payload,
-        session_id=_SESSION_ID,
+        session_id=session_id,
         environment=ENVIRONMENT,
         extra_context={"rationale": _redact(rationale)},
     )
@@ -886,7 +908,7 @@ def write_file(path: str, content: str, rationale: str) -> str:
 
 
 @mcp.tool()
-def delete_file(path: str, rationale: str) -> str:
+def delete_file(path: str, rationale: str, ctx: Context = None) -> str:
     """
     Delete a file through DevMind governance.
     High-risk operation — always requires justification.
@@ -895,12 +917,13 @@ def delete_file(path: str, rationale: str) -> str:
         path:      File to delete.
         rationale: Why this file must be deleted.
     """
+    session_id = _resolve_session_id(ctx)
     decision = sandbox.intercept(
         agent=AGENT_NAME,
         tool="filesystem",
         operation="delete",
         payload=path,
-        session_id=_SESSION_ID,
+        session_id=session_id,
         environment=ENVIRONMENT,
         extra_context={"rationale": _redact(rationale)},
     )
@@ -919,7 +942,7 @@ def delete_file(path: str, rationale: str) -> str:
 
 
 @mcp.tool()
-def git_operation(git_command: str, rationale: str) -> str:
+def git_operation(git_command: str, rationale: str, ctx: Context = None) -> str:
     """
     Run a git command through DevMind governance.
 
@@ -927,12 +950,13 @@ def git_operation(git_command: str, rationale: str) -> str:
         git_command: The git command (e.g. 'git push origin main').
         rationale:   Why this git operation is needed.
     """
+    session_id = _resolve_session_id(ctx)
     decision = sandbox.intercept(
         agent=AGENT_NAME,
         tool="git",
         operation=git_command.split()[1] if len(git_command.split()) > 1 else "execute",
         payload=git_command,
-        session_id=_SESSION_ID,
+        session_id=session_id,
         environment=ENVIRONMENT,
         extra_context={"rationale": _redact(rationale)},
     )
@@ -956,7 +980,7 @@ def git_operation(git_command: str, rationale: str) -> str:
 
 
 @mcp.tool()
-def db_query(query: str, rationale: str) -> str:
+def db_query(query: str, rationale: str, ctx: Context = None) -> str:
     """
     Submit a database query through DevMind governance.
     DevMind evaluates the query for destructive or injection patterns.
@@ -968,12 +992,13 @@ def db_query(query: str, rationale: str) -> str:
         query:     The SQL or query string.
         rationale: Why this query is needed.
     """
+    session_id = _resolve_session_id(ctx)
     decision = sandbox.intercept(
         agent=AGENT_NAME,
         tool="database",
         operation="execute",
         payload=query,
-        session_id=_SESSION_ID,
+        session_id=session_id,
         environment=ENVIRONMENT,
         extra_context={"rationale": _redact(rationale)},
     )
@@ -992,7 +1017,7 @@ def db_query(query: str, rationale: str) -> str:
 
 
 @mcp.tool()
-def http_request(url: str, method: str, rationale: str) -> str:
+def http_request(url: str, method: str, rationale: str, ctx: Context = None) -> str:
     """
     Make an outbound HTTP request through DevMind governance.
 
@@ -1001,6 +1026,7 @@ def http_request(url: str, method: str, rationale: str) -> str:
         method:    HTTP method (GET, POST, etc.).
         rationale: Why this request is needed.
     """
+    session_id = _resolve_session_id(ctx)
     payload = f"{method.upper()} {url}"
 
     decision = sandbox.intercept(
@@ -1008,7 +1034,7 @@ def http_request(url: str, method: str, rationale: str) -> str:
         tool="http",
         operation="request",
         payload=payload,
-        session_id=_SESSION_ID,
+        session_id=session_id,
         environment=ENVIRONMENT,
         extra_context={"rationale": _redact(rationale)},
     )
@@ -1025,7 +1051,7 @@ def http_request(url: str, method: str, rationale: str) -> str:
 
 
 @mcp.tool()
-def deploy(target: str, artifact: str, rationale: str) -> str:
+def deploy(target: str, artifact: str, rationale: str, ctx: Context = None) -> str:
     """
     Trigger a deployment through DevMind governance.
     Always high-risk — evaluated against environment and target.
@@ -1035,6 +1061,7 @@ def deploy(target: str, artifact: str, rationale: str) -> str:
         artifact:  What is being deployed (image, branch, version).
         rationale: Why this deployment is happening now.
     """
+    session_id = _resolve_session_id(ctx)
     payload = f"deploy target={target} artifact={artifact}"
 
     decision = sandbox.intercept(
@@ -1042,7 +1069,7 @@ def deploy(target: str, artifact: str, rationale: str) -> str:
         tool="deploy",
         operation="execute",
         payload=payload,
-        session_id=_SESSION_ID,
+        session_id=session_id,
         environment=target,   # the deploy target IS the environment
         extra_context={"rationale": _redact(rationale)},
     )
@@ -1059,7 +1086,7 @@ def deploy(target: str, artifact: str, rationale: str) -> str:
 
 
 @mcp.tool()
-def evaluate_terraform_plan(plan: str, environment: str, rationale: str) -> str:
+def evaluate_terraform_plan(plan: str, environment: str, rationale: str, ctx: Context = None) -> str:
     """
     Evaluate a Terraform plan/apply through DevMind infrastructure governance.
 
@@ -1076,6 +1103,7 @@ def evaluate_terraform_plan(plan: str, environment: str, rationale: str) -> str:
         environment: Target environment (e.g. 'production', 'staging', 'local').
         rationale:   Why this infrastructure change is needed.
     """
+    session_id = _resolve_session_id(ctx)
     affects_prod = environment.strip().lower() in ("production", "prod")
 
     decision = sandbox.intercept_change(
@@ -1083,7 +1111,7 @@ def evaluate_terraform_plan(plan: str, environment: str, rationale: str) -> str:
         change_type=ChangeType.TERRAFORM_APPLY,
         surface=ActionSurface.INFRASTRUCTURE,
         payload=plan,
-        session_id=_SESSION_ID,
+        session_id=session_id,
         environment=environment,
         impact=ChangeImpact(affects_production=affects_prod),
         extra_context={"rationale": _redact(rationale)},
@@ -1101,7 +1129,7 @@ def evaluate_terraform_plan(plan: str, environment: str, rationale: str) -> str:
 
 
 @mcp.tool()
-def evaluate_k8s_manifest(manifest: str, environment: str, rationale: str) -> str:
+def evaluate_k8s_manifest(manifest: str, environment: str, rationale: str, ctx: Context = None) -> str:
     """
     Evaluate a Kubernetes manifest or Helm chart through DevMind governance.
 
@@ -1117,6 +1145,7 @@ def evaluate_k8s_manifest(manifest: str, environment: str, rationale: str) -> st
         environment: Target environment (e.g. 'production', 'staging', 'local').
         rationale:   Why this change is needed.
     """
+    session_id = _resolve_session_id(ctx)
     affects_prod = environment.strip().lower() in ("production", "prod")
 
     is_helm = bool(re.search(r"(?i)\{\{.*\}\}|rbac\.create|helm\.sh", manifest))
@@ -1127,7 +1156,7 @@ def evaluate_k8s_manifest(manifest: str, environment: str, rationale: str) -> st
         change_type=change_type,
         surface=ActionSurface.KUBERNETES,
         payload=manifest,
-        session_id=_SESSION_ID,
+        session_id=session_id,
         environment=environment,
         impact=ChangeImpact(affects_production=affects_prod),
         extra_context={"rationale": _redact(rationale)},
@@ -1145,7 +1174,7 @@ def evaluate_k8s_manifest(manifest: str, environment: str, rationale: str) -> st
 
 
 @mcp.tool()
-def release_gate(version: str, artifact: str, environment: str, rationale: str) -> str:
+def release_gate(version: str, artifact: str, environment: str, rationale: str, ctx: Context = None) -> str:
     """
     Evaluate a release publish/promote through DevMind's release gate.
 
@@ -1164,13 +1193,14 @@ def release_gate(version: str, artifact: str, environment: str, rationale: str) 
         environment: Target environment (e.g. 'production', 'staging').
         rationale:   Why this release is happening now.
     """
+    session_id = _resolve_session_id(ctx)
     affects_prod = environment.strip().lower() in ("production", "prod")
 
     decision = sandbox.intercept_release(
         agent=AGENT_NAME,
         version=version,
         artifact=artifact,
-        session_id=_SESSION_ID,
+        session_id=session_id,
         environment=environment,
         impact=ChangeImpact(affects_production=affects_prod),
         extra_context={"rationale": _redact(rationale)},
@@ -1188,14 +1218,15 @@ def release_gate(version: str, artifact: str, environment: str, rationale: str) 
 
 
 @mcp.tool()
-def session_status() -> str:
+def session_status(ctx: Context = None) -> str:
     """
     Return the current session's governance state.
     Use this to understand how DevMind sees the current agent session.
     """
-    stats = sandbox.session_stats(_SESSION_ID)
+    session_id = _resolve_session_id(ctx)
+    stats = sandbox.session_stats(session_id)
     if not stats:
-        return json.dumps({"session_id": _SESSION_ID, "state": "new", "total_actions": 0})
+        return json.dumps({"session_id": session_id, "state": "new", "total_actions": 0})
     return json.dumps(stats, indent=2)
 
 

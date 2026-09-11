@@ -103,7 +103,7 @@ class TestLogBreakGlassOverride:
 
         with patch.object(devmind_server._supabase_audit, "_client", client):
             devmind_server._log_break_glass_override(
-                "DROP TABLE customers", decision, "emergency data recovery, VP approved"
+                "DROP TABLE customers", decision, "emergency data recovery, VP approved", "sess-1"
             )
 
         client.table.assert_any_call("break_glass_log")
@@ -117,7 +117,7 @@ class TestLogBreakGlassOverride:
         assert row["risk_score"] == 95
         assert row["justification"] == "emergency data recovery, VP approved"
         assert row["agent"] == devmind_server.AGENT_NAME
-        assert row["session_id"] == devmind_server._SESSION_ID
+        assert row["session_id"] == "sess-1"
 
     def test_no_supabase_client_is_non_fatal(self) -> None:
         """Docstring says 'non-fatal on write failure' -- with no
@@ -125,14 +125,14 @@ class TestLogBreakGlassOverride:
         established fail-safe pattern for audit writes."""
         decision = make_decision(Decision.REVIEW)
         with patch.object(devmind_server._supabase_audit, "_client", None):
-            devmind_server._log_break_glass_override("echo hi", decision, "test")  # must not raise
+            devmind_server._log_break_glass_override("echo hi", decision, "test", "sess-1")  # must not raise
 
     def test_supabase_write_exception_is_non_fatal(self) -> None:
         client = MagicMock()
         client.table.return_value.insert.return_value.execute.side_effect = RuntimeError("db down")
         decision = make_decision(Decision.REVIEW)
         with patch.object(devmind_server._supabase_audit, "_client", client):
-            devmind_server._log_break_glass_override("echo hi", decision, "test")  # must not raise
+            devmind_server._log_break_glass_override("echo hi", decision, "test", "sess-1")  # must not raise
 
 
 # =============================================================================
@@ -599,3 +599,37 @@ class TestExecuteCommandSendsBlockNotification:
             devmind_server.execute_command(command="risky-thing", rationale="test")
 
         assert not notify.called
+
+
+class TestSessionScopedByCaller:
+    """Sept 2026 fix: session_id used to be one constant shared by
+    every caller for the server's entire process lifetime -- one
+    action scoring high enough to hit RESTRICTED permanently escalated
+    every OTHER caller's every subsequent action too, with no way to
+    clear it short of a redeploy. Now scoped to the authenticated
+    caller (ctx.client_id)."""
+
+    def test_different_callers_get_different_session_ids(self) -> None:
+        ctx_a = MagicMock(client_id="agent-a")
+        ctx_b = MagicMock(client_id="agent-b")
+        assert devmind_server._resolve_session_id(ctx_a) == "agent-a"
+        assert devmind_server._resolve_session_id(ctx_b) == "agent-b"
+        assert devmind_server._resolve_session_id(ctx_a) != devmind_server._resolve_session_id(ctx_b)
+
+    def test_no_context_falls_back_to_process_constant(self) -> None:
+        assert devmind_server._resolve_session_id(None) == devmind_server._SESSION_ID
+
+    def test_context_with_no_client_id_falls_back(self) -> None:
+        ctx = MagicMock(client_id=None)
+        assert devmind_server._resolve_session_id(ctx) == devmind_server._SESSION_ID
+
+    def test_execute_command_uses_caller_session_not_global_constant(self) -> None:
+        decision = make_decision(Decision.ALLOW, reason="clean")
+        e2b_mock = make_e2b_mocks()
+        ctx = MagicMock(client_id="agent-a")
+
+        with patch.object(devmind_server.sandbox, "intercept", return_value=decision) as intercept, \
+             patch("e2b_code_interpreter.Sandbox.create", return_value=e2b_mock):
+            devmind_server.execute_command(command="echo hi", rationale="test", ctx=ctx)
+
+        assert intercept.call_args.kwargs["session_id"] == "agent-a"
